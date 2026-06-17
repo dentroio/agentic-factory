@@ -24,10 +24,12 @@ Born from production use on the [Clarion](https://github.com/dentroio/clarion) p
 | **SDLC Agents** | |
 | `.github/workflows/planning-agent.yml` | Triggered by `new-wo` issue label → drafts WO spec → opens PR |
 | `.github/workflows/verifier.yml` | Post-merge → checks AC from WO spec against diff → opens follow-up issue on failure |
+| `.github/workflows/merge-advisor.yml` | After AI review → synthesizes all signals → posts ✅/⚠️/❌ merge recommendation |
 | `.github/workflows/post-merge-memory.yml` | Post-merge → extracts lessons → opens memory PR |
 | `.github/workflows/observability.yml` | Scheduled → polls health endpoint → creates incident issue on anomaly |
 | `scripts/planning_agent.py` | Converts issue title+body into a filled WO spec |
 | `scripts/verifier_agent.py` | Verifies acceptance criteria from WO spec against a PR diff |
+| `scripts/merge_advisor.py` | Synthesizes CI, AI review, risk tier, diff analysis into merge recommendation |
 | `scripts/memory_agent.py` | Extracts non-obvious lessons from a merged PR diff |
 | `scripts/observability_agent.py` | Polls metrics endpoint, detects threshold violations |
 | `scripts/observability_thresholds.json` | Configurable error rate, latency, service health thresholds |

@@ -1,0 +1,206 @@
+# =============================================================================
+# merge-advisor.yml — Human Merge Decision Support
+#
+# Runs AFTER the AI code review completes. Reads all available signals
+# (CI status, AI review verdict, verifier verdict, risk tier from WO spec,
+# diff risk indicators) and posts a single synthesized merge recommendation.
+#
+# This gives the human reviewer one clear answer:
+#   ✅ Ready to merge — with specific what-to-verify checklist
+#   ⚠️ Review before merging — with specific concerns
+#   ❌ Do not merge — with specific blockers
+#
+# The merge advisor NEVER blocks the merge (exit 0 always).
+# Blocking is handled by ai-review.yml and ci.yml required status checks.
+#
+# Setup:
+#   Add ANTHROPIC_API_KEY as a repository Actions secret.
+# =============================================================================
+
+name: Merge Advisor
+
+on:
+  # Run after the AI Code Review workflow completes
+  workflow_run:
+    workflows: ["AI Code Review"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+  statuses: read
+
+jobs:
+  advise:
+    name: Merge Advisory
+    runs-on: ubuntu-latest
+    # Only advise on PRs to main, not push events
+    if: github.event.workflow_run.event == 'pull_request'
+
+    steps:
+      - name: Get PR context from triggering workflow
+        id: pr_context
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Find the PR associated with the triggering workflow run
+            const runs = await github.rest.actions.listWorkflowRunsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              event: 'pull_request',
+              head_sha: '${{ github.event.workflow_run.head_sha }}',
+            });
+
+            // Get the PR number
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: '${{ github.event.workflow_run.head_repository.owner.login }}:${{ github.event.workflow_run.head_branch }}',
+            });
+
+            if (prs.data.length === 0) {
+              console.log('No open PR found for this branch — skipping');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            const pr = prs.data[0];
+            core.setOutput('pr_number', pr.number);
+            core.setOutput('pr_title', pr.title);
+            core.setOutput('pr_body', pr.body || '');
+            core.setOutput('skip', 'false');
+
+      - uses: actions/checkout@v4
+        if: steps.pr_context.outputs.skip != 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Get PR diff
+        if: steps.pr_context.outputs.skip != 'true'
+        run: |
+          git diff origin/main...${{ github.event.workflow_run.head_sha }} \
+            '*.py' '*.ts' '*.tsx' '*.go' '*.java' '*.rs' \
+            ':!**/node_modules/**' ':!**/vendor/**' \
+            > /tmp/pr_diff.txt
+          echo "Diff lines: $(wc -l < /tmp/pr_diff.txt)"
+
+      - name: Get CI and review signal verdicts
+        id: signals
+        if: steps.pr_context.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = '${{ github.event.workflow_run.head_sha }}';
+            const pr_number = '${{ steps.pr_context.outputs.pr_number }}';
+
+            // Get all check runs for this SHA
+            const checks = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha,
+            });
+
+            const failed = checks.data.check_runs.filter(c =>
+              c.conclusion === 'failure' && c.name !== 'Merge Advisory'
+            );
+            const ci_status = failed.length === 0 ? 'success' : 'failure';
+            core.setOutput('ci_status', ci_status);
+            console.log(`CI status: ${ci_status} (${failed.length} failures)`);
+
+            // Look for AI review verdict in PR comments
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt(pr_number),
+            });
+
+            let aiVerdict = 'not run';
+            let verifierVerdict = 'not run';
+            for (const comment of comments.data) {
+              if (comment.body.includes('AI Code Review')) {
+                if (comment.body.includes('**LGTM**')) aiVerdict = 'LGTM';
+                else if (comment.body.includes('**Needs attention**')) aiVerdict = 'Needs attention';
+                else if (comment.body.includes('**Review required**')) aiVerdict = 'Review required';
+              }
+              if (comment.body.includes('Post-Merge Verification') || comment.body.includes('Verification Report')) {
+                if (comment.body.includes('All criteria met')) verifierVerdict = 'All criteria met';
+                else if (comment.body.includes('Partial')) verifierVerdict = 'Partial';
+                else if (comment.body.includes('Criteria not met')) verifierVerdict = 'Criteria not met';
+              }
+            }
+            core.setOutput('ai_verdict', aiVerdict);
+            core.setOutput('verifier_verdict', verifierVerdict);
+            console.log(`AI review: ${aiVerdict}, Verifier: ${verifierVerdict}`);
+
+      - uses: actions/setup-python@v5
+        if: steps.pr_context.outputs.skip != 'true'
+        with:
+          python-version: "3.11"
+
+      - name: Run merge advisor
+        id: advisor
+        if: steps.pr_context.outputs.skip != 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_TITLE: ${{ steps.pr_context.outputs.pr_title }}
+          PR_BODY: ${{ steps.pr_context.outputs.pr_body }}
+          PR_NUMBER: ${{ steps.pr_context.outputs.pr_number }}
+          CI_STATUS: ${{ steps.signals.outputs.ci_status }}
+          AI_REVIEW_VERDICT: ${{ steps.signals.outputs.ai_verdict }}
+          VERIFIER_VERDICT: ${{ steps.signals.outputs.verifier_verdict }}
+        run: |
+          pip install anthropic --quiet
+          python3 scripts/merge_advisor.py \
+            --diff /tmp/pr_diff.txt \
+            --output /tmp/advisory.md
+
+      - name: Post merge advisory comment
+        if: steps.pr_context.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let advisory;
+            try {
+              advisory = fs.readFileSync('/tmp/advisory.md', 'utf8');
+            } catch {
+              advisory = 'Merge advisory could not be generated — check the workflow logs.';
+            }
+
+            const ciStatus = '${{ steps.signals.outputs.ci_status }}';
+            const aiVerdict = '${{ steps.signals.outputs.ai_verdict }}';
+            const prNumber = parseInt('${{ steps.pr_context.outputs.pr_number }}');
+
+            // Determine header based on what we know
+            let header = '## 🔀 Merge Advisory';
+            if (ciStatus === 'failure') {
+              header = '## 🔀 Merge Advisory — ⚠️ CI Failures Detected';
+            } else if (aiVerdict === 'Review required') {
+              header = '## 🔀 Merge Advisory — ❌ AI Review Blocked';
+            }
+
+            // Delete previous advisory comment if it exists (avoid stacking)
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+            for (const c of comments.data) {
+              if (c.body.startsWith('## 🔀 Merge Advisory')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: c.id,
+                });
+              }
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `${header}\n\n${advisory}`,
+            });

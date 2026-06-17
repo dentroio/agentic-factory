@@ -167,7 +167,24 @@ Every PR runs these jobs. All must pass before merge:
 | migration-check | Schema migration registry is consistent |
 | ai-review | Claude code review — exits 1 on "Review required" verdict |
 
-The AI review job (`ai-review.yml`) runs automatically on every PR. A "Review required" verdict blocks merge.
+After the AI review completes, the **Merge Advisor** (`merge-advisor.yml`) posts a synthesized recommendation comment on every P0/P1 PR. It is always the last comment before a human reviewer looks at the PR.
+
+### How to read the merge advisory
+
+The merge advisor gives you one of three recommendations:
+
+| Recommendation | Meaning |
+|---------------|---------|
+| ✅ **Ready to merge** | All signals green, checklist is short — safe to merge after a quick scan |
+| ⚠️ **Review before merging** | Warnings exist (e.g. thin test coverage, shared file touched) — check the listed items before merging |
+| ❌ **Do not merge** | A blocking signal found (CI failure, "Review required" from AI, unmet AC) — do not merge until resolved |
+
+The advisory also gives you:
+- **Signal summary table** — CI, AI review, verifier, schema changes, auth changes, test coverage at a glance
+- **What to verify** — 2–5 specific things to check by hand (named files, endpoints, tables)
+- **If this breaks production** — exact rollback commands for this specific change
+
+The merge advisor never blocks the merge itself — that is the job of the required status checks. It is decision support, not a gate.
 
 ---
 
