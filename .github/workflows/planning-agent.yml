@@ -1,0 +1,97 @@
+# =============================================================================
+# planning-agent.yml — WO Spec Drafting
+#
+# Triggered when a GitHub issue is labeled 'new-wo'.
+# Calls planning_agent.py to draft a WO spec and opens a PR for human review.
+#
+# The agent drafts; a human reviews and adjusts risk tier and AC before merging.
+#
+# Setup:
+#   1. Add ANTHROPIC_API_KEY as a repository Actions secret
+#   2. Add WO_SPECS_DIR as a repository variable (default: docs/project_management/work_orders)
+#   3. Add a 'new-wo' label to your repo (Settings → Labels)
+# =============================================================================
+
+name: Planning Agent — Draft WO Spec
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  draft-wo-spec:
+    name: Draft WO Spec
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'new-wo'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Determine next WO number
+        id: wo_num
+        run: |
+          WO_DIR="${{ vars.WO_SPECS_DIR || 'docs/project_management/work_orders' }}"
+          # Find highest existing WO number
+          LAST=$(ls "$WO_DIR"/WO-*.md 2>/dev/null | grep -oP 'WO-\K\d+' | sort -n | tail -1)
+          NEXT=$((${LAST:-0} + 1))
+          echo "next=$NEXT" >> $GITHUB_OUTPUT
+          echo "Next WO number: $NEXT"
+
+      - name: Draft WO spec
+        id: draft
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pip install anthropic --quiet
+          WO_NUM=${{ steps.wo_num.outputs.next }}
+          WO_DIR="${{ vars.WO_SPECS_DIR || 'docs/project_management/work_orders' }}"
+          SLUG=$(echo "${{ github.event.issue.title }}" | tr '[:upper:]' '[:lower:]' | \
+                 sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | cut -c1-50)
+          OUTPUT="$WO_DIR/WO-$(printf '%03d' $WO_NUM)-${SLUG}.md"
+          echo "output=$OUTPUT" >> $GITHUB_OUTPUT
+
+          python3 scripts/planning_agent.py \
+            --title "${{ github.event.issue.title }}" \
+            --body "${{ github.event.issue.body }}" \
+            --next-wo-num "$WO_NUM" \
+            --output "$OUTPUT"
+
+      - name: Open PR with WO spec
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const output = '${{ steps.draft.outputs.output }}';
+            const woNum = '${{ steps.wo_num.outputs.next }}';
+            const branch = `wo/${woNum.padStart(3, '0')}-spec-draft`;
+
+            // Configure git
+            execSync('git config user.name "github-actions[bot]"');
+            execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+
+            // Create branch and commit
+            execSync(`git checkout -b ${branch}`);
+            execSync(`git add "${output}"`);
+            execSync(`git commit -m "docs(wo): draft WO-${woNum.padStart(3, '0')} spec from issue #${{ github.event.issue.number }}"`);
+            execSync(`git push origin ${branch}`);
+
+            // Open PR
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `docs(wo): WO-${woNum.padStart(3, '0')} — ${{ github.event.issue.title }}`,
+              body: `## WO Spec Draft\n\nAuto-drafted from issue #${{ github.event.issue.number }}.\n\n**Review checklist before merging:**\n- [ ] Risk tier is correct (P0/P1 → human merge, P2 → auto-merge, P3 → direct commit)\n- [ ] Acceptance criteria are verifiable (not vague)\n- [ ] Branch name and PR title in \`## Execution\` section are correct\n- [ ] Files to touch list is accurate\n\nOnce merged, an agent can pick this up by reading the \`## Execution\` section.\n\nCloses #${{ github.event.issue.number }}`,
+              head: branch,
+              base: 'main',
+            });
+
+            console.log(`PR opened: ${pr.data.html_url}`);

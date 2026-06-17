@@ -15,10 +15,23 @@ Born from production use on the [Clarion](https://github.com/dentroio/clarion) p
 | `AGENTS.md` | OpenAI/Codex/generic entry point |
 | `.cursor/rules/agent-process.mdc` | Cursor IDE entry point (`alwaysApply: true`) |
 | `Makefile.template` | Copy to `Makefile` — fill in `{{FILL IN}}` sections for your stack |
+| **CI / Review** | |
 | `.github/workflows/ai-review.yml` | Blocking AI code review on every PR — exits 1 on "Review required" |
 | `.github/workflows/ci.yml.template` | Copy to `ci.yml` — fill in lint/test/build steps |
-| `scripts/ai_review.py` | Claude-powered review script — universal checks + project-specific context |
-| `scripts/review_context.txt` | Project-specific checks for the AI reviewer |
+| `.github/workflows/deploy.yml.template` | Copy to `deploy.yml` — parameterized CD pipeline with smoke tests |
+| `scripts/ai_review.py` | Claude-powered code review — 7 universal checks + project-specific context |
+| `scripts/review_context.txt` | Project-specific checks added to the AI reviewer |
+| **SDLC Agents** | |
+| `.github/workflows/planning-agent.yml` | Triggered by `new-wo` issue label → drafts WO spec → opens PR |
+| `.github/workflows/verifier.yml` | Post-merge → checks AC from WO spec against diff → opens follow-up issue on failure |
+| `.github/workflows/post-merge-memory.yml` | Post-merge → extracts lessons → opens memory PR |
+| `.github/workflows/observability.yml` | Scheduled → polls health endpoint → creates incident issue on anomaly |
+| `scripts/planning_agent.py` | Converts issue title+body into a filled WO spec |
+| `scripts/verifier_agent.py` | Verifies acceptance criteria from WO spec against a PR diff |
+| `scripts/memory_agent.py` | Extracts non-obvious lessons from a merged PR diff |
+| `scripts/observability_agent.py` | Polls metrics endpoint, detects threshold violations |
+| `scripts/observability_thresholds.json` | Configurable error rate, latency, service health thresholds |
+| **PM / Memory** | |
 | `docs/project_management/` | Progress tracker, capability registry, WO spec template |
 | `memory/` | Persistent agent memory across conversations |
 
@@ -178,6 +191,57 @@ Add a numbered item to `scripts/review_context.txt`. Be specific — vague check
 
 Copy `docs/project_management/work_orders/WO-000-template.md` and fill in the sections.
 The `## Execution` section is the agent's entry point — include branch name, risk tier, PR title, and files to touch.
+
+---
+
+## Full SDLC loop
+
+The five agents form a complete cycle from production anomaly back to implemented fix:
+
+```
+Production anomaly
+       │
+       ▼
+observability.yml ──► GitHub issue (labeled 'incident')
+                               │
+                 label 'new-wo'│ (human or auto)
+                               ▼
+                   planning-agent.yml ──► WO spec PR ──► human reviews & merges
+                                                                   │
+                                                       agent picks up WO Execution section
+                                                                   │
+                                                                   ▼
+                                                           implements on branch
+                                                                   │
+                                                              make ci-local
+                                                                   │
+                                                              opens PR
+                                                                   │
+                                                   ┌──────────────┴──────────────┐
+                                                   │                             │
+                                               ai-review.yml              ci.yml (lint/test/build)
+                                                   │                             │
+                                                   └──────────────┬──────────────┘
+                                                                  │
+                                                         merge (P2 auto / P1 human)
+                                                                  │
+                                                     ┌────────────┴────────────┐
+                                                     │                         │
+                                              verifier.yml            post-merge-memory.yml
+                                              (AC check)              (lesson extraction)
+                                                     │                         │
+                                          follow-up issue if           memory PR if lesson
+                                           criteria not met               found
+```
+
+### Setup sequence for the full loop
+
+In addition to the base bootstrap steps:
+
+1. **Planning agent:** Add a `new-wo` label to your repo (Settings → Labels → New label)
+2. **Observability:** Add `METRICS_ENDPOINT` as a repository variable (Settings → Variables → Actions)
+3. **Deploy:** Copy `deploy.yml.template` → `deploy.yml`, fill in deploy + smoke test steps
+4. **Thresholds:** Edit `scripts/observability_thresholds.json` for your error rate and latency SLOs
 
 ---
 

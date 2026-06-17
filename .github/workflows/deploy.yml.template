@@ -1,0 +1,91 @@
+# =============================================================================
+# deploy.yml.template — Continuous Deployment
+#
+# Copy to deploy.yml and fill in the {{...}} sections for your stack.
+#
+# Triggers on push to main (i.e., every merged PR).
+# Runs smoke tests after deploy. On failure, creates a GitHub issue
+# labeled 'incident' so the observability loop picks it up.
+#
+# Pattern: deploy is always attempted after CI passes. A failed deploy is
+# surfaced as an issue, not silenced with || true.
+# =============================================================================
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false   # Never cancel an in-flight deploy
+
+jobs:
+  deploy:
+    name: Deploy to {{ENVIRONMENT}}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # {{ADD LANGUAGE/RUNTIME SETUP STEP}}
+      # e.g.:
+      # - uses: actions/setup-python@v5
+      #   with:
+      #     python-version: "3.11"
+
+      - name: Authenticate with deploy target
+        run: |
+          # {{FILL IN — e.g.:}}
+          # echo "${{ secrets.DEPLOY_SSH_KEY }}" > /tmp/deploy_key && chmod 600 /tmp/deploy_key
+          # aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          echo "Fill in auth step"
+
+      - name: Deploy
+        id: deploy
+        run: |
+          # {{FILL IN — e.g.:}}
+          # Docker Compose (SSH to host):
+          #   ssh -i /tmp/deploy_key user@host "cd /app && docker compose pull && docker compose up -d"
+          #
+          # Kubernetes:
+          #   kubectl set image deployment/app app=${{ env.IMAGE_TAG }}
+          #
+          # Heroku:
+          #   git push heroku main
+          #
+          # Fly.io:
+          #   fly deploy
+          echo "Fill in deploy step"
+
+      - name: Smoke tests
+        id: smoke
+        run: |
+          # {{FILL IN — commands that verify the deploy succeeded}}
+          # Must exit non-zero if smoke tests fail.
+          # Keep these fast (<60s) — they are the deploy gate.
+          #
+          # Examples:
+          #   curl -sf http://{{HOST}}/api/health | jq -e '.status == "ok"'
+          #   python3 scripts/smoke_test.py --base-url http://{{HOST}}
+          echo "Fill in smoke tests"
+
+      - name: Create incident issue on failure
+        if: failure() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const step = '${{ steps.deploy.outcome }}' === 'failure' ? 'deploy' : 'smoke tests';
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Incident] ${step} failed on ${context.sha.substring(0, 8)}`,
+              body: `## Problem\n\nThe **${step}** step failed after merging commit ${context.sha}.\n\n**Commit:** ${{ github.event.head_commit.message }}\n**Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\n## Suggested Investigation\n\n- Check the failed run logs above\n- Verify the deploy target is reachable\n- Check if the commit introduced a breaking change\n\n---\n*Label this issue \`new-wo\` to have the planning agent draft a rollback/fix WO.*`,
+              labels: ['incident', 'needs-triage'],
+            });

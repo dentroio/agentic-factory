@@ -1,0 +1,75 @@
+# =============================================================================
+# observability.yml — Scheduled Health Check → Anomaly → WO Issue
+#
+# Polls your health/metrics endpoint every 15 minutes. If an anomaly is
+# detected, creates a GitHub issue labeled 'new-wo' — which triggers the
+# planning agent to draft a WO spec for the incident.
+#
+# This closes the full SDLC loop:
+#   production anomaly → GitHub issue → WO spec → implementation → merge
+#
+# Setup:
+#   1. Add METRICS_ENDPOINT as a repository variable (required)
+#   2. Add ANTHROPIC_API_KEY as a repository Actions secret
+#   3. Optionally add scripts/observability_thresholds.json to your repo
+# =============================================================================
+
+name: Observability — Health Check
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # Every 15 minutes
+  workflow_dispatch:           # Manual trigger for testing
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  health-check:
+    name: Health Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run observability agent
+        id: obs
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pip install anthropic --quiet
+          python3 scripts/observability_agent.py \
+            --endpoint "${{ vars.METRICS_ENDPOINT }}" \
+            --thresholds scripts/observability_thresholds.json \
+            --output /tmp/anomaly.md
+
+      - name: Create incident issue
+        if: steps.obs.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('/tmp/anomaly.md', 'utf8');
+            const now = new Date().toISOString();
+
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Incident] Anomaly detected at ${now}`,
+              body: `${report}\n\n---\n*Detected by observability agent. Label this issue \`new-wo\` to have the planning agent draft a WO spec.*`,
+              labels: ['incident', 'needs-triage'],
+            });
+
+            console.log(`Incident issue created: ${issue.data.html_url}`);
+
+      - name: Annotate run on anomaly
+        if: steps.obs.outcome == 'failure'
+        run: |
+          echo "::error::Anomaly detected — see GitHub issue for details"
+          exit 1

@@ -1,0 +1,94 @@
+# =============================================================================
+# post-merge-memory.yml — Automatic Memory Compaction
+#
+# Runs after every merge to main. Asks Claude to extract non-obvious lessons
+# from the merged diff and writes them to memory/ as a new memory file.
+#
+# If a memory file is written, it opens a PR to main so a human can review
+# and promote it to a named topic file (or discard it).
+#
+# Non-blocking — memory is advisory. Never fails the merge.
+#
+# Setup:
+#   Add ANTHROPIC_API_KEY as a repository Actions secret.
+# =============================================================================
+
+name: Memory Agent — Post-Merge Compaction
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  compact-memory:
+    name: Extract Post-Merge Lessons
+    runs-on: ubuntu-latest
+    # Skip merge commits from the memory agent itself to avoid infinite loops
+    if: "!contains(github.event.head_commit.message, 'memory(auto)')"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Get merged diff
+        run: |
+          git diff HEAD~1 HEAD \
+            '*.py' '*.ts' '*.tsx' '*.go' '*.java' '*.rs' \
+            ':!**/node_modules/**' ':!**/vendor/**' \
+            > /tmp/merged_diff.txt
+          echo "Diff lines: $(wc -l < /tmp/merged_diff.txt)"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run memory agent
+        id: memory
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_TITLE: ${{ github.event.head_commit.message }}
+        run: |
+          pip install anthropic --quiet
+          python3 scripts/memory_agent.py \
+            --diff /tmp/merged_diff.txt \
+            --pr-title "${{ github.event.head_commit.message }}" \
+            --pr-body "" \
+            --memory-dir memory \
+            --output /tmp/memory_path.txt
+
+          MEMORY_PATH=$(cat /tmp/memory_path.txt)
+          echo "memory_path=$MEMORY_PATH" >> $GITHUB_OUTPUT
+          echo "has_memory=$([ -n "$MEMORY_PATH" ] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+
+      - name: Open PR with new memory
+        if: steps.memory.outputs.has_memory == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const memoryPath = '${{ steps.memory.outputs.memory_path }}';
+            const sha = context.sha.substring(0, 8);
+            const branch = `memory/auto-${sha}`;
+
+            execSync('git config user.name "github-actions[bot]"');
+            execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+            execSync(`git checkout -b ${branch}`);
+            execSync(`git add "${memoryPath}"`);
+            execSync(`git commit -m "memory(auto): extract lesson from ${sha}"`);
+            execSync(`git push origin ${branch}`);
+
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `memory(auto): lesson from ${sha}`,
+              body: `## Auto-extracted memory\n\nThe memory agent found something non-obvious in the last merge.\n\n**Review options:**\n- Merge as-is to save the lesson (stays in \`memory/\` as an auto file)\n- Edit the file to rename it to a descriptive topic name and add a MEMORY.md pointer\n- Close without merging if the lesson is obvious or incorrect\n\nFile: \`${memoryPath}\``,
+              head: branch,
+              base: 'main',
+            });
+
+            console.log(`Memory PR: ${pr.data.html_url}`);

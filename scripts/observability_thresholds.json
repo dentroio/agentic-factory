@@ -1,0 +1,6 @@
+{
+  "_comment": "Thresholds for the observability agent. Customize for your stack.",
+  "error_rate_pct": 1.0,
+  "p99_latency_ms": 2000,
+  "unhealthy_services": []
+}
