@@ -35,8 +35,10 @@ jobs:
   advise:
     name: Merge Advisory
     runs-on: ubuntu-latest
-    # Only advise on PRs to main, not push events
-    if: github.event.workflow_run.event == 'pull_request'
+    # Only advise on PRs to main, not push events, and never on Dependabot PRs
+    if: |
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login != 'dependabot[bot]'
 
     steps:
       - name: Get PR context from triggering workflow

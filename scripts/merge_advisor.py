@@ -194,8 +194,10 @@ def main():
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        print("ERROR: ANTHROPIC_API_KEY not set", file=sys.stderr)
-        sys.exit(1)
+        print("ANTHROPIC_API_KEY not set — skipping merge advisory.", file=sys.stderr)
+        with open(args.output, "w") as f:
+            f.write("### Merge Advisory\n\n*Skipped — ANTHROPIC_API_KEY not configured.*\n")
+        sys.exit(0)
 
     pr_title = os.environ.get("PR_TITLE", "")
     pr_body = os.environ.get("PR_BODY", "")
