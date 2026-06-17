@@ -1,0 +1,112 @@
+# =============================================================================
+# ci.yml.template — PR Gate
+#
+# Copy to ci.yml and fill in the {{...}} sections for your stack.
+#
+# Pattern: all jobs are hard-blocking, run in parallel, no || true bypasses.
+# Add "Claude Code Review" to your GitHub Ruleset as a required status check.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # ── Secret Detection ────────────────────────────────────────────────────────
+  secrets:
+    name: Secret Detection (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Lint ────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # {{ADD LANGUAGE SETUP STEP — e.g. actions/setup-python, actions/setup-node}}
+      - name: Install linters
+        run: |
+          # {{FILL IN — e.g.}}
+          # pip install black ruff
+          # npm ci
+          echo "Fill in linter installation"
+      - name: Run linter
+        run: |
+          # {{FILL IN — e.g.}}
+          # black --check src/ && ruff check src/
+          # npx eslint src/ && npx tsc --noEmit
+          echo "Fill in lint command"
+
+  # ── Unit Tests ──────────────────────────────────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # {{ADD LANGUAGE SETUP STEP}}
+      - name: Install dependencies
+        run: |
+          # {{FILL IN}}
+          echo "Fill in dependency installation"
+      - name: Run tests
+        run: |
+          # {{FILL IN — e.g.}}
+          # pytest tests/unit/ -q --tb=short
+          # npm test -- --run
+          echo "Fill in test command"
+
+  # ── Build ───────────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # {{ADD LANGUAGE SETUP STEP}}
+      - name: Build
+        run: |
+          # {{FILL IN — e.g.}}
+          # npm run build
+          # docker compose build
+          echo "Fill in build command"
+
+  # ── Integration Tests (optional, requires services) ─────────────────────────
+  # integration:
+  #   name: Integration Tests
+  #   runs-on: ubuntu-latest
+  #   services:
+  #     postgres:
+  #       image: postgres:15
+  #       env:
+  #         POSTGRES_DB: {{DB_NAME}}
+  #         POSTGRES_USER: {{DB_USER}}
+  #         POSTGRES_PASSWORD: {{DB_PASS}}
+  #       ports: ["5432:5432"]
+  #       options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Run integration tests
+  #       env:
+  #         POSTGRES_HOST: localhost
+  #       run: |
+  #         # {{FILL IN}}
+  #         echo "Fill in integration test command"

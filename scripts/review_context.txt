@@ -1,0 +1,27 @@
+# Project-Specific AI Review Context
+#
+# This file is loaded by scripts/ai_review.py and added to the Claude system prompt
+# when reviewing PRs. Add checks that are specific to this project's stack and conventions.
+#
+# Format: plain text, one check per numbered item. Be specific — vague checks produce vague feedback.
+# Lines starting with # are not sent to the AI (strip them before deploying, or leave them;
+# the AI treats them as context comments and ignores them).
+#
+# Examples (remove/replace these with your actual project checks):
+#
+# 1. db.commit() after every db.execute() write — this project's DB adapter does NOT auto-commit.
+#    Flag any INSERT/UPDATE/DELETE that is not followed by db.commit().
+#
+# 2. Every new API route must include the require_role() dependency — missing auth gates
+#    are a critical security issue in this project.
+#
+# 3. New migration files must be registered in src/clarion/storage/adapter.py —
+#    there is NO auto-discovery. Flag any new migration file not added to the registry.
+#
+# 4. correlation_engine.py is baked into TWO containers (data-service and correlation-service).
+#    If this file is changed, both services must be rebuilt. Flag PR descriptions that only
+#    mention one service.
+#
+# Replace this file's contents with your own project-specific checks.
+# Delete this file entirely if you have no project-specific checks (the universal checks
+# defined in scripts/ai_review.py always apply regardless).

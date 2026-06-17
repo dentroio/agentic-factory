@@ -1,0 +1,193 @@
+# Agent Process — {{PROJECT_NAME}}
+
+> **Version:** 1.0  
+> **Template source:** [dentroio/agentic-factory](https://github.com/dentroio/agentic-factory)  
+> **This file is the single source of truth for all agents working on this repository.**
+
+All agents (Claude Code, Cursor, Codex, custom runners) MUST read this document before starting any implementation task.
+
+---
+
+## §1 Risk Tiers & Merge Authority
+
+Every work order (WO) is assigned a risk tier that determines who can merge.
+
+| Tier | Scope | Branch Required | Merge Authority |
+|------|-------|-----------------|-----------------|
+| **P0** | Auth, security, multi-tenant data isolation, breaking API contracts | Yes (`fix/` or `wo/`) | **Human must approve and merge — no exceptions** |
+| **P1** | DB schema migrations, new API routes, cross-service interfaces | Yes (`wo/`) | **Human must approve and merge** |
+| **P2** | Feature additions, UI changes, new tests, refactors | Yes (`wo/`) | Auto-merge after CI passes (`gh pr merge --auto --squash`) |
+| **P3** | Docs, PM files, comments, typos | No — commit directly to `main` | Direct push to main |
+
+**Hotfix track:** For urgent bug fixes that don't need a full WO spec, use a `fix/` branch. See §5.
+
+---
+
+## §2 Work Order Execution Flow
+
+Every non-trivial task starts as a Work Order (WO) spec in `docs/project_management/work_orders/`.
+
+```
+1. Read the WO spec — especially the ## Execution section
+2. Create the branch:  git checkout -b wo/NNN-short-description
+3. Implement the work
+4. Run the local CI gate: make ci-local  (must pass before pushing)
+5. Open the PR:  gh pr create --title "..." --body "..."
+6. P2: queue auto-merge:  gh pr merge --auto --squash
+   P0/P1: notify the human and wait
+7. Update PM docs: PROGRESS.md, CAPABILITY_STATUS.md
+```
+
+Never push directly to `main` for P0/P1/P2 work.
+
+---
+
+## §3 Local CI Gate (run before every PR)
+
+```bash
+make ci-local
+```
+
+This mirrors the PR gate exactly. A PR that fails CI will not merge. Do not open a PR without running this first.
+
+The `ci-local` target should include:
+- Lint (language-appropriate formatter + linter)
+- Unit tests
+- Type check (if applicable)
+- Build check
+
+---
+
+## §4 Work Order Spec Format
+
+Every WO spec lives at `docs/project_management/work_orders/WO-NNN-slug.md` and includes:
+
+```markdown
+# WO-NNN: Title
+
+**Status:** 📋 Open | 🔄 In Progress | ✅ Complete (YYYY-MM-DD)
+**Priority:** P0 | P1 | P2 | P3
+**Effort:** ~Xh
+
+## Background
+Why this work is needed.
+
+## What Needs to Happen
+Specific, actionable steps.
+
+## Acceptance Criteria
+Numbered, machine-checkable conditions for done.
+
+## Testing
+| Check | How |
+
+## Execution
+- **Branch:** `wo/NNN-slug`
+- **Risk tier:** P2 — auto-merge after CI passes
+- **PR title:** `feat(...): WO-NNN — Title`
+- **Pre-PR gate:** `make ci-local`
+- **Depends on:** none | WO-NNN
+- **PM docs to update:** PROGRESS.md row, CAPABILITY_STATUS.md section
+```
+
+The `## Execution` section is what allows any agent to pick up a WO cold without asking questions.
+
+---
+
+## §5 Hotfix Track
+
+For urgent fixes that don't have a WO spec:
+
+1. Branch from main: `git checkout -b fix/short-description`
+2. Fix the issue
+3. Run `make ci-local`
+4. Open PR with this body template:
+   ```
+   ## Problem
+   What is broken and how it was detected.
+
+   ## Fix
+   What was changed and why.
+
+   ## Verification
+   How to confirm the fix works.
+   ```
+5. Apply the risk tier from §1 — P0/P1 hotfixes still require human merge.
+
+---
+
+## §6 Parallel Agent Coordination
+
+When multiple agents work simultaneously:
+
+- **One agent per service** — if two agents touch the same service, they will conflict. Branch existence = claimed.
+- **Shared files are sequential, not parallel** — files touched by every WO must be edited one at a time:
+  - Migration runner / adapter registration file
+  - API route registry
+  - `PROGRESS.md` and other PM docs
+  - `Makefile`
+- **Safe to parallelize:** independent services, independent test files, independent WO specs
+- **Check before starting:** `git branch -r | grep wo/` — if a branch exists for your service, wait or coordinate.
+
+---
+
+## §7 Branch Naming
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| Work Order | `wo/NNN-short-description` | `wo/243-expand-python-tests` |
+| Hotfix | `fix/short-description` | `fix/auth-token-refresh` |
+| Feature (no WO) | `feat/short-description` | `feat/dark-mode-toggle` |
+
+---
+
+## §8 Commit Message Format
+
+```
+type(scope): WO-NNN — Short description
+
+Optional longer body explaining the why.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+```
+
+Types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`
+
+---
+
+## §9 GitHub Actions (CI Pipeline)
+
+Every PR runs these jobs. All must pass before merge:
+
+| Job | What it checks |
+|-----|---------------|
+| lint | Formatter + linter (project-specific) |
+| test | Unit test suite |
+| build | Build/compile check |
+| migration-check | Schema migration registry is consistent |
+| ai-review | Claude code review — exits 1 on "Review required" verdict |
+
+The AI review job (`ai-review.yml`) runs automatically on every PR. A "Review required" verdict blocks merge.
+
+---
+
+## §10 Critical Code Patterns
+
+> **Replace this section with project-specific invariants that agents must know.**
+> Examples from a FastAPI + PostgreSQL project:
+
+- Always `db.commit()` after every write — `execute()` does NOT auto-commit
+- Every new migration file must be registered in the migration runner — there is NO auto-discovery
+- Every new API route must have an authorization dependency
+- After any backend code change: rebuild the service image (`docker compose build <svc>`)
+
+---
+
+## §11 Never Do
+
+- Never force-push to `main`
+- Never skip the CI gate (`--no-verify`, commenting out tests, etc.)
+- Never commit secrets, credentials, or `.env` files
+- Never modify a shared file (migration runner, route registry) on two branches simultaneously
+- Never mark a WO complete without updating `PROGRESS.md`
+- Never merge a P0/P1 PR without human review, even if CI passes

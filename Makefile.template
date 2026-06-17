@@ -1,0 +1,82 @@
+# {{PROJECT_NAME}} — Makefile
+# Copy to Makefile and fill in the {{...}} sections for your stack.
+#
+# The ci-local target MUST mirror the GitHub Actions PR gate exactly.
+# Every agent runs `make ci-local` before opening a PR.
+
+.PHONY: help install test lint build ci-local clean
+
+help:  ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	  awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+
+# ── Setup ─────────────────────────────────────────────────────────────────────
+
+install:  ## Install dependencies + pre-commit hooks
+	# Python example:
+	# pip install -r requirements-dev.txt -e .
+	# pre-commit install
+	#
+	# Node example:
+	# npm ci
+	#
+	# {{FILL IN FOR YOUR STACK}}
+	@echo "Fill in install target for your stack"
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+
+test:  ## Run unit tests
+	# Python example:  pytest tests/unit/ -q --tb=short
+	# Node example:    npm test -- --run
+	# {{FILL IN}}
+	@echo "Fill in test target"
+
+test-integration:  ## Run integration tests (requires external services)
+	# Python example:  POSTGRES_HOST=localhost pytest tests/integration/ -v
+	# {{FILL IN}}
+	@echo "Fill in integration test target"
+
+# ── Code quality ──────────────────────────────────────────────────────────────
+
+lint:  ## Lint and format check
+	# Python example:  black --check src/ && ruff check src/
+	# Node example:    npx eslint src/ && npx tsc --noEmit
+	# {{FILL IN}}
+	@echo "Fill in lint target"
+
+format:  ## Auto-format code
+	# Python example:  black src/ services/ tests/ && ruff check --fix src/
+	# Node example:    npx prettier --write src/
+	# {{FILL IN}}
+	@echo "Fill in format target"
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+
+build:  ## Build the project
+	# Python: usually no-op (or docker build)
+	# Node example:    npm run build
+	# Docker example:  docker compose build
+	# {{FILL IN}}
+	@echo "Fill in build target"
+
+# ── Migration check ───────────────────────────────────────────────────────────
+
+check-migrations:  ## Verify all migrations are registered (if applicable)
+	# Python example:
+	# python scripts/check_migrations.py
+	# {{FILL IN OR REMOVE IF NOT APPLICABLE}}
+	@echo "Fill in or remove check-migrations target"
+
+# ── CI gate ───────────────────────────────────────────────────────────────────
+
+ci-local:  ## Full PR gate locally — run this before every PR
+	$(MAKE) lint
+	$(MAKE) test
+	$(MAKE) check-migrations
+	$(MAKE) build
+
+# ── Cleanup ───────────────────────────────────────────────────────────────────
+
+clean:  ## Remove build artifacts and caches
+	# {{FILL IN FOR YOUR STACK}}
+	@echo "Fill in clean target"
