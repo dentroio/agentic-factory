@@ -131,6 +131,11 @@ Then add `METRICS_ENDPOINT` as a GitHub Actions variable: **Settings → Variabl
 
 Run `python3 scripts/factory_status.py` to get a health snapshot. Common issues to watch for:
 
+**Agent pushed but CI failed and agent doesn't know**
+- The `ci-failure-notifier.yml` workflow handles this automatically — it posts a comment on the PR with the specific failing tests and error output
+- The agent should check its open PR for comments before considering work done
+- If the notifier didn't fire (e.g., no open PR found), post the failure manually: `gh run view <run-id> --log-failed`
+
 **CI is broken**
 - Look at the failing job in GitHub Actions
 - Check if a new check was added to `ci.yml` but not to `make ci-local` in `Makefile`

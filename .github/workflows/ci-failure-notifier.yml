@@ -1,0 +1,190 @@
+# =============================================================================
+# ci-failure-notifier.yml — Agent CI Feedback Loop
+#
+# When CI fails on a PR, posts a comment with the specific failing test output
+# so the agent that opened the PR knows exactly what to fix — without a human
+# having to relay the information.
+#
+# The agent's workflow is:
+#   push → CI runs → (if fail) this workflow posts failure details on the PR
+#   → agent reads PR comments → agent fixes and pushes → CI re-runs
+#
+# This closes the feedback loop that would otherwise require a human to
+# notice the failure and tell the agent about it.
+# =============================================================================
+
+name: CI Failure Notifier
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
+jobs:
+  notify:
+    name: Post failure details on PR
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'failure'
+
+    steps:
+      - name: Find PR for this workflow run
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const headSha = '${{ github.event.workflow_run.head_sha }}';
+            const headBranch = '${{ github.event.workflow_run.head_branch }}';
+            const headRepo = '${{ github.event.workflow_run.head_repository.full_name }}';
+
+            // Find open PRs matching this branch/sha
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${headRepo.split('/')[0]}:${headBranch}`,
+            });
+
+            if (prs.data.length === 0) {
+              console.log('No open PR found for this branch — skipping');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            const pr = prs.data[0];
+            core.setOutput('pr_number', pr.number);
+            core.setOutput('skip', 'false');
+            console.log(`Found PR #${pr.number}`);
+
+      - name: Get failed job details
+        id: failures
+        if: steps.pr.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runId = '${{ github.event.workflow_run.id }}';
+
+            const jobs = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: parseInt(runId),
+            });
+
+            const failed = jobs.data.jobs.filter(j => j.conclusion === 'failure');
+
+            let summary = '';
+            for (const job of failed) {
+              summary += `### ❌ ${job.name}\n\n`;
+              const failedSteps = job.steps?.filter(s => s.conclusion === 'failure') || [];
+              for (const step of failedSteps) {
+                summary += `**Step failed:** ${step.name}\n\n`;
+              }
+            }
+
+            // Get the workflow run logs URL
+            const runUrl = '${{ github.event.workflow_run.html_url }}';
+            core.setOutput('summary', summary);
+            core.setOutput('run_url', runUrl);
+            core.setOutput('run_id', runId);
+
+      - name: Download failed job logs
+        if: steps.pr.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        id: logs
+        with:
+          script: |
+            const runId = '${{ github.event.workflow_run.id }}';
+
+            const jobs = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: parseInt(runId),
+            });
+
+            const failed = jobs.data.jobs.filter(j => j.conclusion === 'failure');
+            let logExcerpt = '';
+
+            for (const job of failed.slice(0, 2)) {
+              try {
+                const logs = await github.rest.actions.downloadJobLogsForWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  job_id: job.id,
+                });
+                // Extract last 100 lines, filter to key failure lines
+                const text = logs.data;
+                const lines = text.split('\n');
+                const keyLines = lines.filter(l =>
+                  /FAILED|Error:|error:|assert|AssertionError|raise|ValueError|TypeError|FAILURES/.test(l) &&
+                  !/node_modules|DeprecationWarning|warning/.test(l)
+                ).slice(0, 30);
+                if (keyLines.length > 0) {
+                  logExcerpt += `**${job.name}:**\n\`\`\`\n${keyLines.join('\n')}\n\`\`\`\n\n`;
+                }
+              } catch (e) {
+                logExcerpt += `**${job.name}:** _(logs unavailable)_\n\n`;
+              }
+            }
+
+            core.setOutput('log_excerpt', logExcerpt.slice(0, 8000));
+
+      - name: Check for existing failure comment
+        id: existing
+        if: steps.pr.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = parseInt('${{ steps.pr.outputs.pr_number }}');
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+
+            // Find and delete previous CI failure comment (replace, don't stack)
+            for (const c of comments.data) {
+              if (c.body.startsWith('## ⚠️ CI Failure')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: c.id,
+                });
+              }
+            }
+
+      - name: Post failure comment on PR
+        if: steps.pr.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = parseInt('${{ steps.pr.outputs.pr_number }}');
+            const runUrl = '${{ steps.failures.outputs.run_url }}';
+            const summary = `${{ steps.failures.outputs.summary }}`;
+            const logExcerpt = `${{ steps.logs.outputs.log_excerpt }}`;
+
+            const body = `## ⚠️ CI Failure — Action Required
+
+CI failed on this PR. Fix the issues below and push to this branch — CI will re-run automatically.
+
+${summary}
+### Failure details
+
+${logExcerpt || '_See the full run logs for details._'}
+
+**Full run:** ${runUrl}
+
+---
+*To fix: read the errors above, update the code on branch \`${{ github.event.workflow_run.head_branch }}\`, and push. Do not open a new PR.*`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body,
+            });
+
+            console.log(`Posted failure comment on PR #${prNumber}`);

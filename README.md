@@ -24,6 +24,7 @@ Born from production use on the [Clarion](https://github.com/dentroio/clarion) p
 | **SDLC Agents** | |
 | `.github/workflows/planning-agent.yml` | Triggered by `new-wo` issue label → drafts WO spec → opens PR |
 | `.github/workflows/verifier.yml` | Post-merge → checks AC from WO spec against diff → opens follow-up issue on failure |
+| `.github/workflows/ci-failure-notifier.yml` | When CI fails → posts failure details + log excerpt on the PR so the agent knows what to fix |
 | `.github/workflows/merge-advisor.yml` | After AI review → synthesizes all signals → posts ✅/⚠️/❌ merge recommendation |
 | `.github/workflows/post-merge-memory.yml` | Post-merge → extracts lessons → opens memory PR |
 | `.github/workflows/observability.yml` | Scheduled → polls health endpoint → creates incident issue on anomaly |
