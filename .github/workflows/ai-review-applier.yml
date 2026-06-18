@@ -171,7 +171,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: Apply file changes
+      - name: Check if edits were applied
         id: write_files
         if: steps.check.outputs.skip != 'true'
         run: |
@@ -181,26 +181,14 @@ jobs:
           with open('/tmp/apply_result.json') as f:
               result = json.load(f)
 
-          if not result.get('can_apply') or not result.get('changes'):
-              print(f"Skipping: {result.get('reason', 'no changes')}")
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                  f.write('applied=false\n')
-                  f.write(f"reason={result.get('reason', 'no actionable changes')}\n")
-              sys.exit(0)
+          # Edits were already applied to workspace files by ai_review_apply.py.
+          # applied_files is populated only when at least one edit landed.
+          applied = result.get('can_apply') and bool(result.get('applied_files'))
 
-          for change in result['changes']:
-              path = change['path']
-              dirpath = os.path.dirname(path)
-              if dirpath:
-                  os.makedirs(dirpath, exist_ok=True)
-              with open(path, 'w') as f:
-                  f.write(change['content'])
-              print(f"Wrote {path}")
-
-          summary = result.get('summary', 'Applied AI review suggestions')
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write('applied=true\n')
-              f.write(f"summary={summary}\n")
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f"applied={'true' if applied else 'false'}\n")
+              out.write(f"summary={result.get('summary', 'Applied AI review suggestions')}\n")
+              out.write(f"reason={result.get('reason', 'No actionable changes found')}\n")
           PYEOF
 
       - name: Commit and push applied suggestions
