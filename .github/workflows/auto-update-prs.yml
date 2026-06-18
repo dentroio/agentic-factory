@@ -1,0 +1,70 @@
+# =============================================================================
+# auto-update-prs.yml — Keep Agent PRs Current With Main
+#
+# Every time a commit lands on main, finds all open PRs that have auto-merge
+# enabled and are behind main, then triggers GitHub's "Update Branch" on each.
+# This merges main into the PR branch, which kicks off a fresh CI run.
+# When CI passes, auto-merge fires automatically.
+#
+# Why: When many PRs merge in quick succession (e.g., dependency bumps), all
+# in-flight agent branches fall behind. With strict_required_status_checks_policy
+# enabled, "behind" branches are blocked from merging — an agent pushing a PR
+# and enabling auto-merge would be stuck indefinitely unless someone manually
+# clicked "Update branch". This workflow closes that gap.
+#
+# Alternative considered: GitHub Merge Queue (requires Team/Enterprise plan).
+# This approach is free and has the same end-to-end effect.
+# =============================================================================
+
+name: Auto-Update PRs Behind Main
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-behind-prs:
+    name: Update auto-merge PRs behind main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find and update PRs behind main
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+
+            const prs = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100,
+            });
+
+            const behind = prs.data.filter(pr =>
+              pr.auto_merge !== null && pr.mergeable_state === 'behind'
+            );
+
+            if (behind.length === 0) {
+              console.log('No auto-merge PRs are behind main — nothing to do.');
+              return;
+            }
+
+            console.log(`Found ${behind.length} auto-merge PR(s) behind main.`);
+
+            for (const pr of behind) {
+              try {
+                await github.rest.pulls.updateBranch({
+                  owner,
+                  repo,
+                  pull_number: pr.number,
+                });
+                console.log(`✅ Updated PR #${pr.number}: ${pr.title}`);
+              } catch (err) {
+                // Common reason: branch has conflicts — log and move on
+                console.log(`⚠️  PR #${pr.number} could not be updated: ${err.message}`);
+              }
+            }

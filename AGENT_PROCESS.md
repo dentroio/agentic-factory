@@ -32,10 +32,13 @@ Every non-trivial task starts as a Work Order (WO) spec in `docs/project_managem
 2. Create the branch:  git checkout -b wo/NNN-short-description
 3. Implement the work
 4. Run the local CI gate: make ci-local  (must pass before pushing)
-5. Open the PR:  gh pr create --title "..." --body "..."
-6. P2: queue auto-merge:  gh pr merge --auto --squash
+5. Sync with main before opening the PR:
+     git pull --rebase origin main
+   If rebase conflicts: git rebase --abort && git merge origin/main --no-edit
+6. Open the PR:  gh pr create --title "..." --body "..."
+7. P2: queue auto-merge:  gh pr merge --auto --squash
    P0/P1: notify the human and wait
-7. Update PM docs: PROGRESS.md, CAPABILITY_STATUS.md
+8. Update PM docs: PROGRESS.md, CAPABILITY_STATUS.md
 ```
 
 Never push directly to `main` for P0/P1/P2 work.
