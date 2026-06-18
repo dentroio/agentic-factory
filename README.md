@@ -39,7 +39,22 @@ Born from production use on the [Clarion](https://github.com/dentroio/clarion) p
 
 ---
 
-## Bootstrap a new project in 10 minutes
+## The fastest path: talk to the Project Engineer
+
+After creating your repo from this template, open Claude Code in the repo and say:
+
+> **"Read ENGINEER.md and help me set up the factory."**
+
+The Project Engineer agent will check what's already configured, walk you through CI, CD, branch protection, AI review context, and the memory system — one step at a time. Most projects are fully set up in 15–20 minutes.
+
+To check status at any time:
+```bash
+python3 scripts/factory_status.py
+```
+
+---
+
+## Manual bootstrap (if you prefer)
 
 ### 1. Create your repo from this template
 

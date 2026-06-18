@@ -1,5 +1,17 @@
 # Claude Code — {{PROJECT_NAME}}
 
+## First time here?
+
+Run the factory status check:
+```bash
+python3 scripts/factory_status.py
+```
+
+If anything is missing, say: **"Read ENGINEER.md and help me finish setting up the factory."**
+That activates the Project Engineer — an agent persona that walks you through CI, CD, branch protection, AI review, and the full agent loop.
+
+---
+
 **Read `AGENT_PROCESS.md` before starting any implementation task.** It is the single source of truth for how agents work on this repository: risk tiers, branch/PR workflow, merge authority, and critical code patterns.
 
 ## Quick reference

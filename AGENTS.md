@@ -2,6 +2,12 @@
 
 This file is the entry point for OpenAI Codex and other agents that read `AGENTS.md`.
 
+## Setting up this factory for the first time?
+
+Read `ENGINEER.md` and act as the Project Engineer. Run `python3 scripts/factory_status.py` first to see what needs to be configured.
+
+---
+
 **Read `AGENT_PROCESS.md` before starting any implementation task.**
 
 ## What you need to know
