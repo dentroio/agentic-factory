@@ -1,0 +1,261 @@
+# =============================================================================
+# ai-review-applier.yml — Apply AI Review Suggestions Automatically
+#
+# When the AI Code Review posts a "Needs attention" verdict on an agent PR,
+# this workflow reads the Suggestions section, calls Claude to apply them
+# as code changes, and commits back to the branch. The AI review then
+# re-runs on the new commit — if suggestions were addressed, verdict moves
+# to LGTM and auto-merge fires.
+#
+# Loop guard: if the HEAD commit contains [ai-review-apply] in its message,
+# the workflow exits immediately — one pass per review cycle.
+#
+# Only runs on agent PRs (label `agent-pr` OR known bot accounts). Human
+# PRs are reviewed by humans, not auto-patched.
+#
+# Cost: ~6K tokens per apply attempt ≈ $0.03–0.08 per PR.
+# =============================================================================
+
+name: AI Review Applier
+
+on:
+  workflow_run:
+    workflows: ["AI Code Review"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  apply-suggestions:
+    name: Apply AI review suggestions
+    runs-on: ubuntu-latest
+    # Only fire when review passed (not "Review required" — those block merge and need human)
+    if: github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Find PR and check eligibility
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const headBranch = '${{ github.event.workflow_run.head_branch }}';
+            const headRepo = '${{ github.event.workflow_run.head_repository.full_name }}';
+            const headSha = '${{ github.event.workflow_run.head_sha }}';
+
+            // Loop guard: if HEAD commit was itself an auto-apply, stop immediately
+            const headCommit = await github.rest.repos.getCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: headSha,
+            });
+            if ((headCommit.data.commit.message || '').includes('[ai-review-apply]')) {
+              console.log('HEAD commit is an auto-apply — stopping to prevent loop');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            // Find open PR for this branch
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${headRepo.split('/')[0]}:${headBranch}`,
+            });
+
+            if (prs.data.length === 0) {
+              console.log('No open PR — skipping');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            const pr = prs.data[0];
+            const prNumber = pr.number;
+
+            // Only auto-apply on agent PRs
+            const AGENT_ACCOUNTS = ['github-actions[bot]', 'claude-code-bot'];
+            const isAgentPR =
+              pr.labels.some(l => l.name === 'agent-pr') ||
+              AGENT_ACCOUNTS.includes(pr.user.login);
+
+            if (!isAgentPR) {
+              console.log(`PR #${prNumber} is not an agent PR — skipping (human PRs reviewed by humans)`);
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            // Find the latest AI review comment
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+
+            const reviewComments = comments.data
+              .filter(c => c.body.startsWith('## 🤖 AI Code Review'))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+            if (reviewComments.length === 0) {
+              console.log('No AI review comment found — skipping');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            const latestReview = reviewComments[0];
+            const body = latestReview.body;
+
+            // Only act on "Needs attention" — LGTM needs no action
+            if (!body.includes('Needs attention')) {
+              console.log('Verdict is LGTM or Review Required — no action needed');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            // Extract the Suggestions section
+            const suggestionsMatch = body.match(/### Suggestions\n([\s\S]*?)(?:\n###|$)/);
+            const suggestions = suggestionsMatch ? suggestionsMatch[1].trim() : '';
+
+            if (!suggestions || suggestions === 'None.' || suggestions === 'None') {
+              console.log('No actionable suggestions in review — skipping');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            console.log(`PR #${prNumber} has suggestions to apply`);
+            core.setOutput('skip', 'false');
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('head_branch', headBranch);
+            core.setOutput('review_body', body.slice(0, 8000));
+            core.setOutput('suggestions', suggestions.slice(0, 4000));
+
+      - name: Checkout PR branch
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.check.outputs.head_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get PR diff for context
+        if: steps.check.outputs.skip != 'true'
+        id: diff
+        run: |
+          git diff origin/main...HEAD -- \
+            '*.py' '*.ts' '*.tsx' '*.go' '*.java' '*.rs' \
+            ':!**/node_modules/**' ':!**/vendor/**' \
+            > /tmp/pr_diff.txt
+          echo "lines=$(wc -l < /tmp/pr_diff.txt)" >> $GITHUB_OUTPUT
+
+      - name: Set up Python
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        if: steps.check.outputs.skip != 'true'
+        run: pip install anthropic --quiet
+
+      - name: Call Claude to apply suggestions
+        id: apply
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          python3 scripts/ai_review_apply.py \
+            --diff /tmp/pr_diff.txt \
+            --suggestions "${{ steps.check.outputs.suggestions }}" \
+            --review "${{ steps.check.outputs.review_body }}" \
+            --output-file /tmp/apply_result.json
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Apply file changes
+        id: write_files
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+
+          with open('/tmp/apply_result.json') as f:
+              result = json.load(f)
+
+          if not result.get('can_apply') or not result.get('changes'):
+              print(f"Skipping: {result.get('reason', 'no changes')}")
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('applied=false\n')
+                  f.write(f"reason={result.get('reason', 'no actionable changes')}\n")
+              sys.exit(0)
+
+          for change in result['changes']:
+              path = change['path']
+              dirpath = os.path.dirname(path)
+              if dirpath:
+                  os.makedirs(dirpath, exist_ok=True)
+              with open(path, 'w') as f:
+                  f.write(change['content'])
+              print(f"Wrote {path}")
+
+          summary = result.get('summary', 'Applied AI review suggestions')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('applied=true\n')
+              f.write(f"summary={summary}\n")
+          PYEOF
+
+      - name: Commit and push applied suggestions
+        if: steps.check.outputs.skip != 'true' && steps.write_files.outputs.applied == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --staged --quiet && echo "No changes to commit" && exit 0
+          git commit -m "refactor(ai-review): apply review suggestions [ai-review-apply]
+
+          ${{ steps.write_files.outputs.summary }}
+
+          Auto-applied by ai-review-applier.yml — AI review will re-run."
+          git push
+
+      - name: Post applied comment on PR
+        if: steps.check.outputs.skip != 'true' && steps.write_files.outputs.applied == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt('${{ steps.check.outputs.pr_number }}'),
+              body: `## 🤖 AI Review Suggestions Applied
+
+I applied the suggestions from the AI code review. The review is re-running on the updated code.
+
+**Changes:** ${{ steps.write_files.outputs.summary }}
+
+If the new review verdict is LGTM, auto-merge will fire. If there are remaining issues, they will appear in the next review comment.
+
+---
+*Applied by \`ai-review-applier.yml\` — powered by Claude*`,
+            });
+
+      - name: Post skip comment if suggestions could not be applied
+        if: steps.check.outputs.skip != 'true' && steps.write_files.outputs.applied == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const reason = '${{ steps.write_files.outputs.reason }}' || 'Suggestions require human judgment';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt('${{ steps.check.outputs.pr_number }}'),
+              body: `## 🤖 AI Review Suggestions — Manual Review Needed
+
+The AI code review posted suggestions but I could not apply them automatically.
+
+**Why:** ${reason}
+
+Please review the AI code review comment above and address the suggestions manually, or approve the PR if the suggestions are non-critical.
+
+---
+*Assessed by \`ai-review-applier.yml\`*`,
+            });
