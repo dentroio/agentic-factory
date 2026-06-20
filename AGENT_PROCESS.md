@@ -29,19 +29,56 @@ Every non-trivial task starts as a Work Order (WO) spec in `docs/project_managem
 
 ```
 1. Read the WO spec — especially the ## Execution section
-2. Create the branch:  git checkout -b wo/NNN-short-description
-3. Implement the work
-4. Run the local CI gate: make ci-local  (must pass before pushing)
-5. Sync with main before opening the PR:
+2. Read ## Development Environment (below) — know where the app runs before writing code
+3. Create the branch:  git checkout -b wo/NNN-short-description
+4. Implement the work
+5. Deploy and verify (see §2a)
+6. Run the local CI gate: make ci-local  (must pass before pushing)
+7. Sync with main before opening the PR:
      git pull --rebase origin main
    If rebase conflicts: git rebase --abort && git merge origin/main --no-edit
-6. Open the PR:  gh pr create --title "..." --body "..."
-7. P2: queue auto-merge:  gh pr merge --auto --squash
+8. Open the PR with a UI Verification section (see §4 template)
+9. P2: queue auto-merge:  gh pr merge --auto --squash
    P0/P1: notify the human and wait
-8. Update PM docs: PROGRESS.md, CAPABILITY_STATUS.md
+10. Update PM docs: PROGRESS.md, CAPABILITY_STATUS.md
 ```
 
 Never push directly to `main` for P0/P1/P2 work.
+
+---
+
+## §2a Deploy and Verify
+
+**This step differs depending on the project's deployment model. Read `## Development Environment` to know which applies.**
+
+### Local Docker projects (no CD)
+
+After implementing, rebuild every backend service you changed and confirm the feature works before running `make ci-local` or opening a PR.
+
+```bash
+# Auto-detect changed services, rebuild + redeploy, wait for healthy
+make deploy-changed
+
+# Or rebuild one service manually
+make build-svc SVC=<service-name>
+make wait-healthy
+```
+
+Then verify the specific feature: new API endpoint with `curl`, new migration with a `psql` column check, service startup with `make logs-svc`.
+
+For **frontend changes**: if the project uses a dev server (Vite, Next.js dev), changes are live instantly — no rebuild needed. Open the browser and confirm.
+
+**If you are a remote agent** (running on cloud infrastructure, not on the developer's machine): you cannot run `docker compose` or reach `localhost`. Stop at `make ci-local`. In the PR body, write explicit numbered UI Verification steps so the developer can test manually.
+
+### CD-based projects
+
+After merging to main, `deploy.yml` deploys to staging automatically. Verify features at the staging URL listed in `## Development Environment`. Do not attempt to verify against localhost — there is no local deployment.
+
+### UI Verification (required for every PR)
+
+Whether local Docker or CD, every PR must include a `## UI Verification` section in its body (see §4 PR template). This is how the human reviewer knows what to click in the browser to confirm the feature works.
+
+If the WO has no frontend impact, write: `No UI changes — backend / API only.`
 
 ---
 
@@ -91,9 +128,48 @@ Numbered, machine-checkable conditions for done.
 - **Pre-PR gate:** `make ci-local`
 - **Depends on:** none | WO-NNN
 - **PM docs to update:** PROGRESS.md row, CAPABILITY_STATUS.md section
+
+### UI Verification
+1. Open {{APP_URL}} — log in as {{TEST_USER}}
+2. Navigate to {{exact menu path}}
+3. {{Specific action: click X, fill in Y, save}}
+4. Expected: {{exact result — label, badge, row in table}}
+5. Confirm no errors in browser DevTools console
+
+(Replace with "No UI changes — backend / API only." for backend-only WOs.)
 ```
 
-The `## Execution` section is what allows any agent to pick up a WO cold without asking questions.
+The `## Execution` section is what allows any agent to pick up a WO cold without asking questions. The `### UI Verification` subsection is what the developer (or QA) follows in the browser to confirm the feature works — write it before implementation so the acceptance target is clear.
+
+### PR body template
+
+Every PR must use this body structure:
+
+```markdown
+## Summary
+- What changed and why
+
+## Work Order
+WO-NNN — [title](docs/project_management/work_orders/WO-NNN-slug.md)
+
+## Migrations
+- [ ] No new migration files  (or: migration added, registered, uses IF NOT EXISTS guards)
+
+## Test plan
+- [ ] make ci-local passes
+- [ ] Relevant unit tests pass or were added
+
+## UI Verification
+1. Open {{APP_URL}} — log in as {{TEST_USER}}
+2. Navigate to {{exact page}}
+3. {{Action}}
+4. Expected: {{exact result}}
+5. Confirm no errors in browser DevTools console
+
+(Replace with "No UI changes — backend / API only." if no frontend impact.)
+
+🤖 Generated with [Claude Code / Cursor / Codex]
+```
 
 ---
 

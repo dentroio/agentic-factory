@@ -68,6 +68,18 @@ _Technical approach. Reference files, data models, and APIs by name. If multiple
 **Key constraints:**
 - List any invariants the agent must not violate (db patterns, auth gates, etc.)
 
+### UI Verification
+
+Steps a human can follow in the browser to confirm this WO is working — write these before implementation:
+
+1. Open `{{APP_URL}}` — log in as `{{TEST_USER}}`
+2. Navigate to `{{exact menu path}}`
+3. `{{Specific action: click X, fill in Y, save}}`
+4. Expected: `{{exact result — label text, status badge, row in table, etc.}}`
+5. Confirm no errors in browser DevTools console
+
+> Replace this entire subsection with `No UI changes — backend / API only.` if this WO has no frontend impact.
+
 ---
 
 ## Notes / Context

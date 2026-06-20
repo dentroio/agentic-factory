@@ -146,6 +146,18 @@ Every work order has a risk tier that determines the merge workflow:
 | **P2** | Additive features, tests, docs | Agent opens PR → `gh pr merge --auto --squash` |
 | **P3** | Docs, PM files only | Agent commits directly to `main` |
 
+### Deployment model declaration
+
+Before agents start working, the project declares its deployment model in `AGENT_PROCESS.md` under `## Development Environment`. Agents read this at the start of every session. Two models are supported:
+
+**Local Docker (single dev machine, no CD)**
+Code changes must be pushed into the running Docker containers before verification. Agents run `make deploy-changed` after implementing a WO — this auto-detects which services changed, rebuilds and redeploys them, and blocks until healthy. There is no staging URL; everything runs on `localhost`.
+
+**CD-based (staging/production)**
+Code changes are deployed automatically after merging to main via `deploy.yml`. Agents verify against the staging URL after merge. No local container rebuild needed.
+
+The declaration tells agents: "if you can't reach localhost, stop at `make ci-local` and write verification steps for the human instead."
+
 ### The CI gate
 
 Every agent runs `make ci-local` before opening a PR. The local gate mirrors CI exactly:
@@ -153,6 +165,8 @@ Every agent runs `make ci-local` before opening a PR. The local gate mirrors CI 
 ```
 lint → test → check-migrations → build
 ```
+
+For local Docker projects, `make ci-local` is preceded by `make deploy-changed` (container rebuild + health gate). The CI gate is code quality only — it does not deploy anything.
 
 No `|| true` bypasses. A broken step must be visible.
 
@@ -169,6 +183,23 @@ Verdict meanings:
 - **LGTM** — all checks pass
 - **Needs attention** — warnings exist, merge allowed
 - **Review required** — a check failed, merge blocked
+
+### UI verification in every PR
+
+Every PR body must include a `## UI Verification` section — a numbered checklist the developer can follow in the browser to confirm the feature works, without reading the code:
+
+```
+## UI Verification
+1. Open http://localhost:5173 — log in as admin
+2. Navigate to Settings → Connectors
+3. Click Add Connector, select WLC 9800, fill in hostname
+4. Expected: green "Connected" badge within 30 seconds
+5. Confirm no errors in browser DevTools console
+```
+
+Backend-only PRs write: `No UI changes — backend / API only.`
+
+This makes every PR self-describing for QA and human reviewers. The WO spec's `### UI Verification` subsection is where agents write these steps *before* implementing — it defines what "done" looks like in the browser.
 
 ### Parallel agent coordination
 

@@ -45,18 +45,65 @@ Ask what CI steps they need (lint command, test command, build command, Python v
 - **Node:** `npm ci`, `npm run lint`, `npm test`, `npm run build`
 - **Go:** `go vet ./...`, `go test ./...`, `go build ./...`
 
-#### 4. CD workflow
+#### 4. Development environment declaration (required before CD)
+
+**Check:** `AGENT_PROCESS.md` contains a `## Development Environment` section that describes where the app runs
+**Fix:** Ask these two questions first — they determine whether to set up CD at all:
+
+**Q1: Where does this project run?**
+- **A) Local machine only** — Docker Compose on a dev PC, no staging URL, no remote deploy. This is common for early-stage projects.
+- **B) Remote environment** — staging/production servers, Kubernetes, Heroku, Railway, etc.
+
+**Q2: Does the frontend run in a container or a dev server?**
+- **A) Dev server** (Vite, Next.js dev, Create React App) — hot-reloads instantly, no rebuild needed for frontend changes
+- **B) Container / static build** — must rebuild to see changes
+
+Record these answers in `AGENT_PROCESS.md` under a `## Development Environment` section (see template below). Agents read this on every session start to know what verification means.
+
+**Template for local Docker projects (most common for early-stage):**
+```markdown
+## Development Environment
+
+This project runs on a single development machine. There is no staging environment and no CD pipeline.
+
+| Layer | Runtime | Address |
+|---|---|---|
+| Backend API | Docker Compose | `http://localhost:{{PORT}}` |
+| Frontend | {{Vite dev server / container}} | `http://localhost:{{FRONTEND_PORT}}` |
+| Database | Docker container | internal |
+
+GitHub Actions CI runs lint, tests, and build checks only. It does NOT deploy anything.
+
+After any backend code change, rebuild the affected service before verifying:
+`make build-svc SVC=<name>` or `make deploy-changed` (auto-detects changed services)
+
+If you are a remote agent without access to localhost: stop at `make ci-local` and write explicit UI Verification steps in the PR body for the human to execute.
+```
+
+**Template for CD-based projects:**
+```markdown
+## Development Environment
+
+| Environment | URL | Deploy trigger |
+|---|---|---|
+| Staging | `https://staging.{{domain}}` | Push to `main` (auto via `deploy.yml`) |
+| Production | `https://{{domain}}` | Manual approval in GitHub Actions |
+
+After a PR merges, `deploy.yml` deploys to staging automatically. Verify features at the staging URL.
+```
+
+#### 4b. CD workflow (skip if local Docker only)
+
 **Check:** `.github/workflows/deploy.yml` exists and contains no `{{...}}` placeholders
-**Fix:** Copy the template and fill it in:
+**Fix:** Only needed if the project deploys to a remote environment. Copy the template and fill it in:
 ```bash
 cp .github/workflows/deploy.yml.template .github/workflows/deploy.yml
 ```
 Ask:
-- What is the deploy command? (e.g., `docker compose up -d`, `kubectl apply -f k8s/`, `heroku container:push`)
-- What environment are they deploying to? (staging / production)
+- What is the deploy command? (e.g., `kubectl apply -f k8s/`, `heroku container:push`)
 - What is the health endpoint URL after deploy? (e.g., `https://api.example.com/health`)
 
-If they don't have a deploy process yet, it's fine to skip this — mark it as deferred and move on.
+If they only run locally (local Docker), skip this entirely. Note it in the environment declaration as "No CD pipeline."
 
 #### 5. GitHub secret — ANTHROPIC_API_KEY
 **Check:** Ask the user if they've added it. (We can't read secrets via the API.)

@@ -3,8 +3,14 @@
 #
 # The ci-local target MUST mirror the GitHub Actions PR gate exactly.
 # Every agent runs `make ci-local` before opening a PR.
+#
+# If this project uses Docker Compose for local development, also fill in the
+# Docker section below (build-svc, deploy-changed, verify-local, wait-healthy).
+# These targets are what agents use to deploy code changes to the running local
+# stack before verifying features — they are NOT needed for CD-based projects.
 
-.PHONY: help install test lint build ci-local clean
+.PHONY: help install test lint build ci-local clean \
+        build-svc deploy-changed verify-local wait-healthy
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -74,6 +80,35 @@ ci-local:  ## Full PR gate locally — run this before every PR
 	$(MAKE) test
 	$(MAKE) check-migrations
 	$(MAKE) build
+
+# ── Docker Compose (local dev only — skip if using CD) ───────────────────────
+# Fill in these targets if this project runs via Docker Compose on a dev machine.
+# Agents call `make deploy-changed` after implementing a WO to push code into
+# the running containers before verifying features.
+
+COMPOSE := docker compose
+
+build-svc:  ## Rebuild + redeploy one service: make build-svc SVC=<name>
+	# $(COMPOSE) build $(SVC) && $(COMPOSE) up -d $(SVC)
+	# {{FILL IN OR REMOVE IF NOT USING DOCKER COMPOSE}}
+	@echo "Fill in build-svc (docker compose build + up -d)"
+
+wait-healthy:  ## Block until all services report healthy
+	# bash scripts/wait_healthy.sh
+	# {{FILL IN OR REMOVE IF NOT USING DOCKER COMPOSE}}
+	@echo "Fill in wait-healthy"
+
+deploy-changed:  ## Rebuild services changed vs origin/main; then wait-healthy
+	# Auto-detect which service directories changed, rebuild each one.
+	# See Clarion's Makefile for a full implementation using git diff + grep.
+	# {{FILL IN OR REMOVE IF NOT USING DOCKER COMPOSE}}
+	@echo "Fill in deploy-changed"
+
+verify-local:  ## deploy-changed → wait-healthy → smoke test (full local verify)
+	$(MAKE) deploy-changed
+	# $(MAKE) smoke-test
+	# {{FILL IN smoke-test target or remove}}
+	@echo "Fill in verify-local"
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
