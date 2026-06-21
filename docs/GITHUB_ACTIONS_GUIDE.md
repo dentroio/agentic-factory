@@ -345,6 +345,24 @@ A: For P2 work orders, yes — if all checks pass, auto-merge fires and no human
 **Q: If the agent's CI auto-fix commits code, does that create an infinite loop?**
 A: No. The auto-fix commit includes `[ci-autofix]` in the message. `ci-auto-fix.yml` checks the most recent commit message at the start and exits immediately if it sees that tag. Same pattern for `[ai-review-apply]`.
 
+**Q: CI auto-fixed my branch — now my push is rejected. What happened?**
+
+`ci-auto-fix.yml` and `ai-review-applier.yml` push commits directly to your branch from GitHub's cloud servers. Your local machine never receives those commits automatically. When you then try to push, Git sees that the remote is ahead and rejects the push with:
+
+```
+! [rejected]  my-branch -> my-branch (non-fast-forward)
+  Updates were rejected because the remote contains work you do not have locally.
+```
+
+Fix it with a rebase pull before pushing:
+```bash
+git pull --rebase origin <your-branch>
+```
+
+This replays your local commits on top of the auto-fix commit, then you can push normally.
+
+**Prevention is better than recovery:** if you run `make ci-local` locally and it passes before you open the PR, CI will also pass on GitHub and the auto-fixers will never need to fire. The local gate and the remote gate run exactly the same checks.
+
 **Q: What happens if an agent accidentally commits a secret?**
 A: Gitleaks will catch it and fail CI, blocking the merge. The commit is still in the branch's history — the agent or human must remove it (via `git rebase` to drop/edit the commit) and force-push the branch. Never try to "fix" it by adding another commit — the secret is still in history.
 
