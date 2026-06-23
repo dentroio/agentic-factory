@@ -1,0 +1,65 @@
+# dependabot.yml — Automated dependency update configuration
+#
+# Copy this to .github/dependabot.yml and fill in the {{FILL IN}} sections.
+#
+# Design choices explained:
+#   - Monthly interval:       prevents the weekly PR flood that burns GitHub-hosted minutes
+#   - rebase-strategy disabled: Dependabot won't re-push (and re-trigger CI) every time
+#                               main changes — only when you explicitly rebase the PR
+#   - open-pull-requests-limit: caps concurrent Dependabot PRs so your PR queue stays readable
+#   - groups:                 batches all minor/patch updates into one PR per ecosystem
+#                             instead of one PR per package
+#   - ignore major versions:  breaking changes need human review, not auto-merge
+#
+# After adding this file, also add actor guards to your AI workflows so they
+# skip Dependabot PRs (see GITHUB_ACTIONS_GUIDE.md — Cost Management section):
+#   if: github.actor != 'dependabot[bot]'
+
+version: 2
+updates:
+
+  # ── Python (pip) ──────────────────────────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/"                        # root requirements.txt / pyproject.toml
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    rebase-strategy: "disabled"
+    groups:
+      python-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # ── npm (frontend) ────────────────────────────────────────────────────────────
+  # Uncomment if you have a frontend in a subdirectory.
+  # - package-ecosystem: "npm"
+  #   directory: "/frontend"              # {{FILL IN}} path to your package.json
+  #   schedule:
+  #     interval: "monthly"
+  #   open-pull-requests-limit: 3
+  #   rebase-strategy: "disabled"
+  #   groups:
+  #     npm-deps:
+  #       patterns: ["*"]
+  #       update-types: ["minor", "patch"]
+  #   ignore:
+  #     - dependency-name: "*"
+  #       update-types: ["version-update:semver-major"]
+
+  # ── GitHub Actions ────────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    rebase-strategy: "disabled"
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

@@ -8,9 +8,12 @@
 
 Think of GitHub Actions as a **robot assistant that watches your repository and automatically runs jobs** whenever something happens — like when you push code or open a pull request.
 
-You write instructions for that robot in YAML files stored in `.github/workflows/`. Every time a trigger event happens (a PR opens, code is pushed, etc.), GitHub spins up a fresh computer in the cloud, runs your instructions, and reports back with ✅ pass or ❌ fail.
+You write instructions for that robot in YAML files stored in `.github/workflows/`. Every time a trigger event happens (a PR opens, code is pushed, etc.), a runner picks up the job, executes your instructions, and reports back with ✅ pass or ❌ fail.
 
-The key insight: **these robots run on GitHub's servers, not your machine.** Your local laptop is never involved. GitHub runs them for free (within limits) on every PR.
+**Where does the runner actually run?** Two options:
+
+- **GitHub-hosted runners** — GitHub spins up a fresh Ubuntu VM in the cloud per job. Free up to 3,000 minutes/month (Team plan), then $0.008/minute. The VM is destroyed after each job.
+- **Self-hosted runners** — A machine you control runs the jobs. Free regardless of usage. The factory is designed to work with either.
 
 ---
 
@@ -314,6 +317,149 @@ The required checks on `main`:
 | `PR Gate` | All of the above via the gate aggregator job |
 
 If any one of these is red, the merge button is disabled. Period.
+
+---
+
+## Self-Hosted Runner Setup
+
+A **self-hosted runner** is a machine you control that picks up GitHub Actions jobs. Jobs still run identically — same YAML, same checks — but the compute is yours, not GitHub's, so usage is free regardless of minutes.
+
+### When to use a self-hosted runner
+
+- You're consistently above 3,000 GitHub-hosted minutes/month
+- You have an active agentic project (many PRs, auto-fix workflows, CI chains = fast minute burn)
+- You want the runner to have access to local Docker containers for integration tests
+
+### Recommended setup: Ubuntu VM on x86
+
+Create a clean VM (4 CPU, 8 GB RAM, 40 GB disk is enough for most projects) and install:
+
+```bash
+# System dependencies
+sudo apt-get update
+sudo apt-get install -y python3 python3-pip python3-venv nodejs npm git curl
+
+# GitHub CLI
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
+  https://cli.github.com/packages stable main" \
+  | sudo tee /etc/apt/sources.list.d/github-cli.list
+sudo apt-get update && sudo apt-get install -y gh
+
+# Docker (if your project uses containers)
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+```
+
+Then register the runner (get the token from your repo: **Settings → Actions → Runners → New self-hosted runner**):
+
+```bash
+mkdir ~/actions-runner && cd ~/actions-runner
+# Download the runner package for your OS/arch from github.com/actions/runner/releases
+# Example for Linux x64:
+curl -o actions-runner-linux-x64.tar.gz -L \
+  https://github.com/actions/runner/releases/download/v2.321.0/actions-runner-linux-x64-2.321.0.tar.gz
+tar xzf actions-runner-linux-x64.tar.gz
+./config.sh --url https://github.com/<your-org>/<your-repo> --token <TOKEN>
+sudo ./svc.sh install && sudo ./svc.sh start
+```
+
+The runner appears in GitHub under **Settings → Actions → Runners** as `self-hosted / Linux / X64`.
+
+### Updating workflows to use the runner
+
+Change `runs-on` in your workflows:
+
+```yaml
+# Before (GitHub-hosted)
+runs-on: ubuntu-latest
+
+# After (self-hosted Linux)
+runs-on: [self-hosted, Linux]
+
+# Or if using macOS
+runs-on: [self-hosted, macOS]
+```
+
+If your CI installs Linux packages, guard them so they only run on Linux:
+
+```yaml
+- name: Install libpcap (Linux only)
+  if: runner.os == 'Linux'
+  run: sudo apt-get install -y libpcap-dev
+```
+
+### macOS runner caveat
+
+macOS works but needs one extra step — `actions/setup-python` defaults its tool cache to `/Users/runner/` (the GitHub-hosted Ubuntu path, which doesn't exist on Mac). Add to `~/actions-runner/.env`:
+
+```
+RUNNER_TOOL_CACHE=/Users/<your-username>/actions-runner/_tool
+AGENT_TOOLSDIRECTORY=/Users/<your-username>/actions-runner/_tool
+```
+
+A dedicated Ubuntu VM avoids this entirely and is the recommended approach.
+
+---
+
+## Cost Management
+
+GitHub-hosted minutes are **free up to 3,000 minutes/month** on the Team plan, then $0.008/minute. That sounds generous until you hit a Dependabot burst.
+
+### The Dependabot flood problem
+
+Dependabot opens PRs weekly — one per outdated package by default. Each PR triggers the full CI chain:
+
+- CI: 5 parallel jobs at ~9 minutes each
+- `workflow_run` chains: ai-review → merge-advisor fires after each CI completion
+
+20 Dependabot PRs × 5 jobs × 9 min = **900 minutes in one afternoon.** Add a few agent PRs and you've exhausted the monthly budget before the week is out.
+
+### Solution 1: Configure `dependabot.yml`
+
+Switch to a monthly cadence with PR limits and grouping. Copy `.github/dependabot.yml.template` from this repo and customize it. Key settings:
+
+```yaml
+schedule:
+  interval: "monthly"            # not weekly
+open-pull-requests-limit: 5      # cap concurrent PRs at a time
+rebase-strategy: "disabled"      # don't re-trigger CI on every push to main
+groups:
+  all-deps:
+    patterns: ["*"]              # batch updates into one PR per ecosystem
+ignore:
+  - dependency-name: "*"
+    update-types: ["version-update:semver-major"]  # skip breaking changes
+```
+
+### Solution 2: Actor guards on AI workflows
+
+AI workflows (review, merge advisor, auto-fix) don't add value on Dependabot PRs and burn minutes for nothing. Guard them at the job level:
+
+```yaml
+jobs:
+  ai-review:
+    if: github.actor != 'dependabot[bot]'
+```
+
+This makes the job skip (counted as "skipped", not "failed") so required status checks still pass.
+
+### Solution 3: Guard `workflow_run` chains
+
+Workflows triggered by `workflow_run` fire even when the upstream job was skipped. Without a guard, merge-advisor runs after every skipped ai-review. Add:
+
+```yaml
+jobs:
+  advisor:
+    if: |
+      github.actor != 'dependabot[bot]' &&
+      github.event.workflow_run.conclusion != 'skipped'
+```
+
+### Solution 4: Self-hosted runner (permanent fix)
+
+A self-hosted runner eliminates GitHub-hosted minute billing entirely. With a self-hosted runner, Dependabot floods, parallel CI chains, and auto-fix loops are all free. See **Self-Hosted Runner Setup** above. This is the recommended long-term approach for any project with active agentic development.
 
 ---
 

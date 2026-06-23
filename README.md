@@ -19,6 +19,7 @@ Extracted from an active development project. Still evolving.
 | `.github/workflows/ai-review.yml` | Blocking AI code review on every PR — exits 1 on "Review required" |
 | `.github/workflows/ci.yml.template` | Copy to `ci.yml` — fill in lint/test/build steps |
 | `.github/workflows/deploy.yml.template` | Copy to `deploy.yml` — parameterized CD pipeline with smoke tests |
+| `.github/dependabot.yml.template` | Monthly dependency updates with PR limits and grouping — prevents Actions minute floods |
 | `scripts/ai_review.py` | Claude-powered code review — 7 universal checks + project-specific context |
 | `scripts/review_context.txt` | Project-specific checks added to the AI reviewer |
 | **SDLC Agents** | |
