@@ -1,8 +1,8 @@
 # Agentic Engineering Factory
 
-A battle-tested template for building software with AI agents — human-in-the-loop where it matters, autonomous where it's safe.
+A template for building software with AI agents — human-in-the-loop where it matters, autonomous where it's safe.
 
-Born from production use on the [Clarion](https://github.com/dentroio/clarion) project.
+Extracted from an active development project. Still evolving.
 
 ---
 
