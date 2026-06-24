@@ -13,7 +13,7 @@ Usage:
     python3 scripts/ai_review.py --diff /tmp/pr_diff.txt --output /tmp/review.md
 
 Exit codes:
-    0 — LGTM or Needs attention
+    0 — LGTM or Needs attention (informational — does not block merge)
     1 — Review required (blocks merge via CI)
 
 Setup:
@@ -81,9 +81,16 @@ Inline suggestions, or "None." if there are none.
 ### Verdict
 One of: **LGTM** / **Needs attention** / **Review required**
 
-LGTM: all checks pass, no suggestions.
-Needs attention: warnings exist but no failures.
-Review required: any check fails.
+**LGTM** — No ❌ failures. Use this even when ⚠️ warnings exist, as long as the warnings
+are minor style or typing concerns that do not affect correctness, security, or critical
+patterns. Suggestions are informational. LGTM means: safe to merge.
+
+**Needs attention** — Use ONLY when a ⚠️ warning describes something that materially affects
+correctness, security, data integrity, or a project-critical pattern. Do NOT use for TypeScript
+typing style, documentation gaps, refactor suggestions, or DRY improvements. Ask: "would
+merging this cause a real problem?" If no — use LGTM with a note. If yes — use Needs attention.
+
+**Review required** — Any ❌ failure in the Checks table. Merge is blocked.
 """
 
 MAX_DIFF_LINES = 4000
@@ -164,10 +171,16 @@ Git Diff:
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1024,
+        max_tokens=2048,
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
+
+    # If Claude hit the token limit the response is truncated — ### Verdict will be missing.
+    if message.stop_reason == "max_tokens":
+        print("ERROR: review response was truncated (max_tokens reached) — ### Verdict section missing", file=sys.stderr)
+        print("The diff may be too large. Increase MAX_DIFF_LINES or max_tokens in ai_review.py.", file=sys.stderr)
+        sys.exit(1)
 
     review = message.content[0].text
 
@@ -176,13 +189,30 @@ Git Diff:
 
     print(f"Review written to {args.output}")
 
-    # Exit 1 if review required — blocks merge in CI
-    for line in reversed(review.splitlines()):
+    # Anchor search to the "### Verdict" section — suggestion text can contain verdict
+    # keywords and would cause a false match if we searched the full document.
+    lines_out = review.splitlines()
+    try:
+        verdict_start = next(i for i, ln in enumerate(lines_out) if ln.strip() == "### Verdict")
+        verdict_lines = lines_out[verdict_start:]
+    except StopIteration:
+        print("ERROR: ### Verdict section not found in review output — malformed response", file=sys.stderr)
+        sys.exit(1)
+
+    for line in verdict_lines:
         if "Review required" in line:
-            print("AI review verdict: Review required — blocking merge", file=sys.stderr)
+            print("AI review verdict: Review required — merge blocked", file=sys.stderr)
             sys.exit(1)
-        if "Needs attention" in line or "LGTM" in line:
-            break
+        if "Needs attention" in line:
+            # Informational — does not block merge (exit 0)
+            print("AI review verdict: Needs attention — review comment posted, merge can proceed")
+            sys.exit(0)
+        if "LGTM" in line:
+            print("AI review verdict: LGTM — merge can proceed")
+            sys.exit(0)
+
+    print("ERROR: no verdict keyword found in ### Verdict section — malformed response", file=sys.stderr)
+    sys.exit(1)
 
 
 if __name__ == "__main__":

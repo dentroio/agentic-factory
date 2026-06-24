@@ -10,7 +10,8 @@
 # stack before verifying features — they are NOT needed for CD-based projects.
 
 .PHONY: help install test lint build ci-local clean \
-        build-svc deploy-changed verify-local wait-healthy
+        build-svc deploy-changed verify-local wait-healthy \
+        pr-watch pr-watch-bg pr-status pr-log
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -109,6 +110,38 @@ verify-local:  ## deploy-changed → wait-healthy → smoke test (full local ver
 	# $(MAKE) smoke-test
 	# {{FILL IN smoke-test target or remove}}
 	@echo "Fill in verify-local"
+
+# ── PR lifecycle (agent-owned WO watcher) ────────────────────────────────────
+# pr_watch.sh polls CI checks, auto-fixes lint, handles merges, and redeploys.
+# Run from the feature branch after opening a PR.
+
+PR ?= $(shell gh pr view --json number -q '.number' 2>/dev/null)
+
+pr-watch:  ## Watch PR until merged: make pr-watch [PR=<num>]
+	@bash scripts/pr_watch.sh $(PR)
+
+pr-watch-bg:  ## Start pr_watch in background: make pr-watch-bg [PR=<num>]
+	@mkdir -p .pr-watch
+	@nohup bash scripts/pr_watch.sh $(PR) > .pr-watch/pr-$(PR).log 2>&1 & \
+	  echo $$! > .pr-watch/pr-$(PR).pid && \
+	  echo "pr_watch started for PR #$(PR) (PID $$(cat .pr-watch/pr-$(PR).pid))" && \
+	  echo "Logs: .pr-watch/pr-$(PR).log  |  Status: make pr-status PR=$(PR)"
+
+pr-status:  ## Show pr_watch status: make pr-status [PR=<num>]
+	@PID_FILE=.pr-watch/pr-$(PR).pid; \
+	  if [ -f "$$PID_FILE" ] && kill -0 "$$(cat $$PID_FILE)" 2>/dev/null; then \
+	    echo "pr_watch PR #$(PR) is running (PID $$(cat $$PID_FILE))"; \
+	    tail -5 .pr-watch/pr-$(PR).log 2>/dev/null || echo "(no log yet)"; \
+	  else \
+	    echo "pr_watch PR #$(PR) is not running (or PID file missing)"; \
+	    if [ -f ".pr-watch/pr-$(PR).log" ]; then \
+	      echo "Last 5 log lines:"; \
+	      tail -5 .pr-watch/pr-$(PR).log; \
+	    fi; \
+	  fi
+
+pr-log:  ## Tail pr_watch log: make pr-log [PR=<num>]
+	@tail -f .pr-watch/pr-$(PR).log
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
