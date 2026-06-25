@@ -51,9 +51,13 @@ jobs:
         id: skip_check
         run: |
           msg=$(git log -1 --pretty=%B)
+          first_line=$(echo "$msg" | head -1)
           if echo "$msg" | grep -qE '\[(pr-watch-fix|ai-review-apply|ci-autofix)\]'; then
             echo "skip=true" >> $GITHUB_OUTPUT
-            echo "Skipping review — HEAD commit is auto-generated: $(echo "$msg" | head -1)"
+            echo "Skipping review — auto-generated commit: $first_line"
+          elif echo "$first_line" | grep -qE "^Merge branch '.+' into .+$"; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Skipping review — GitHub 'Update branch' merge commit (PR code unchanged): $first_line"
           else
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
