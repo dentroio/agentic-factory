@@ -6,10 +6,18 @@
 #
 # Verdict logic:
 #   "Review required" → job exits 1, merge is blocked
-#   "Needs attention" → comment posted, merge allowed
+#   "Needs attention" → comment posted, merge allowed (advisory only)
 #   "LGTM"           → comment posted, merge allowed
 #
-# Cost: ~4K tokens/review × claude-sonnet-4-6 ≈ $0.01–0.05/PR
+# Token-saving rules (skip conditions — no API call):
+#   - dependabot[bot] — no spend on dependency bumps
+#   - HEAD commit contains [pr-watch-fix] — auto lint fix, already reviewed
+#   - HEAD commit contains [ai-review-apply] — applier commit, loop guard
+#   - HEAD commit contains [ci-autofix] — CI auto-fix, already addressed
+#   Concurrency: cancel in-progress review when a new push arrives on the
+#   same PR — avoids paying for a review that will be immediately superseded.
+#
+# Cost: ~7K tokens/review × claude-sonnet-4-6 ≈ $0.02–0.05/PR
 # Setup: add ANTHROPIC_API_KEY as a repository Actions secret.
 # =============================================================================
 
@@ -19,6 +27,10 @@ on:
   pull_request:
     types: [opened, synchronize]
     branches: [main]
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -35,8 +47,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Skip auto-generated commits
+        id: skip_check
+        run: |
+          msg=$(git log -1 --pretty=%B)
+          if echo "$msg" | grep -qE '\[(pr-watch-fix|ai-review-apply|ci-autofix)\]'; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Skipping review — HEAD commit is auto-generated: $(echo "$msg" | head -1)"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Get PR diff
         id: diff
+        if: steps.skip_check.outputs.skip != 'true'
         run: |
           git diff origin/main...HEAD -- \
             '*.py' '*.ts' '*.tsx' '*.go' '*.java' '*.rs' \
@@ -45,13 +69,13 @@ jobs:
           echo "lines=$(wc -l < /tmp/pr_diff.txt)" >> $GITHUB_OUTPUT
 
       - uses: actions/setup-python@v5
-        if: steps.diff.outputs.lines > 0
+        if: steps.skip_check.outputs.skip != 'true' && steps.diff.outputs.lines > 0
         with:
           python-version: "3.11"
 
       - name: Run Claude review
         id: claude_review
-        if: steps.diff.outputs.lines > 0
+        if: steps.skip_check.outputs.skip != 'true' && steps.diff.outputs.lines > 0
         continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -64,7 +88,7 @@ jobs:
             --output /tmp/review.md
 
       - name: Post review comment
-        if: steps.diff.outputs.lines > 0
+        if: steps.skip_check.outputs.skip != 'true' && steps.diff.outputs.lines > 0
         uses: actions/github-script@v7
         with:
           script: |

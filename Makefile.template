@@ -11,7 +11,8 @@
 
 .PHONY: help install test lint build ci-local clean \
         build-svc deploy-changed verify-local wait-healthy \
-        pr-watch pr-watch-bg pr-status pr-log
+        pr-watch pr-watch-bg pr-status pr-log \
+        pre-pr-check
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -34,8 +35,8 @@ install:  ## Install dependencies + pre-commit hooks
 
 test:  ## Run unit tests
 	# Python example:  pytest tests/unit/ -q --tb=short
-	# Node example:    npm test -- --run
-	# {{FILL IN}}
+	# Node/React example:  cd frontend && npm test -- --watchAll=false --passWithNoTests
+	# {{FILL IN — must match the test step in your CI workflow exactly}}
 	@echo "Fill in test target"
 
 test-integration:  ## Run integration tests (requires external services)
@@ -81,6 +82,10 @@ ci-local:  ## Full PR gate locally — run this before every PR
 	$(MAKE) test
 	$(MAKE) check-migrations
 	$(MAKE) build
+	$(MAKE) pre-pr-check
+
+pre-pr-check:  ## Static pre-PR check — catch common issues before Claude review (no API call)
+	python3 scripts/pre_pr_check.py
 
 # ── Docker Compose (local dev only — skip if using CD) ───────────────────────
 # Fill in these targets if this project runs via Docker Compose on a dev machine.

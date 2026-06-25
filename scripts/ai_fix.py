@@ -40,7 +40,7 @@ import sys
 
 import anthropic
 
-MODEL = "claude-opus-4-7"
+MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = """You are an automated CI fix agent. A CI run failed on a pull request.
 Your job is to analyze the failure and produce a minimal, safe fix.

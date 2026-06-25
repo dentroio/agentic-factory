@@ -28,7 +28,9 @@ The factory ships with 12 workflow files. Seven are production-ready and activat
 
 **`ai-review.yml` — AI Code Review (blocking)**
 
-Triggers on every PR opened or updated against `main`. Diffs source files against `main`, sends the diff and PR title/body to Claude, and posts a structured review comment with a verdict table. If the verdict is "Review required," the job exits 1, which blocks merge via GitHub's required status check enforcement. "Needs attention" and "LGTM" verdicts allow merge to proceed. Skips Dependabot PRs to avoid unnecessary API calls. Cost: approximately $0.01–$0.05 per PR.
+Triggers on every PR opened or updated against `main`. Diffs source files against `main`, sends the diff and PR title/body to Claude, and posts a structured review comment with a verdict table. If the verdict is "Review required," the job exits 1, which blocks merge via GitHub's required status check enforcement. "Needs attention" and "LGTM" verdicts allow merge to proceed.
+
+Token-saving rules built in: skips Dependabot PRs entirely; skips any push where the HEAD commit contains `[pr-watch-fix]`, `[ai-review-apply]`, or `[ci-autofix]` (auto-generated commits that were already reviewed on the prior push); uses a concurrency group with `cancel-in-progress: true` so rapid pushes cancel the in-progress review rather than paying for a review that will be immediately superseded. Cost: approximately $0.02–$0.05 per meaningful push.
 
 **`planning-agent.yml` — WO Spec Drafting**
 
@@ -92,7 +94,9 @@ All scripts are in `scripts/` and are callable both from GitHub Actions and from
 
 **`factory_status.py`** — Health check tool. Scans the repo for placeholder text, checks for the Makefile, CI workflow, Anthropic secret, GitHub label, branch ruleset, and memory seed. Prints a color-coded status report. Run at any time: `python3 scripts/factory_status.py`.
 
-**`ai_fix.py`** and **`ai_review_apply.py`** — Support scripts for the self-healing CI and review applier workflows respectively. Both use a search-and-replace edit format rather than full-file rewrites to minimize the risk of Claude overwriting code it did not see in context.
+**`ai_fix.py`** and **`ai_review_apply.py`** — Support scripts for the self-healing CI and review applier workflows respectively. Both use a search-and-replace edit format rather than full-file rewrites to minimize the risk of Claude overwriting code it did not see in context. Both run on `claude-sonnet-4-6` — Opus is not needed for targeted search-and-replace edits and costs ~10x more.
+
+**`pre_pr_check.py`** — Zero-cost static pre-PR checker. Runs as part of `make ci-local`. Checks the diff vs `origin/main` for the same patterns the Claude reviewer looks for: hardcoded secrets, SQL injection, bare `except: pass`, shell `|| true` bypasses, TypeScript `as any` casts, and unguarded external API calls. No API call — pure regex analysis. The goal is to catch obvious issues before the first push, eliminating the push → review → fix → re-review token loop. Project-specific checks can be added in `scripts/pre_pr_checks_project.py`.
 
 ---
 

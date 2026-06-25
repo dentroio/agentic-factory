@@ -42,7 +42,7 @@ import sys
 
 import anthropic
 
-MODEL = "claude-opus-4-7"
+MODEL = "claude-sonnet-4-6"
 
 SYSTEM_PROMPT = """You are an automated code improvement agent. An AI code reviewer
 posted suggestions on a pull request. Your job is to apply those suggestions
