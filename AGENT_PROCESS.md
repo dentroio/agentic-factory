@@ -28,19 +28,22 @@ Every work order (WO) is assigned a risk tier that determines who can merge.
 Every non-trivial task starts as a Work Order (WO) spec in `docs/project_management/work_orders/`.
 
 ```
-1. Read the WO spec — especially the ## Execution section
-2. Read ## Development Environment (below) — know where the app runs before writing code
-3. Create the branch:  git checkout -b wo/NNN-short-description
-4. Implement the work
-5. Deploy and verify (see §2a)
-6. Run the local CI gate: make ci-local  (must pass before pushing)
-7. Sync with main before opening the PR:
-     git pull --rebase origin main
-   If rebase conflicts: git rebase --abort && git merge origin/main --no-edit
-8. Open the PR with a UI Verification section (see §4 template)
-9. P2: queue auto-merge:  gh pr merge --auto --squash
-   P0/P1: notify the human and wait
-10. Update PM docs: PROGRESS.md, CAPABILITY_STATUS.md
+1.  Read the WO spec — especially the ## Execution section
+2.  Read ## Development Environment (below) — know how this project deploys before writing code
+3.  Sync first:  make sync  (or:  git checkout main && git pull origin main)
+4.  Create the branch:  git checkout -b wo/NNN-short-description
+5.  Implement the work
+6.  Deploy and verify (see §2a) — rebuild containers or push to staging
+7.  ⛔ STOP — ask the user to verify the running system (see §2b)
+8.  Run the local CI gate: make ci-local  (must pass before pushing)
+9.  Sync with main before opening the PR:
+      git pull --rebase origin main
+    If rebase conflicts: git rebase --abort && git merge origin/main --no-edit
+10. Open the PR with a UI Verification section (see §4 template)
+11. P2: queue auto-merge:  gh pr merge --auto --squash
+    P0/P1: notify the human and wait
+12. Update PM docs: PROGRESS.md, CAPABILITY_STATUS.md
+13. After merge: make sync  (pulls latest and rebuilds if needed)
 ```
 
 Never push directly to `main` for P0/P1/P2 work.
@@ -49,34 +52,86 @@ Never push directly to `main` for P0/P1/P2 work.
 
 ## §2a Deploy and Verify
 
-**This step differs depending on the project's deployment model. Read `## Development Environment` to know which applies.**
+**Read `## Development Environment` to know which model this project uses.**
 
-### Local Docker projects (no CD)
+### Model A — Single workstation, docker-compose
 
-After implementing, rebuild every backend service you changed and confirm the feature works before running `make ci-local` or opening a PR.
+Code is baked into Docker images. Editing a file does nothing until you rebuild the container.
 
 ```bash
 # Auto-detect changed services, rebuild + redeploy, wait for healthy
 make deploy-changed
 
-# Or rebuild one service manually
+# Or rebuild one service manually (always use build-svc, not docker compose build directly)
 make build-svc SVC=<service-name>
 make wait-healthy
+
+# Confirm existing endpoints still respond
+make smoke-test
 ```
 
-Then verify the specific feature: new API endpoint with `curl`, new migration with a `psql` column check, service startup with `make logs-svc`.
+Then verify the specific new feature: call the new endpoint with `curl`, confirm a migration column exists, check `make logs-svc SVC=<name>` for startup errors.
 
-For **frontend changes**: if the project uses a dev server (Vite, Next.js dev), changes are live instantly — no rebuild needed. Open the browser and confirm.
+**Frontend builds:** The production frontend is served by a container (nginx/caddy) that bakes the compiled output — it must be rebuilt with `make build-svc SVC=frontend` after any UI change. A Vite or Next.js dev server may hot-reload for quick local preview, but the container is what ships — always rebuild and verify the containerized build before committing.
 
-**If you are a remote agent** (running on cloud infrastructure, not on the developer's machine): you cannot run `docker compose` or reach `localhost`. Stop at `make ci-local`. In the PR body, write explicit numbered UI Verification steps so the developer can test manually.
+**If you are a remote agent** (GitHub Actions, cloud runner): you cannot reach `localhost` or run `docker compose`. Stop at `make ci-local`. Write explicit numbered UI Verification steps in the PR body so the developer can test manually after the PR merges and they rebuild their local containers.
 
-### CD-based projects
+### Model B — CD-based (push → auto-deploy)
 
-After merging to main, `deploy.yml` deploys to staging automatically. Verify features at the staging URL listed in `## Development Environment`. Do not attempt to verify against localhost — there is no local deployment.
+After merging to main, `deploy.yml` deploys to staging automatically. Verify at the staging URL in `## Development Environment`. Do not try to verify at localhost.
 
-### UI Verification (required for every PR)
+### Model C — Cloud dev environment (Codespaces / Gitpod / remote)
 
-Whether local Docker or CD, every PR must include a `## UI Verification` section in its body (see §4 PR template). This is how the human reviewer knows what to click in the browser to confirm the feature works.
+The dev environment URL is in `## Development Environment`. No local Docker rebuild needed — the cloud environment updates on save or on a manual restart command. Verify at that URL before committing.
+
+---
+
+## §2b User Verification Checkpoint ⛔
+
+**Stop here. Do not commit. Do not push. Ask the user to verify the running system.**
+
+This is required for every WO, on every deployment model. A bug caught before commit is free. A bug caught after merge costs a new WO and another CI cycle.
+
+### For WOs with UI changes
+
+Ask the user with a numbered list they can follow without reading the code:
+
+> I've deployed the changes. To verify:
+>
+> 1. Open **[APP_URL from § Development Environment]** — log in as [test credentials]
+> 2. Navigate to **[exact path, e.g. Settings → Connectors]**
+> 3. **[Specific action: click Add, fill in X, click Save]**
+> 4. Expected: **[exact outcome — label text, row in table, status badge]**
+> 5. No errors in the browser DevTools console
+>
+> Confirm everything looks correct and I'll commit and push.
+
+**Wait for the user's response before proceeding.** If they report a problem: fix → rebuild/redeploy → ask again.
+
+### For backend-only WOs (no UI changes)
+
+Show the live API response and ask:
+
+> Here's the endpoint response from the running system: [paste curl output or log snippet]
+>
+> Does this look correct? Should I commit?
+
+### Same rule after PR fixes
+
+If CI requires a code change after the PR is open, fix → rebuild → redeploy → tell the user what changed and ask them to re-verify before pushing the fix commit.
+
+### Why this checkpoint exists
+
+Rebuilding and passing smoke tests confirms the service starts and existing endpoints work. It does NOT confirm the new feature does what the WO asked. Only a human looking at the running system can do that.
+
+---
+
+## §3 Development Environment
+
+<!-- This section is filled in by setup_factory.py during project setup. -->
+<!-- Run: python3 scripts/setup_factory.py  to configure -->
+
+{{DEVELOPMENT_ENVIRONMENT_SECTION}}
 
 If the WO has no frontend impact, write: `No UI changes — backend / API only.`
 
@@ -244,7 +299,7 @@ Every PR runs these jobs. All must pass before merge:
 | test | Unit test suite |
 | build | Build/compile check |
 | migration-check | Schema migration registry is consistent |
-| ai-review | Claude code review — exits 1 on "Review required" verdict |
+| ai-review | Claude code review — advisory only, never blocks merge; posts comment for awareness |
 
 After the AI review completes, the **Merge Advisor** (`merge-advisor.yml`) posts a synthesized recommendation comment on every P0/P1 PR. It is always the last comment before a human reviewer looks at the PR.
 

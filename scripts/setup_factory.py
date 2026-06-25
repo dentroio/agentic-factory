@@ -126,8 +126,139 @@ def phase_project_identity(state: dict) -> bool:
     return True
 
 
+def phase_deployment_model(state: dict) -> bool:
+    step(2, "Development Environment")
+
+    print()
+    info("Agents need to know how this project deploys so they know whether to")
+    info("rebuild Docker containers, verify at a staging URL, or use a cloud dev env.")
+    print()
+    print("  1. Single workstation, docker-compose")
+    print("       Everything runs on localhost. Code is baked into Docker images.")
+    print("       Agent rebuilds the container after every code change, then asks")
+    print("       you to verify at https://localhost (or http://localhost:<port>).")
+    print()
+    print("  2. CD-based (push to main → auto-deploy to staging)")
+    print("       Agent commits and opens a PR. deploy.yml deploys to staging.")
+    print("       Agent cannot verify locally — writes steps for you to test at")
+    print("       the staging URL after merge.")
+    print()
+    print("  3. Cloud dev environment (Codespaces / Gitpod / remote)")
+    print("       Agent edits code; the cloud env updates on save or restart.")
+    print("       Verification happens at the cloud env URL, not localhost.")
+    print()
+
+    choice = ask("Which model? (1/2/3)", "1")
+
+    agent_process = ROOT / "AGENT_PROCESS.md"
+    if not agent_process.exists():
+        warn("AGENT_PROCESS.md not found — skipping Development Environment section")
+        state["deployment_model"] = choice
+        return True
+
+    content = agent_process.read_text()
+    if "{{DEVELOPMENT_ENVIRONMENT_SECTION}}" not in content:
+        ok("Development Environment section already configured")
+        state["deployment_model"] = choice
+        return True
+
+    if choice == "1":
+        app_url = ask("App URL for verification", "https://localhost")
+        test_user = ask("Test username", "admin")
+        test_pass = ask("Test password", "")
+        port_hint = "" if "localhost" in app_url and not app_url.endswith(":") else ""
+
+        service_table_hint = ask(
+            "Main backend service name (e.g. api, backend, server)", "api"
+        )
+
+        env_section = f"""**Model:** Single workstation — docker-compose
+**App URL:** {app_url}
+**Test credentials:** {test_user} / {test_pass if test_pass else "see team docs"}
+
+Code changes are **baked into Docker images** — editing a file does nothing until you rebuild the container.
+
+### After every code change
+
+```bash
+make build-svc SVC=<service>   # rebuild + redeploy (CACHE_BUST ensures fresh code)
+make wait-healthy               # wait for container healthy
+make smoke-test                 # confirm existing endpoints respond
+```
+
+Then verify the specific new feature works, then stop and ask the user (§2b).
+
+### Which service to rebuild
+
+| Files changed | Service to rebuild |
+|---------------|--------------------|
+| Backend source (main service) | `{service_table_hint}` |
+| Shared library / shared src | All services that import it |
+| Frontend source | `frontend` (nginx/caddy container — bakes compiled build) |
+
+**Frontend:** The production frontend is served by a container that bakes the compiled output. A Vite / Next.js dev server may hot-reload for preview but the container must be rebuilt before committing. Use `make build-svc SVC=frontend` after any UI change, then verify at {app_url}.
+
+### If you are a remote agent (GitHub Actions / cloud runner)
+
+You cannot reach `localhost` or run `docker compose`. Stop at `make ci-local`. Write explicit numbered UI Verification steps in the PR body so the developer can test locally after merge."""
+
+        state["deployment_model"] = "single-workstation-docker"
+        state["app_url"] = app_url
+
+    elif choice == "2":
+        staging_url = ask("Staging URL (e.g. https://staging.yourproject.com)", "")
+        test_user = ask("Test username on staging", "admin")
+
+        env_section = f"""**Model:** CD-based — push to main → deploy.yml → staging
+**Staging URL:** {staging_url if staging_url else "{{STAGING_URL}}"}
+**Test credentials:** {test_user} / see team docs
+
+After implementing a WO, run `make ci-local` and open a PR. `deploy.yml` deploys to staging automatically after merge. **You cannot verify at localhost** — write explicit numbered UI Verification steps in the PR body so the developer can test at the staging URL.
+
+### Agent behavior for this model
+
+- No local container rebuilds
+- `make ci-local` is the only local verification step before opening a PR
+- Always include a `## UI Verification` section in the PR body with numbered steps that a human can follow at {staging_url if staging_url else "the staging URL"}
+- For P2 WOs: queue auto-merge, then check that staging reflects the change"""
+
+        state["deployment_model"] = "cd-based"
+        state["app_url"] = staging_url
+
+    elif choice == "3":
+        cloud_url = ask("Cloud dev environment URL (e.g. https://<id>.preview.app.github.dev)", "")
+        restart_cmd = ask("Command to restart the app in the cloud env (or leave blank)", "")
+
+        env_section = f"""**Model:** Cloud dev environment (Codespaces / Gitpod / remote)
+**Dev URL:** {cloud_url if cloud_url else "{{CLOUD_DEV_URL}}"}
+**Restart command:** {restart_cmd if restart_cmd else "see cloud env docs"}
+
+The cloud environment is always running. After code changes, run the restart command (if needed) and verify at the dev URL. No local Docker or container rebuilds.
+
+### Agent behavior for this model
+
+- Edit code → restart cloud env if needed → verify at {cloud_url if cloud_url else "the dev URL"}
+- No `make build-svc` or `docker compose` commands
+- Confirm the feature works at the dev URL, then stop and ask the user (§2b)
+- `make ci-local` still runs before opening a PR"""
+
+        state["deployment_model"] = "cloud-dev"
+        state["app_url"] = cloud_url
+
+    else:
+        warn("Unknown choice — skipping")
+        state["deployment_model"] = "unknown"
+        return False
+
+    content = content.replace("{{DEVELOPMENT_ENVIRONMENT_SECTION}}", env_section)
+    agent_process.write_text(content)
+    ok(f"Configured Development Environment section in AGENT_PROCESS.md")
+    state["deployment_model_done"] = True
+    return True
+
+
 def phase_makefile(state: dict) -> bool:
-    step(2, "Makefile")
+    step(3, "Makefile")
 
     makefile = ROOT / "Makefile"
     if makefile.exists() and "{{FILL IN}}" not in makefile.read_text() and "{{" not in makefile.read_text():
@@ -172,7 +303,7 @@ def phase_makefile(state: dict) -> bool:
 
 
 def phase_ci_workflow(state: dict) -> bool:
-    step(3, "CI Workflow")
+    step(4, "CI Workflow")
 
     ci_path = ROOT / ".github/workflows/ci.yml"
     if ci_path.exists() and "{{" not in ci_path.read_text():
@@ -211,7 +342,7 @@ def phase_ci_workflow(state: dict) -> bool:
 
 
 def phase_cd_workflow(state: dict) -> bool:
-    step(4, "CD Workflow (Continuous Deployment)")
+    step(5, "CD Workflow (Continuous Deployment)")
 
     deploy_path = ROOT / ".github/workflows/deploy.yml"
     if deploy_path.exists() and "{{" not in deploy_path.read_text():
@@ -256,7 +387,7 @@ def phase_cd_workflow(state: dict) -> bool:
 
 
 def phase_github_secret(state: dict) -> bool:
-    step(5, "GitHub Secret — ANTHROPIC_API_KEY")
+    step(6, "GitHub Secret — ANTHROPIC_API_KEY")
 
     code, out = run("gh secret list 2>/dev/null")
     if code == 0 and "ANTHROPIC_API_KEY" in out:
@@ -288,7 +419,7 @@ def phase_github_secret(state: dict) -> bool:
 
 
 def phase_github_label(state: dict) -> bool:
-    step(6, "GitHub Label — new-wo")
+    step(7, "GitHub Label — new-wo")
 
     code, out = run("gh label list 2>/dev/null")
     if code == 0 and "new-wo" in out:
@@ -314,7 +445,7 @@ def phase_github_label(state: dict) -> bool:
 
 
 def phase_github_ruleset(state: dict) -> bool:
-    step(7, "GitHub Branch Ruleset")
+    step(8, "GitHub Branch Ruleset")
 
     repo = get_repo()
     if repo:
@@ -361,7 +492,7 @@ def phase_github_ruleset(state: dict) -> bool:
 
 
 def phase_review_context(state: dict) -> bool:
-    step(8, "AI Review Context")
+    step(9, "AI Review Context")
 
     path = ROOT / "scripts/review_context.txt"
     if not path.exists():
@@ -405,7 +536,7 @@ def phase_review_context(state: dict) -> bool:
 
 
 def phase_memory_seed(state: dict) -> bool:
-    step(9, "Memory System Seed")
+    step(10, "Memory System Seed")
 
     memory_dir = ROOT / "memory"
     index = memory_dir / "MEMORY.md"
@@ -468,7 +599,7 @@ metadata:
 
 
 def phase_observability(state: dict) -> bool:
-    step(10, "Observability")
+    step(11, "Observability")
 
     # Check for METRICS_ENDPOINT
     code, out = run("gh variable list 2>/dev/null")
@@ -550,6 +681,7 @@ def main():
 
     phases = [
         ("identity", phase_project_identity),
+        ("deployment_model_done", phase_deployment_model),
         ("makefile", phase_makefile),
         ("ci", phase_ci_workflow),
         ("cd", phase_cd_workflow),

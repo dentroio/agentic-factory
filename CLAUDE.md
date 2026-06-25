@@ -14,13 +14,21 @@ That activates the Project Engineer — an agent persona that walks you through 
 
 **Read `AGENT_PROCESS.md` before starting any implementation task.** It is the single source of truth for how agents work on this repository: risk tiers, branch/PR workflow, merge authority, and critical code patterns.
 
+## Development environment
+
+**Read `## §3 Development Environment` in `AGENT_PROCESS.md`** before making code changes — it tells you whether to rebuild Docker containers, push to staging, or use a cloud dev URL to verify your work.
+
 ## Quick reference
 
 | Priority | Action |
 |----------|--------|
-| P0/P1 | Branch → implement → `make ci-local` → PR → notify human |
-| P2 | Branch → implement → `make ci-local` → PR → `gh pr merge --auto --squash` |
-| P3 (docs/PM only) | Commit directly to `main` |
+| P0/P1 | sync → branch → implement → **deploy → ask user to verify** → ci-local → PR → notify human |
+| P2 | sync → branch → implement → **deploy → ask user to verify** → ci-local → PR → auto-merge |
+| P3 (docs/PM only) | Commit directly to `main` — no deploy, no user checkpoint |
+
+## ⛔ Ask the user to verify before committing
+
+After deploying code changes, **do not commit** until the user confirms the running system looks correct. See `AGENT_PROCESS.md §2b` for the exact wording and the re-verify loop for PR fixes.
 
 ## Critical patterns
 
