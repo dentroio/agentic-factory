@@ -134,6 +134,15 @@
             <span class="text-xs text-gray-400 font-mono">WO-{{ spec.number }}</span>
           </div>
           <div class="text-xs text-gray-800 font-medium leading-snug">{{ spec.title }}</div>
+          {% if spec.agent_name %}
+          <div class="flex items-center gap-1 mt-1.5">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0"></span>
+            <span class="text-xs text-blue-700 font-medium truncate">{{ spec.agent_name }}</span>
+            {% if spec.agent_step %}
+            <span class="text-xs text-gray-400">· {{ spec.agent_step }}</span>
+            {% endif %}
+          </div>
+          {% endif %}
           {% if spec.effort %}
           <div class="text-xs text-gray-400 mt-1">{{ spec.effort }}</div>
           {% endif %}

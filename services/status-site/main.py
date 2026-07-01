@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import github_client as gh
@@ -161,7 +161,7 @@ async def _load_ci_health() -> dict:
 
 
 def _apply_live_status(wos: dict[int, WOSpec], branches: list[dict], prs: list[dict]) -> None:
-    branch_wo_map = {b["wo_number"]: b["branch"] for b in branches if b["wo_number"]}
+    branch_wo_map = {b["wo_number"]: b for b in branches if b["wo_number"]}
     pr_wo_map: dict[int, dict] = {}
     for pr in prs:
         if pr["wo_number"]:
@@ -170,6 +170,8 @@ def _apply_live_status(wos: dict[int, WOSpec], branches: list[dict], prs: list[d
     for num, spec in wos.items():
         if num in pr_wo_map:
             pr = pr_wo_map[num]
+            spec.pr_number = pr["number"]
+            spec.ci_state = pr["ci_state"]
             if pr["ci_state"] == "failing":
                 spec.status = "🔴 Blocked (CI failing)"
             elif pr["ci_state"] == "pending":
@@ -178,6 +180,10 @@ def _apply_live_status(wos: dict[int, WOSpec], branches: list[dict], prs: list[d
                 spec.status = "👀 In Review (ready)"
         elif num in branch_wo_map:
             spec.status = "🔄 In Progress"
+            b = branch_wo_map[num]
+            if b.get("agent_status"):
+                spec.agent_name = b["agent_status"].get("agent", "")
+                spec.agent_step = b["agent_status"].get("step", "")
 
 
 def _board_columns(wos: dict[int, WOSpec]) -> dict[str, list[WOSpec]]:
@@ -264,6 +270,149 @@ async def wo_detail(request: Request, number: int):
         name="wo_detail.html",
         context={"site_title": SITE_TITLE, "spec": spec, "refresh_seconds": 300},
     )
+
+
+@app.get("/pm", response_class=HTMLResponse)
+async def pm_dashboard(request: Request):
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return templates.TemplateResponse(request=request, name="error.html", context={
+            "site_title": SITE_TITLE, "message": "GITHUB_TOKEN and GITHUB_REPO required."
+        })
+
+    wos, branches, prs, merged_prs = await asyncio.gather(
+        _load_wos(),
+        _load_active_branches(),
+        _load_open_prs(),
+        gh.list_merged_prs(days=56),
+    )
+    _apply_live_status(wos, branches, prs)
+    columns = _board_columns(wos)
+    watchdog = _load_watchdog()
+
+    # Program roll-ups
+    programs: dict[str, dict] = defaultdict(lambda: {"total": 0, "done": 0, "in_progress": 0, "blocked": 0, "in_review": 0, "open": 0})
+    for spec in wos.values():
+        prog = spec.program or "Standalone"
+        programs[prog]["total"] += 1
+        programs[prog][spec.board_column if spec.board_column != "review" else "in_review"] += 1
+        if spec.board_column == "done":
+            programs[prog]["done"] += 1
+
+    for prog in programs.values():
+        total = prog["total"]
+        prog["pct"] = round(prog["done"] / total * 100) if total else 0
+
+    # Velocity: WOs merged per week over last 8 weeks
+    velocity: list[dict] = []
+    now = datetime.now(UTC)
+    for i in range(7, -1, -1):
+        week_start = now - timedelta(weeks=i + 1)
+        week_end = now - timedelta(weeks=i)
+        count = sum(
+            1 for p in merged_prs
+            if p.get("merged_at") and week_start.isoformat() <= p["merged_at"] <= week_end.isoformat()
+        )
+        velocity.append({
+            "label": week_start.strftime("%-d %b"),
+            "count": count,
+            "bar": "█" * count if count else "·",
+        })
+
+    # Blocked items from watchdog
+    blocked_alerts = [a for a in (watchdog or {}).get("alerts", []) if a.get("severity") == "error" and a.get("pr_number")]
+
+    # Active agents from branches
+    active_agents = [b for b in branches if b.get("agent_status")]
+
+    return templates.TemplateResponse(request=request, name="pm.html", context={
+        "site_title": SITE_TITLE,
+        "refresh_seconds": REFRESH_SECONDS,
+        "github_repo": GITHUB_REPO,
+        "columns": {k: columns.get(k, []) for k in ("open", "in_progress", "review", "blocked", "done")},
+        "total_wos": len(wos),
+        "done_count": len(columns.get("done", [])),
+        "programs": dict(sorted(programs.items())),
+        "velocity": velocity,
+        "blocked_alerts": blocked_alerts,
+        "active_agents": active_agents,
+        "watchdog": watchdog,
+    })
+
+
+@app.get("/ci", response_class=HTMLResponse)
+async def ci_dashboard(request: Request):
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return templates.TemplateResponse(request=request, name="error.html", context={
+            "site_title": SITE_TITLE, "message": "GITHUB_TOKEN and GITHUB_REPO required."
+        })
+
+    prs, runners, active_runs, ci = await asyncio.gather(
+        _load_open_prs(),
+        gh.list_runners(),
+        gh.list_active_runs(),
+        _load_ci_health(),
+    )
+    watchdog = _load_watchdog()
+
+    # Per-check breakdown for each PR with flaky detection
+    pr_checks: list[dict] = []
+    for pr in prs:
+        raw_checks = await gh.get_pr_checks(pr["number"])
+        checks_detail = []
+        is_flaky = False
+        for c in raw_checks:
+            attempts = c.get("app", {}).get("name", "")
+            conclusion = c.get("conclusion")
+            status = c.get("status")
+            started = c.get("started_at")
+            completed = c.get("completed_at")
+            duration_s = None
+            if started and completed:
+                try:
+                    s = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                    e = datetime.fromisoformat(completed.replace("Z", "+00:00"))
+                    duration_s = int((e - s).total_seconds())
+                except Exception:
+                    pass
+            checks_detail.append({
+                "name": c.get("name", ""),
+                "status": status,
+                "conclusion": conclusion,
+                "duration_s": duration_s,
+                "url": c.get("html_url", ""),
+            })
+        pr_checks.append({
+            "number": pr["number"],
+            "title": pr["title"],
+            "url": pr["url"],
+            "wo_number": pr["wo_number"],
+            "age": pr["age"],
+            "ci_state": pr["ci_state"],
+            "auto_merge": pr.get("auto_merge", False),
+            "checks": checks_detail,
+            "is_flaky": is_flaky,
+        })
+
+    # CI timing stats from last 20 runs
+    completed_runs = [r for r in ci.get("runs", []) if r.get("conclusion")]
+    avg_duration = None
+
+    # Runner utilization
+    runners_busy = [r for r in runners if r.get("busy")]
+    runners_free = [r for r in runners if not r.get("busy") and r.get("status") == "online"]
+
+    return templates.TemplateResponse(request=request, name="ci.html", context={
+        "site_title": SITE_TITLE,
+        "refresh_seconds": REFRESH_SECONDS,
+        "github_repo": GITHUB_REPO,
+        "runners": runners,
+        "runners_busy": runners_busy,
+        "runners_free": runners_free,
+        "active_runs": active_runs[:10],
+        "pr_checks": pr_checks,
+        "ci": ci,
+        "watchdog": watchdog,
+    })
 
 
 @app.get("/health")
