@@ -1,6 +1,9 @@
 import asyncio
+import json
 import os
 from collections import defaultdict
+from datetime import UTC, datetime
+from pathlib import Path
 
 import github_client as gh
 from fastapi import FastAPI, Request
@@ -23,6 +26,22 @@ SITE_TITLE = os.getenv("SITE_TITLE", "AI Factory Status")
 REFRESH_SECONDS = int(os.getenv("REFRESH_SECONDS", "60"))
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
+WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
+
+
+def _load_watchdog() -> dict | None:
+    if not WATCHDOG_PATH.exists():
+        return None
+    try:
+        data = json.loads(WATCHDOG_PATH.read_text())
+        generated = datetime.fromisoformat(data["generated_at"].replace("Z", "+00:00"))
+        age_seconds = (datetime.now(UTC) - generated).total_seconds()
+        stale_threshold = int(os.getenv("POLL_INTERVAL", "300")) * 2
+        if age_seconds > stale_threshold:
+            return None
+        return data
+    except Exception:
+        return None
 
 
 async def _load_wos() -> dict[int, WOSpec]:
@@ -189,6 +208,23 @@ async def dashboard(request: Request):
 
     _apply_live_status(wos, branches, prs)
     columns = _board_columns(wos)
+    watchdog = _load_watchdog()
+
+    # Derive health status from watchdog data
+    if watchdog:
+        s = watchdog.get("summary", {})
+        errors = s.get("errors", 0)
+        warnings = s.get("warnings", 0)
+        runners_online = s.get("runners_online", 0)
+        runners_busy = s.get("runners_busy", 0)
+        if errors > 0 or (runners_online > 0 and runners_busy >= runners_online and errors > 0):
+            health_status = "critical"
+        elif warnings > 0 or (runners_online > 0 and runners_busy >= runners_online):
+            health_status = "degraded"
+        else:
+            health_status = "healthy"
+    else:
+        health_status = "unknown"
 
     return templates.TemplateResponse(
         request=request,
@@ -209,6 +245,8 @@ async def dashboard(request: Request):
             "ci": ci,
             "total_wos": len(wos),
             "done_count": len(columns.get("done", [])),
+            "watchdog": watchdog,
+            "health_status": health_status,
         },
     )
 
