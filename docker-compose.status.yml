@@ -13,9 +13,11 @@ services:
       - RUNS_PATH=${RUNS_PATH:-docs/factory/runs}
     volumes:
       - watchdog-data:/watchdog:ro
+      - orchestrator-data:/orchestrator:ro
     restart: unless-stopped
     depends_on:
       - pr-watchdog
+      - orchestrator
 
   pr-watchdog:
     build:
@@ -34,5 +36,23 @@ services:
       - watchdog-data:/data
     restart: unless-stopped
 
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_REPO=${GITHUB_REPO}
+      - POLL_INTERVAL=${POLL_INTERVAL:-300}
+      - MAX_PARALLEL_WOS=${MAX_PARALLEL_WOS:-2}
+      - WO_PATH=${WO_PATH:-docs/project_management/work_orders}
+      - RUNS_PATH=${RUNS_PATH:-docs/factory/runs}
+      - DAILY_SUMMARY_HOUR=${DAILY_SUMMARY_HOUR:-}
+      - SUMMARY_ISSUE_NUMBER=${SUMMARY_ISSUE_NUMBER:-}
+    volumes:
+      - orchestrator-data:/data
+      - watchdog-data:/watchdog:ro
+    restart: unless-stopped
+
 volumes:
   watchdog-data:
+  orchestrator-data:

@@ -27,6 +27,7 @@ REFRESH_SECONDS = int(os.getenv("REFRESH_SECONDS", "60"))
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
+ORCHESTRATOR_PATH = Path(os.getenv("ORCHESTRATOR_PATH", "/orchestrator/orchestrator.json"))
 
 
 def _load_watchdog() -> dict | None:
@@ -38,6 +39,19 @@ def _load_watchdog() -> dict | None:
         age_seconds = (datetime.now(UTC) - generated).total_seconds()
         stale_threshold = int(os.getenv("POLL_INTERVAL", "300")) * 2
         if age_seconds > stale_threshold:
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def _load_orchestrator() -> dict | None:
+    if not ORCHESTRATOR_PATH.exists():
+        return None
+    try:
+        data = json.loads(ORCHESTRATOR_PATH.read_text())
+        generated = datetime.fromisoformat(data["generated_at"].replace("Z", "+00:00"))
+        if (datetime.now(UTC) - generated).total_seconds() > int(os.getenv("POLL_INTERVAL", "300")) * 2:
             return None
         return data
     except Exception:
@@ -324,6 +338,8 @@ async def pm_dashboard(request: Request):
     # Active agents from branches
     active_agents = [b for b in branches if b.get("agent_status")]
 
+    orchestrator = _load_orchestrator()
+
     return templates.TemplateResponse(request=request, name="pm.html", context={
         "site_title": SITE_TITLE,
         "refresh_seconds": REFRESH_SECONDS,
@@ -336,6 +352,7 @@ async def pm_dashboard(request: Request):
         "blocked_alerts": blocked_alerts,
         "active_agents": active_agents,
         "watchdog": watchdog,
+        "orchestrator": orchestrator,
     })
 
 
