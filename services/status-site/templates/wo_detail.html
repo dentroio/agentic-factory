@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-4xl mx-auto">
+  <div class="mb-4">
+    <a href="/" class="text-sm text-blue-600 hover:underline">← Back to dashboard</a>
+  </div>
+  <div class="bg-white rounded-lg border p-8">
+    <div class="flex items-center gap-3 mb-4">
+      <span class="text-sm {{ spec.priority_class }} rounded px-2 py-1 font-semibold">{{ spec.priority }}</span>
+      <span class="text-sm text-gray-400 font-mono">WO-{{ spec.number }}</span>
+      <span class="text-sm text-gray-500">{{ spec.status }}</span>
+      {% if spec.effort %}
+      <span class="text-sm bg-gray-100 text-gray-600 rounded px-2 py-0.5">{{ spec.effort }}</span>
+      {% endif %}
+    </div>
+    <h1 class="text-2xl font-bold text-gray-900 mb-6">{{ spec.title }}</h1>
+    <div class="prose prose-sm max-w-none text-gray-700 leading-relaxed">
+      <pre class="whitespace-pre-wrap text-sm text-gray-600 font-mono bg-gray-50 rounded p-6 overflow-auto">{{ spec.raw }}</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}

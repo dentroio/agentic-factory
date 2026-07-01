@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="{{ refresh_seconds }}">
+  <title>{{ site_title }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .badge-p0 { background:#dc2626;color:#fff; }
+    .badge-p1 { background:#ea580c;color:#fff; }
+    .badge-p2 { background:#2563eb;color:#fff; }
+    .badge-p3 { background:#6b7280;color:#fff; }
+    .ci-passing { color:#16a34a; }
+    .ci-failing { color:#dc2626; }
+    .ci-pending { color:#d97706; }
+    .ci-unknown { color:#9ca3af; }
+    .col-open     { border-top:3px solid #6b7280; }
+    .col-progress { border-top:3px solid #2563eb; }
+    .col-review   { border-top:3px solid #d97706; }
+    .col-blocked  { border-top:3px solid #dc2626; }
+    .col-done     { border-top:3px solid #16a34a; }
+    .wo-card:hover { transform:translateY(-1px); box-shadow:0 4px 12px rgba(0,0,0,.15); transition:.15s; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+  <nav class="bg-gray-900 text-white px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-6">
+      <span class="font-bold text-lg tracking-tight">⚙ {{ site_title }}</span>
+      <a href="/" class="text-gray-300 hover:text-white text-sm">Dashboard</a>
+    </div>
+    <span class="text-gray-400 text-xs">Auto-refreshes every {{ refresh_seconds }}s &nbsp;·&nbsp;
+      {% if github_repo is defined %}
+      <a href="https://github.com/{{ github_repo }}" class="text-gray-300 hover:text-white" target="_blank">{{ github_repo }}</a>
+      {% endif %}
+    </span>
+  </nav>
+  <main class="max-w-screen-2xl mx-auto px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
