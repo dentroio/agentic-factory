@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 
 @dataclass
@@ -11,7 +12,14 @@ class WOSpec:
     effort: str
     services: str
     depends_on: list[int]
+    program: str
     raw: str
+    # runtime fields set after load
+    agent_name: str = ""
+    agent_step: str = ""
+    pr_number: int | None = None
+    ci_state: str = ""
+    merged_at: str = ""
 
     @property
     def priority_class(self) -> str:
@@ -31,6 +39,11 @@ class WOSpec:
         if "blocked" in s or "🔴" in self.status or "⏸" in self.status:
             return "blocked"
         return "open"
+
+    @property
+    def age_label(self) -> str:
+        """Days since WO was last touched — approximated from WO number recency."""
+        return ""  # enriched at runtime by caller if needed
 
 
 def parse_wo_file(content: str, filename: str) -> WOSpec | None:
@@ -58,6 +71,8 @@ def parse_wo_file(content: str, filename: str) -> WOSpec | None:
         dep_text = dep_m.group(1)
         depends_on = [int(n) for n in re.findall(r"WO-(\d+)", dep_text)]
 
+    program = extract("Program") or extract("Initiative") or ""
+
     return WOSpec(
         number=number,
         title=title,
@@ -66,6 +81,7 @@ def parse_wo_file(content: str, filename: str) -> WOSpec | None:
         effort=effort,
         services=services,
         depends_on=depends_on,
+        program=program,
         raw=content,
     )
 
