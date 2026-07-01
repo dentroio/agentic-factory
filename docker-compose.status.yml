@@ -11,4 +11,48 @@ services:
       - REFRESH_SECONDS=${REFRESH_SECONDS:-60}
       - WO_PATH=${WO_PATH:-docs/project_management/work_orders}
       - RUNS_PATH=${RUNS_PATH:-docs/factory/runs}
+    volumes:
+      - watchdog-data:/watchdog:ro
+      - orchestrator-data:/orchestrator:ro
     restart: unless-stopped
+    depends_on:
+      - pr-watchdog
+      - orchestrator
+
+  pr-watchdog:
+    build:
+      context: ./services/pr-watchdog
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_REPO=${GITHUB_REPO}
+      - POLL_INTERVAL=${POLL_INTERVAL:-300}
+      - CI_FAIL_THRESHOLD=${CI_FAIL_THRESHOLD:-60}
+      - CI_STUCK_THRESHOLD=${CI_STUCK_THRESHOLD:-45}
+      - STALE_DAYS=${STALE_DAYS:-7}
+      - ANCIENT_DAYS=${ANCIENT_DAYS:-14}
+      - QUEUE_WARN_DEPTH=${QUEUE_WARN_DEPTH:-5}
+      - POST_COMMENTS=${POST_COMMENTS:-false}
+    volumes:
+      - watchdog-data:/data
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_REPO=${GITHUB_REPO}
+      - POLL_INTERVAL=${POLL_INTERVAL:-300}
+      - MAX_PARALLEL_WOS=${MAX_PARALLEL_WOS:-2}
+      - WO_PATH=${WO_PATH:-docs/project_management/work_orders}
+      - RUNS_PATH=${RUNS_PATH:-docs/factory/runs}
+      - DAILY_SUMMARY_HOUR=${DAILY_SUMMARY_HOUR:-}
+      - SUMMARY_ISSUE_NUMBER=${SUMMARY_ISSUE_NUMBER:-}
+    volumes:
+      - orchestrator-data:/data
+      - watchdog-data:/watchdog:ro
+    restart: unless-stopped
+
+volumes:
+  watchdog-data:
+  orchestrator-data:
