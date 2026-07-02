@@ -27,6 +27,13 @@
   </div>
 </div>
 
+{% if not wos_available %}
+<div class="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border bg-amber-500/8 border-amber-500/20 text-amber-300 text-xs">
+  <svg class="w-4 h-4 flex-shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+  <span><strong>Work order data temporarily unavailable</strong> — GitHub API returned an error. WO counts show 0; velocity and program data are unaffected.</span>
+</div>
+{% endif %}
+
 {# ── Blocked items ─────────────────────────────────────────────────────── #}
 {% if blocked_alerts %}
 <div id="blocked-items-panel" class="mb-4 glass-panel overflow-hidden border border-red-500/20 bg-red-500/5">
@@ -96,7 +103,7 @@
 
   {# ── Active Agents ───────────────────────────────────────────────────── #}
   <div class="glass-panel p-4">
-    <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest mb-3">Active Dispatch Agents</h2>
+    <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest mb-3">AI Agents in Flight</h2>
     {% if active_agents %}
     <div class="space-y-4">
       {% for b in active_agents %}
@@ -180,7 +187,7 @@
     <div class="px-5 py-3.5 bg-indigo-950/20 border-b border-indigo-900/30 flex items-center justify-between">
       <span class="text-xs font-display font-bold text-indigo-300 uppercase tracking-widest flex items-center gap-2">
         <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
-        <span>Ready to Dispatch ({{ orchestrator.dispatch_queue | length }})</span>
+        <span>Next Up — Ready to Start ({{ orchestrator.dispatch_queue | length }})</span>
       </span>
       <span class="text-[10px] font-mono text-indigo-400">Limit: {{ orchestrator.max_parallel_wos }} concurrent</span>
     </div>
@@ -211,8 +218,8 @@
   {# Waiting on Dependencies #}
   <div class="glass-panel overflow-hidden">
     <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
-      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Holding Queue ({{ orchestrator.holding_queue | length }})</span>
-      <span class="text-[10px] text-slate-500">Awaiting dependency resolution</span>
+      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Waiting on Dependencies ({{ orchestrator.holding_queue | length }})</span>
+      <span class="text-[10px] text-slate-500">These WOs are blocked until their dependencies finish</span>
     </div>
     {% if orchestrator.holding_queue %}
     <div class="divide-y divide-slate-800/30 max-h-[300px] overflow-y-auto">

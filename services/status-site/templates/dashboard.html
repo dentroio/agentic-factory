@@ -59,6 +59,14 @@
 </div>
 {% endif %}
 
+{# ── WO data warning ─────────────────────────────────────────────────── #}
+{% if not wos_available %}
+<div class="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border bg-amber-500/8 border-amber-500/20 text-amber-300 text-xs">
+  <svg class="w-4 h-4 flex-shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+  <span><strong>Work order data temporarily unavailable</strong> — GitHub API returned an error. Counts show 0. Velocity, PRs, and CI data are unaffected.</span>
+</div>
+{% endif %}
+
 {# ── Alert panel (watchdog) ───────────────────────────────────────────── #}
 {% if watchdog and watchdog.alerts %}
 <div id="alerts-panel" class="mb-4 glass-panel overflow-hidden">
@@ -131,7 +139,7 @@
 <div class="mb-4">
   <div class="flex items-center justify-between mb-3">
     <h2 class="text-xs font-display font-bold text-slate-400 uppercase tracking-widest">Work Order Kanban</h2>
-    <span class="text-xs text-slate-500">Click card for details</span>
+    <span class="text-xs text-slate-500">Work orders assigned to AI agents — click any card for details</span>
   </div>
 
   <div class="grid grid-cols-1 md:grid-cols-5 gap-3">

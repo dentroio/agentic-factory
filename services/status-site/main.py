@@ -79,11 +79,11 @@ async def _fetch_plan_from_github() -> dict | None:
         return None
 
 
-async def _load_wos() -> dict[int, WOSpec]:
+async def _load_wos() -> tuple[dict[int, WOSpec], bool]:
     try:
         files = await gh.list_wo_files()
     except Exception:
-        return {}
+        return {}, False
     results: dict[int, WOSpec] = {}
     contents = await asyncio.gather(
         *[gh.get_file_content(f["path"]) for f in files], return_exceptions=True
@@ -94,7 +94,7 @@ async def _load_wos() -> dict[int, WOSpec]:
         spec = parse_wo_file(content, f["name"])
         if spec:
             results[spec.number] = spec
-    return results
+    return results, True
 
 
 async def _load_active_branches() -> list[dict]:
@@ -240,12 +240,13 @@ async def dashboard(request: Request):
             },
         )
 
-    wos, branches, prs, ci = await asyncio.gather(
+    wos_result, branches, prs, ci = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
         _load_ci_health(),
     )
+    wos, wos_available = wos_result
 
     _apply_live_status(wos, branches, prs)
     columns = _board_columns(wos)
@@ -288,6 +289,7 @@ async def dashboard(request: Request):
             "done_count": len(columns.get("done", [])),
             "watchdog": watchdog,
             "health_status": health_status,
+            "wos_available": wos_available,
         },
     )
 
@@ -329,12 +331,13 @@ async def pm_dashboard(request: Request):
             "site_title": SITE_TITLE, "message": "GITHUB_TOKEN and GITHUB_REPO required."
         })
 
-    wos, branches, prs, merged_prs = await asyncio.gather(
+    wos_result, branches, prs, merged_prs = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
         gh.list_merged_prs(days=56),
     )
+    wos, wos_available = wos_result
     _apply_live_status(wos, branches, prs)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
@@ -387,6 +390,7 @@ async def pm_dashboard(request: Request):
         "active_agents": active_agents,
         "watchdog": watchdog,
         "orchestrator": orchestrator,
+        "wos_available": wos_available,
     })
 
 

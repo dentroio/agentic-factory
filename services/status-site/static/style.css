@@ -210,3 +210,149 @@ tr:last-child td {
   border-radius: 50%;
   animation: pulse-glow-blue 1.5s infinite ease-in-out;
 }
+
+/* ═══════════════════════════════════════════════════════
+   LIGHT THEME
+═══════════════════════════════════════════════════════ */
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg-primary: #f0f4f8;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e8edf2;
+  --text-primary: #0f172a;
+  --text-secondary: #374151;
+  --text-muted: #6b7280;
+  --border-color: rgba(0, 0, 0, 0.08);
+  --border-hover: rgba(99, 102, 241, 0.5);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.07);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.09);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.13);
+}
+
+[data-theme="light"] body {
+  background-color: #f0f4f8;
+  background-image:
+    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.05) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(6, 182, 212, 0.04) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(139, 92, 246, 0.03) 0px, transparent 50%);
+  color: #0f172a;
+}
+
+[data-theme="light"] .glass-panel {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .glass-panel-hover:hover {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.08);
+}
+
+/* Nav */
+[data-theme="light"] nav {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-bottom-color: rgba(0, 0, 0, 0.09) !important;
+}
+[data-theme="light"] .nav-link { color: #374151; }
+[data-theme="light"] .nav-link:hover,
+[data-theme="light"] .nav-link.active { color: #0f172a; }
+
+/* Brand gradient (becomes too light on white) */
+[data-theme="light"] .brand-gradient {
+  background-image: linear-gradient(to right, #4338ca, #6366f1, #0891b2) !important;
+}
+
+/* ── Tailwind neutral overrides ─────────────────────── */
+/* Text: light numbers map to dark equivalents */
+[data-theme="light"] [class*="text-slate-1"] { color: #0f172a !important; }
+[data-theme="light"] [class*="text-slate-2"] { color: #1e293b !important; }
+[data-theme="light"] [class*="text-slate-3"] { color: #334155 !important; }
+[data-theme="light"] [class*="text-slate-4"] { color: #475569 !important; }
+[data-theme="light"] [class*="text-slate-5"] { color: #64748b !important; }
+[data-theme="light"] [class*="text-slate-6"] { color: #94a3b8 !important; }
+[data-theme="light"] [class*="text-slate-7"] { color: #cbd5e1 !important; }
+
+/* Backgrounds: dark → light */
+[data-theme="light"] [class*="bg-slate-950"] { background-color: rgba(248, 250, 252, 0.9) !important; }
+[data-theme="light"] [class*="bg-slate-900"] { background-color: rgba(241, 245, 249, 0.75) !important; }
+[data-theme="light"] [class*="bg-slate-800"] { background-color: rgba(226, 232, 240, 0.6) !important; }
+
+/* Borders */
+[data-theme="light"] [class*="border-slate-9"] { border-color: rgba(0, 0, 0, 0.07) !important; }
+[data-theme="light"] [class*="border-slate-8"] { border-color: rgba(0, 0, 0, 0.10) !important; }
+[data-theme="light"] [class*="border-slate-7"] { border-color: rgba(0, 0, 0, 0.14) !important; }
+
+/* Divide lines */
+[data-theme="light"] [class*="divide-slate"] > * + * { border-color: rgba(0, 0, 0, 0.06) !important; }
+
+/* Table */
+[data-theme="light"] th { background-color: rgba(241, 245, 249, 0.85) !important; color: #475569 !important; }
+[data-theme="light"] td { border-bottom-color: rgba(0, 0, 0, 0.05) !important; }
+
+/* Badges */
+[data-theme="light"] .badge-p0, [data-theme="light"] .badge-glass-p0 {
+  background: rgba(239, 68, 68, 0.10); color: #b91c1c; border-color: rgba(239, 68, 68, 0.30);
+}
+[data-theme="light"] .badge-p1, [data-theme="light"] .badge-glass-p1 {
+  background: rgba(245, 158, 11, 0.10); color: #92400e; border-color: rgba(245, 158, 11, 0.30);
+}
+[data-theme="light"] .badge-p2, [data-theme="light"] .badge-glass-p2 {
+  background: rgba(59, 130, 246, 0.10); color: #1d4ed8; border-color: rgba(59, 130, 246, 0.30);
+}
+[data-theme="light"] .badge-p3, [data-theme="light"] .badge-glass-p3 {
+  background: rgba(100, 116, 139, 0.10); color: #475569; border-color: rgba(100, 116, 139, 0.30);
+}
+
+/* CI pills */
+[data-theme="light"] .ci-pill-success { background: rgba(16, 185, 129, 0.10); color: #065f46; border-color: rgba(16, 185, 129, 0.30); }
+[data-theme="light"] .ci-pill-failure { background: rgba(239, 68, 68, 0.10); color: #991b1b; border-color: rgba(239, 68, 68, 0.30); }
+[data-theme="light"] .ci-pill-pending { background: rgba(245, 158, 11, 0.10); color: #92400e; border-color: rgba(245, 158, 11, 0.30); }
+[data-theme="light"] .ci-pill-unknown { background: rgba(148, 163, 184, 0.10); color: #475569; border-color: rgba(148, 163, 184, 0.25); }
+
+/* Code blocks */
+[data-theme="light"] pre,
+[data-theme="light"] [class*="bg-slate-950\/70"] { background-color: #f8fafc !important; color: #1e293b !important; }
+[data-theme="light"] .code-container { background: #f1f5f9 !important; }
+
+/* Refresh indicator */
+[data-theme="light"] .refresh-indicator {
+  background: rgba(99, 102, 241, 0.06);
+  border-color: rgba(99, 102, 241, 0.14);
+  color: #4338ca;
+}
+[data-theme="light"] .refresh-dot { background-color: #6366f1; }
+
+/* GitHub repo button */
+[data-theme="light"] #repo-link {
+  background: rgba(241, 245, 249, 0.8);
+  border-color: rgba(0, 0, 0, 0.10);
+  color: #374151;
+}
+[data-theme="light"] #repo-link:hover { color: #0f172a; }
+
+/* Scrollbars */
+[data-theme="light"] ::-webkit-scrollbar-track { background: #f1f5f9; }
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: #cbd5e1; }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Theme toggle button */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.theme-toggle:hover {
+  background: var(--bg-tertiary);
+}
