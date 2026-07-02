@@ -30,6 +30,7 @@
       <a href="/" class="text-gray-300 hover:text-white text-sm {% if request.url.path == '/' %}text-white font-semibold{% endif %}">Overview</a>
       <a href="/pm" class="text-gray-300 hover:text-white text-sm {% if request.url.path == '/pm' %}text-white font-semibold{% endif %}">PM View</a>
       <a href="/ci" class="text-gray-300 hover:text-white text-sm {% if request.url.path == '/ci' %}text-white font-semibold{% endif %}">CI View</a>
+      <a href="/plan" class="text-gray-300 hover:text-white text-sm {% if request.url.path == '/plan' %}text-white font-semibold{% endif %}">Plan</a>
     </div>
     <span class="text-gray-400 text-xs">Auto-refreshes every {{ refresh_seconds }}s &nbsp;·&nbsp;
       {% if github_repo is defined %}

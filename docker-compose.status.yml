@@ -11,6 +11,7 @@ services:
       - REFRESH_SECONDS=${REFRESH_SECONDS:-60}
       - WO_PATH=${WO_PATH:-docs/project_management/work_orders}
       - RUNS_PATH=${RUNS_PATH:-docs/factory/runs}
+      - PLAN_PATH=${PLAN_PATH:-docs/factory/PLAN.json}
     volumes:
       - watchdog-data:/watchdog:ro
       - orchestrator-data:/orchestrator:ro
@@ -46,6 +47,7 @@ services:
       - MAX_PARALLEL_WOS=${MAX_PARALLEL_WOS:-2}
       - WO_PATH=${WO_PATH:-docs/project_management/work_orders}
       - RUNS_PATH=${RUNS_PATH:-docs/factory/runs}
+      - PLAN_PATH=${PLAN_PATH:-docs/factory/PLAN.json}
       - DAILY_SUMMARY_HOUR=${DAILY_SUMMARY_HOUR:-}
       - SUMMARY_ISSUE_NUMBER=${SUMMARY_ISSUE_NUMBER:-}
     volumes:

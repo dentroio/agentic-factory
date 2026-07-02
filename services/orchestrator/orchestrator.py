@@ -10,6 +10,8 @@ import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 
+from plan_engine import next_wo, sorted_queue
+
 load_dotenv()
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
@@ -18,6 +20,7 @@ POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
 MAX_PARALLEL_WOS = int(os.getenv("MAX_PARALLEL_WOS", "2"))
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 RUNS_PATH = os.getenv("RUNS_PATH", "docs/factory/runs")
+PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 DAILY_SUMMARY_HOUR = os.getenv("DAILY_SUMMARY_HOUR", "")
 SUMMARY_ISSUE_NUMBER = os.getenv("SUMMARY_ISSUE_NUMBER", "")
 
@@ -156,6 +159,39 @@ async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient) -> int:
         return sum(1 for p in prs if p.get("merged_at") and p["merged_at"] >= since)
     except Exception:
         return 0
+
+
+# ── PLAN.json fetch ──────────────────────────────────────────────────────────
+
+async def _fetch_plan(client: httpx.AsyncClient) -> dict | None:
+    """Fetch docs/factory/PLAN.json from GITHUB_REPO and return parsed dict."""
+    try:
+        data = await _get(client, f"/repos/{GITHUB_REPO}/contents/{PLAN_PATH}")
+        content = base64.b64decode(data["content"]).decode("utf-8")
+        return json.loads(content)
+    except Exception as e:
+        print(f"[orchestrator] Failed to fetch PLAN.json: {e}")
+        return None
+
+
+def _build_wo_statuses(specs: dict[int, dict], active_branch_wos: set[int],
+                       pr_wos: set[int], done_wos: set[int]) -> dict[str, str]:
+    """
+    Build a mapping of WO id string (e.g. 'WO-358') → live status string
+    for use by plan_engine.  Priority: done > review > in_progress > spec status.
+    """
+    result: dict[str, str] = {}
+    for num, spec in specs.items():
+        wo_id = f"WO-{num}"
+        if num in done_wos:
+            result[wo_id] = "done"
+        elif num in pr_wos:
+            result[wo_id] = "review"
+        elif num in active_branch_wos:
+            result[wo_id] = "in_progress"
+        else:
+            result[wo_id] = spec.get("status", "open")
+    return result
 
 
 # ── Dependency graph ─────────────────────────────────────────────────────────
@@ -300,11 +336,12 @@ async def poll() -> None:
     now_str = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
     async with httpx.AsyncClient(timeout=20) as client:
-        specs, active_branch_wos, pr_wos, merged_this_week = await asyncio.gather(
+        specs, active_branch_wos, pr_wos, merged_this_week, plan_raw = await asyncio.gather(
             _fetch_wo_specs(client),
             _fetch_active_branches(client),
             _fetch_open_pr_wos(client),
             _fetch_merged_wo_count_this_week(client),
+            _fetch_plan(client),
         )
 
     done_wos = {num for num, s in specs.items() if _is_done(s["status"])}
@@ -313,6 +350,15 @@ async def poll() -> None:
     open_wos = {num for num, s in specs.items()
                 if not _is_done(s["status"]) and num not in active_branch_wos and num not in pr_wos}
     blocked_wos = {num for num, s in specs.items() if _is_blocked(s["status"])}
+
+    # ── Plan engine ───────────────────────────────────────────────────────────
+    plan_next: dict | None = None
+    plan_queue_sorted: list[dict] = []
+    if plan_raw:
+        wo_statuses = _build_wo_statuses(specs, active_branch_wos, pr_wos, done_wos)
+        plan_next = next_wo(plan_raw, wo_statuses)
+        plan_queue_sorted = sorted_queue(plan_raw, wo_statuses)
+        print(f"[orchestrator] plan.next = {plan_next.get('wo') if plan_next else 'none'}")
 
     dispatch_queue, holding_queue, cycle_warnings = _resolve_dependencies(
         {num: s for num, s in specs.items() if num in open_wos},
@@ -364,6 +410,14 @@ async def poll() -> None:
         "generated_at": now_str,
         "poll_interval_seconds": POLL_INTERVAL,
         "max_parallel_wos": MAX_PARALLEL_WOS,
+        "plan": {
+            "loaded": plan_raw is not None,
+            "last_updated": plan_raw.get("last_updated") if plan_raw else None,
+            "next": plan_next,
+            "queue": plan_queue_sorted,
+            "milestones": plan_raw.get("milestones", []) if plan_raw else [],
+            "phases": plan_raw.get("phases", []) if plan_raw else [],
+        },
         "runner_capacity": {
             "total": watchdog.get("summary", {}).get("runners_online", 0) if watchdog else 0,
             "busy": watchdog.get("summary", {}).get("runners_busy", 0) if watchdog else 0,
