@@ -27,16 +27,9 @@
   </div>
 </div>
 
-{% if not wos_available %}
-<div class="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border bg-amber-500/8 border-amber-500/20 text-amber-300 text-xs">
-  <svg class="w-4 h-4 flex-shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-  <span><strong>Work order data temporarily unavailable</strong> — GitHub API returned an error. WO counts show 0; velocity and program data are unaffected.</span>
-</div>
-{% endif %}
-
 {# ── Blocked items ─────────────────────────────────────────────────────── #}
 {% if blocked_alerts %}
-<div id="blocked-items-panel" class="mb-4 glass-panel overflow-hidden border border-red-500/20 bg-red-500/5">
+<div id="blocked-items-panel" class="mb-8 glass-panel overflow-hidden border border-red-500/20 bg-red-500/5">
   <div class="px-5 py-3.5 bg-red-950/20 border-b border-red-900/30 flex items-center justify-between">
     <span class="text-xs font-display font-bold text-red-300 uppercase tracking-widest flex items-center gap-2">
       <span class="w-2 h-2 rounded-full bg-red-500 pulse-dot-red"></span>
@@ -70,40 +63,40 @@
 </div>
 {% endif %}
 
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
 
   {# ── Velocity ────────────────────────────────────────────────────────── #}
-  <div class="lg:col-span-2 glass-panel p-4">
-    <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest mb-3">WO Velocity (Last 8 Weeks)</h2>
+  <div class="lg:col-span-2 glass-panel p-5">
+    <h2 class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest mb-4">Work Order Velocity (Last 8 Weeks)</h2>
     {% if velocity %}
-    <div class="space-y-2">
+    <div class="space-y-3.5">
       {% set max_count = velocity | map(attribute='count') | max %}
-      {% set safe_max = [max_count, 1] | max %}
       {% for week in velocity %}
-      <div class="flex items-center gap-3 text-xs">
-        <span class="text-slate-500 w-14 text-right font-mono text-[10px]">{{ week.label }}</span>
-        <div class="flex-1 bg-slate-950/60 border border-slate-800/30 rounded h-5 overflow-hidden flex items-center">
+      <div class="flex items-center gap-4 text-xs">
+        <span class="text-slate-500 w-16 text-right font-mono text-[11px]">{{ week.label }}</span>
+        <div class="flex-1 bg-slate-950/60 border border-slate-905/30 rounded-lg h-7 overflow-hidden flex items-center pr-2">
           {% if week.count > 0 %}
-          {% set bar_pct = [(week.count * 100 / safe_max) | round | int, 100] | min %}
-          <div class="bg-gradient-to-r from-indigo-500 to-cyan-500 h-full flex items-center px-2 transition-all duration-500"
-               style="width: {{ bar_pct }}%">
-            <span class="text-white font-mono font-semibold text-[9px]">{{ week.count }}</span>
+          <div class="bg-gradient-to-r from-indigo-500 to-cyan-500 h-full rounded-l-md flex items-center px-3 transition-all duration-500"
+               style="width: {{ [week.count / [max_count, 1] | max * 100, 100] | min | round }}%">
+            <span class="text-white font-mono font-semibold text-[10px]">{{ week.count }} WO{{ "s" if week.count > 1 else "" }}</span>
           </div>
           {% else %}
-          <span class="text-slate-700 font-mono text-[10px] px-2">0</span>
+          <div class="h-full flex items-center px-3">
+            <span class="text-slate-600 font-mono text-[10px]">0 WOs</span>
+          </div>
           {% endif %}
         </div>
       </div>
       {% endfor %}
     </div>
     {% else %}
-    <p class="text-xs text-slate-500 text-center py-4">No merged PRs in the last 8 weeks.</p>
+    <p class="text-xs text-slate-500 text-center py-8">No merged pull requests recorded in the last 8 weeks.</p>
     {% endif %}
   </div>
 
   {# ── Active Agents ───────────────────────────────────────────────────── #}
-  <div class="glass-panel p-4">
-    <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest mb-3">AI Agents in Flight</h2>
+  <div class="glass-panel p-5">
+    <h2 class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest mb-4">Active Dispatch Agents</h2>
     {% if active_agents %}
     <div class="space-y-4">
       {% for b in active_agents %}
@@ -136,7 +129,7 @@
 
 {# ── Program roll-up ───────────────────────────────────────────────────── #}
 {% if programs %}
-<div id="programs-panel" class="mb-4 glass-panel overflow-hidden">
+<div id="programs-panel" class="mb-8 glass-panel overflow-hidden">
   <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
     <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Program Trackers</span>
   </div>
@@ -180,14 +173,14 @@
 
 {# ── Dispatch advisory (orchestrator) ──────────────────────────────────── #}
 {% if orchestrator %}
-<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
   
   {# Ready to Dispatch #}
   <div class="glass-panel overflow-hidden border border-indigo-500/20 bg-indigo-500/5">
     <div class="px-5 py-3.5 bg-indigo-950/20 border-b border-indigo-900/30 flex items-center justify-between">
       <span class="text-xs font-display font-bold text-indigo-300 uppercase tracking-widest flex items-center gap-2">
         <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
-        <span>Next Up — Ready to Start ({{ orchestrator.dispatch_queue | length }})</span>
+        <span>Ready to Dispatch ({{ orchestrator.dispatch_queue | length }})</span>
       </span>
       <span class="text-[10px] font-mono text-indigo-400">Limit: {{ orchestrator.max_parallel_wos }} concurrent</span>
     </div>
@@ -218,8 +211,8 @@
   {# Waiting on Dependencies #}
   <div class="glass-panel overflow-hidden">
     <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
-      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Waiting on Dependencies ({{ orchestrator.holding_queue | length }})</span>
-      <span class="text-[10px] text-slate-500">These WOs are blocked until their dependencies finish</span>
+      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Holding Queue ({{ orchestrator.holding_queue | length }})</span>
+      <span class="text-[10px] text-slate-500">Awaiting dependency resolution</span>
     </div>
     {% if orchestrator.holding_queue %}
     <div class="divide-y divide-slate-800/30 max-h-[300px] overflow-y-auto">
@@ -240,7 +233,7 @@
 </div>
 
 {% if orchestrator.recommendations %}
-<div class="glass-panel p-4 border border-amber-500/20 bg-amber-500/5 mb-4">
+<div class="glass-panel p-5 border border-amber-500/20 bg-amber-500/5 mb-8">
   <div class="text-xs font-display font-bold text-amber-300 mb-3 uppercase tracking-wider flex items-center gap-2">
     <span>⚠</span>
     <span>Orchestrator Recommendations</span>
@@ -256,16 +249,14 @@
 </div>
 {% endif %}
 
-{% endif %}
-
 {# ── Open WO table ─────────────────────────────────────────────────────── #}
 <div id="open-wos-panel" class="glass-panel overflow-hidden">
-  <div class="px-5 py-3 bg-slate-900/40 border-b border-slate-800/80">
+  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
     <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">
-      Open Work Orders ({{ (columns.open | length) + (columns.in_progress | length) + (columns.review | length) + (columns.blocked | length) }})
+      Open Work Orders ({{ columns.open | length + columns.in_progress | length + columns.review | length + columns.blocked | length }})
     </span>
   </div>
-  <div class="overflow-x-auto max-h-[420px] overflow-y-auto">
+  <div class="overflow-x-auto">
     <table class="w-full text-xs text-left">
       <thead>
         <tr>
