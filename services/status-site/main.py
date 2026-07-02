@@ -330,8 +330,6 @@ async def pm_dashboard(request: Request):
         prog = spec.program or "Standalone"
         programs[prog]["total"] += 1
         programs[prog][spec.board_column if spec.board_column != "review" else "in_review"] += 1
-        if spec.board_column == "done":
-            programs[prog]["done"] += 1
 
     for prog in programs.values():
         total = prog["total"]
