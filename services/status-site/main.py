@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import github_client as gh
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -28,6 +29,8 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
 ORCHESTRATOR_PATH = Path(os.getenv("ORCHESTRATOR_PATH", "/orchestrator/orchestrator.json"))
+ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
+VALIDATIONS_PATH = Path("/orchestrator/pending_validations.json")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 
 
@@ -68,6 +71,16 @@ def _load_plan_from_orchestrator() -> dict | None:
     if not plan or not plan.get("loaded"):
         return None
     return plan
+
+
+def _load_validations() -> list[dict]:
+    """Read pending validations from the orchestrator volume."""
+    if not VALIDATIONS_PATH.exists():
+        return []
+    try:
+        return json.loads(VALIDATIONS_PATH.read_text())
+    except Exception:
+        return []
 
 
 async def _fetch_plan_from_github() -> dict | None:
@@ -251,6 +264,8 @@ async def dashboard(request: Request):
     _apply_live_status(wos, branches, prs)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
+    validations = _load_validations()
+    pending_validations = [v for v in validations if v.get("status") == "pending"]
 
     # Derive health status from watchdog data
     if watchdog:
@@ -290,6 +305,7 @@ async def dashboard(request: Request):
             "watchdog": watchdog,
             "health_status": health_status,
             "wos_available": wos_available,
+            "pending_validations": pending_validations,
         },
     )
 
@@ -376,6 +392,8 @@ async def pm_dashboard(request: Request):
     active_agents = [b for b in branches if b.get("agent_status")]
 
     orchestrator = _load_orchestrator()
+    validations = _load_validations()
+    pending_validations = [v for v in validations if v.get("status") == "pending"]
 
     return templates.TemplateResponse(request=request, name="pm.html", context={
         "site_title": SITE_TITLE,
@@ -391,6 +409,7 @@ async def pm_dashboard(request: Request):
         "watchdog": watchdog,
         "orchestrator": orchestrator,
         "wos_available": wos_available,
+        "pending_validations": pending_validations,
     })
 
 
@@ -615,6 +634,40 @@ async def api_plan_patch_wo(wo: str, request: Request):
         "applied": body,
         "note": "Write-back to GitHub PLAN.json is pending (WO-359). Changes accepted but not persisted.",
     })
+
+
+@app.post("/api/validations/{wo}/approve")
+async def proxy_approve(wo: str, request: Request):
+    """Proxy approve decision to the orchestrator API."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    body.setdefault("decided_by", "human")
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/validations/{wo}/approve", json=body)
+            return JSONResponse(content=resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Orchestrator unreachable: {e}")
+
+
+@app.post("/api/validations/{wo}/reject")
+async def proxy_reject(wo: str, request: Request):
+    """Proxy reject decision to the orchestrator API."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    body.setdefault("decided_by", "human")
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/validations/{wo}/reject", json=body)
+            return JSONResponse(content=resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Orchestrator unreachable: {e}")
 
 
 @app.get("/health")

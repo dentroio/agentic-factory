@@ -3,12 +3,17 @@ import base64
 import json
 import os
 import re
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from plan_engine import next_wo, sorted_queue
 
@@ -23,12 +28,256 @@ RUNS_PATH = os.getenv("RUNS_PATH", "docs/factory/runs")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 DAILY_SUMMARY_HOUR = os.getenv("DAILY_SUMMARY_HOUR", "")
 SUMMARY_ISSUE_NUMBER = os.getenv("SUMMARY_ISSUE_NUMBER", "")
+API_PORT = int(os.getenv("API_PORT", "8100"))
 
-OUTPUT_PATH = Path(os.getenv("OUTPUT_PATH", "/data/orchestrator.json"))
+DATA_DIR = Path("/data")
+OUTPUT_PATH = DATA_DIR / "orchestrator.json"
+DISPATCH_STATE_PATH = DATA_DIR / "dispatch_state.json"
+VALIDATIONS_PATH = DATA_DIR / "pending_validations.json"
 WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
 
 _last_summary_day: int = -1
 
+# ── In-memory state (persisted to volume) ────────────────────────────────────
+
+_dispatch_state: dict[str, dict] = {}   # wo_id → claim record
+_validations: list[dict] = []           # pending human validations
+_orchestrator_output: dict = {}         # last poll snapshot
+
+
+def _load_state() -> None:
+    global _dispatch_state, _validations
+    if DISPATCH_STATE_PATH.exists():
+        try:
+            _dispatch_state = json.loads(DISPATCH_STATE_PATH.read_text())
+        except Exception:
+            _dispatch_state = {}
+    if VALIDATIONS_PATH.exists():
+        try:
+            _validations = json.loads(VALIDATIONS_PATH.read_text())
+        except Exception:
+            _validations = []
+
+
+def _save_dispatch() -> None:
+    DISPATCH_STATE_PATH.write_text(json.dumps(_dispatch_state, indent=2))
+
+
+def _save_validations() -> None:
+    VALIDATIONS_PATH.write_text(json.dumps(_validations, indent=2))
+
+
+def _utcnow() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+# ── Pydantic models ───────────────────────────────────────────────────────────
+
+class ClaimRequest(BaseModel):
+    wo: str           # e.g. "WO-359"
+    agent: str        # "claude", "cursor", "antigravity"
+    workstation: str = ""
+    slug: str = ""
+
+
+class CompleteRequest(BaseModel):
+    wo: str
+    agent: str = ""
+
+
+class ValidateRequest(BaseModel):
+    wo: str
+    agent: str
+    workstation: str = ""
+    verify_url: str = ""
+    steps: list[str] = []
+
+
+class ValidationDecision(BaseModel):
+    decided_by: str
+    notes: str = ""
+
+
+# ── FastAPI app + lifespan ────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    _load_state()
+
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        print("[orchestrator] WARNING: GITHUB_TOKEN or GITHUB_REPO not set — poll loop disabled")
+    else:
+        scheduler = AsyncIOScheduler()
+        scheduler.add_job(poll, "interval", seconds=POLL_INTERVAL)
+        scheduler.start()
+        app.state.scheduler = scheduler
+        # Fire first poll in background — store ref so it isn't GC'd
+        app.state.initial_poll = asyncio.create_task(poll())
+
+    yield
+
+    if hasattr(app.state, "scheduler"):
+        app.state.scheduler.shutdown()
+
+
+app = FastAPI(title="Factory Orchestrator", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+# ── REST API ──────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+async def health():
+    return {"ok": True, "repo": GITHUB_REPO}
+
+
+@app.get("/api/status")
+async def get_status():
+    return _orchestrator_output
+
+
+@app.get("/api/next")
+async def get_next():
+    """Return the highest-priority unclaimed WO, or null if none available."""
+    plan = _orchestrator_output.get("plan", {})
+    queue: list[dict] = plan.get("queue", [])
+
+    active_statuses = {"claimed", "in_progress", "awaiting_human", "awaiting_commit"}
+
+    for wo in queue:
+        wo_id = wo.get("wo", "")
+        claim = _dispatch_state.get(wo_id, {})
+        if claim.get("status") in active_statuses:
+            continue
+        return {**wo, "repo": GITHUB_REPO}
+
+    return {"wo": None, "reason": "queue empty or all candidates claimed/blocked"}
+
+
+@app.post("/api/claim")
+async def claim_wo(req: ClaimRequest):
+    """Atomically claim a WO. Returns 409 if already claimed by another agent."""
+    wo_id = req.wo
+    existing = _dispatch_state.get(wo_id, {})
+    active_statuses = {"claimed", "in_progress", "awaiting_human", "awaiting_commit"}
+
+    if existing.get("status") in active_statuses:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{wo_id} already claimed by {existing['agent']} on {existing.get('workstation', '?')}",
+        )
+
+    _dispatch_state[wo_id] = {
+        "wo": wo_id,
+        "slug": req.slug,
+        "agent": req.agent,
+        "workstation": req.workstation,
+        "claimed_at": _utcnow(),
+        "status": "claimed",
+    }
+    _save_dispatch()
+    print(f"[orchestrator] {wo_id} claimed by {req.agent} on {req.workstation}")
+    return {"ok": True, "wo": wo_id, "agent": req.agent}
+
+
+@app.post("/api/checkin")
+async def checkin(wo: str, agent: str, step: str = ""):
+    """Agent heartbeat — update step label while working."""
+    if wo not in _dispatch_state:
+        raise HTTPException(status_code=404, detail=f"{wo} not claimed")
+    _dispatch_state[wo]["status"] = "in_progress"
+    _dispatch_state[wo]["step"] = step
+    _dispatch_state[wo]["last_seen"] = _utcnow()
+    _save_dispatch()
+    return {"ok": True}
+
+
+@app.post("/api/validate")
+async def request_validation(req: ValidateRequest):
+    """Agent signals it needs human sign-off before committing."""
+    if req.wo in _dispatch_state:
+        _dispatch_state[req.wo]["status"] = "awaiting_human"
+        _save_dispatch()
+
+    _validations.append({
+        "wo": req.wo,
+        "agent": req.agent,
+        "workstation": req.workstation,
+        "verify_url": req.verify_url,
+        "steps": req.steps,
+        "requested_at": _utcnow(),
+        "status": "pending",
+    })
+    _save_validations()
+    print(f"[orchestrator] {req.wo} awaiting human validation from {req.agent}")
+    return {"ok": True}
+
+
+@app.get("/api/validations")
+async def get_validations():
+    """Status site polls this to show the validation queue."""
+    return _validations
+
+
+@app.post("/api/validations/{wo}/approve")
+async def approve_validation(wo: str, decision: ValidationDecision):
+    for v in _validations:
+        if v["wo"] == wo and v["status"] == "pending":
+            v["status"] = "approved"
+            v["decided_by"] = decision.decided_by
+            v["decided_at"] = _utcnow()
+            v["notes"] = decision.notes
+            _save_validations()
+            if wo in _dispatch_state:
+                _dispatch_state[wo]["status"] = "awaiting_commit"
+                _save_dispatch()
+            print(f"[orchestrator] {wo} approved by {decision.decided_by}")
+            return {"ok": True}
+    raise HTTPException(status_code=404, detail=f"No pending validation for {wo}")
+
+
+@app.post("/api/validations/{wo}/reject")
+async def reject_validation(wo: str, decision: ValidationDecision):
+    for v in _validations:
+        if v["wo"] == wo and v["status"] == "pending":
+            v["status"] = "rejected"
+            v["decided_by"] = decision.decided_by
+            v["decided_at"] = _utcnow()
+            v["notes"] = decision.notes
+            _save_validations()
+            if wo in _dispatch_state:
+                _dispatch_state[wo]["status"] = "rejected"
+                _save_dispatch()
+            print(f"[orchestrator] {wo} rejected by {decision.decided_by}: {decision.notes}")
+            return {"ok": True}
+    raise HTTPException(status_code=404, detail=f"No pending validation for {wo}")
+
+
+@app.post("/api/complete")
+async def complete_wo(req: CompleteRequest):
+    """Agent signals WO is merged and done."""
+    wo_id = req.wo
+    if wo_id not in _dispatch_state:
+        raise HTTPException(status_code=404, detail=f"{wo_id} not in dispatch state")
+    _dispatch_state[wo_id]["status"] = "complete"
+    _dispatch_state[wo_id]["completed_at"] = _utcnow()
+    _save_dispatch()
+    # Remove from pending validations
+    global _validations
+    _validations = [v for v in _validations if v["wo"] != wo_id]
+    _save_validations()
+    print(f"[orchestrator] {wo_id} marked complete by {req.agent}")
+    return {"ok": True}
+
+
+@app.get("/api/dispatch")
+async def get_dispatch():
+    """Full dispatch state — which agent owns which WO."""
+    return _dispatch_state
+
+
+# ── GitHub helpers ────────────────────────────────────────────────────────────
 
 def _headers() -> dict:
     h = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
@@ -44,7 +293,7 @@ async def _get(client: httpx.AsyncClient, path: str, params: dict | None = None)
     return resp.json()
 
 
-# ── WO spec parsing ──────────────────────────────────────────────────────────
+# ── WO spec parsing ───────────────────────────────────────────────────────────
 
 def _parse_wo_number(filename: str) -> int | None:
     m = re.match(r"WO-(\d+)", filename)
@@ -62,7 +311,7 @@ def _parse_priority(content: str) -> str:
 
 
 def _parse_title(content: str, number: int) -> str:
-    m = re.search(r"^# WO-\d+ — (.+)$", content, re.MULTILINE)
+    m = re.search(r"^# (?:WO-[\d–-]+|Work Order \d+)\s*[—:]\s*(.+)$", content, re.MULTILINE)
     return m.group(1).strip() if m else f"WO-{number}"
 
 
@@ -83,17 +332,12 @@ def _is_done(status: str) -> bool:
     return "done" in s or "complete" in s or "✅" in status or "deferred" in s or "superseded" in s or "abandoned" in s
 
 
-def _is_in_progress(status: str) -> bool:
-    s = status.lower()
-    return "progress" in s or "🔄" in s
-
-
 def _is_blocked(status: str) -> bool:
     s = status.lower()
     return "blocked" in s or "🔴" in s
 
 
-# ── GitHub API helpers ───────────────────────────────────────────────────────
+# ── GitHub data fetchers ──────────────────────────────────────────────────────
 
 async def _fetch_wo_specs(client: httpx.AsyncClient) -> dict[int, dict]:
     try:
@@ -127,12 +371,7 @@ async def _fetch_wo_specs(client: httpx.AsyncClient) -> dict[int, dict]:
 async def _fetch_active_branches(client: httpx.AsyncClient) -> set[int]:
     try:
         branches = await _get(client, f"/repos/{GITHUB_REPO}/branches", {"per_page": 100})
-        nums: set[int] = set()
-        for b in branches:
-            m = re.match(r"wo/(\d+)-", b["name"])
-            if m:
-                nums.add(int(m.group(1)))
-        return nums
+        return {int(m.group(1)) for b in branches if (m := re.match(r"wo/(\d+)-", b["name"]))}
     except Exception:
         return set()
 
@@ -140,12 +379,7 @@ async def _fetch_active_branches(client: httpx.AsyncClient) -> set[int]:
 async def _fetch_open_pr_wos(client: httpx.AsyncClient) -> set[int]:
     try:
         prs = await _get(client, f"/repos/{GITHUB_REPO}/pulls", {"state": "open", "per_page": 100})
-        nums: set[int] = set()
-        for pr in prs:
-            m = re.search(r"WO-(\d+)", pr.get("title", ""))
-            if m:
-                nums.add(int(m.group(1)))
-        return nums
+        return {int(m.group(1)) for p in prs if (m := re.search(r"WO-(\d+)", p.get("title", "")))}
     except Exception:
         return set()
 
@@ -161,14 +395,10 @@ async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient) -> int:
         return 0
 
 
-# ── PLAN.json fetch ──────────────────────────────────────────────────────────
-
 async def _fetch_plan(client: httpx.AsyncClient) -> dict | None:
-    """Fetch docs/factory/PLAN.json from GITHUB_REPO and return parsed dict."""
     try:
         data = await _get(client, f"/repos/{GITHUB_REPO}/contents/{PLAN_PATH}")
-        content = base64.b64decode(data["content"]).decode("utf-8")
-        return json.loads(content)
+        return json.loads(base64.b64decode(data["content"]).decode("utf-8"))
     except Exception as e:
         print(f"[orchestrator] Failed to fetch PLAN.json: {e}")
         return None
@@ -176,10 +406,6 @@ async def _fetch_plan(client: httpx.AsyncClient) -> dict | None:
 
 def _build_wo_statuses(specs: dict[int, dict], active_branch_wos: set[int],
                        pr_wos: set[int], done_wos: set[int]) -> dict[str, str]:
-    """
-    Build a mapping of WO id string (e.g. 'WO-358') → live status string
-    for use by plan_engine.  Priority: done > review > in_progress > spec status.
-    """
     result: dict[str, str] = {}
     for num, spec in specs.items():
         wo_id = f"WO-{num}"
@@ -194,77 +420,54 @@ def _build_wo_statuses(specs: dict[int, dict], active_branch_wos: set[int],
     return result
 
 
-# ── Dependency graph ─────────────────────────────────────────────────────────
-
 def _resolve_dependencies(specs: dict[int, dict], done_wos: set[int]) -> tuple[list[dict], list[dict], list[str]]:
-    """Return (dispatch_queue, holding_queue, cycle_warnings)."""
     dispatch: list[dict] = []
     holding: list[dict] = []
     warnings: list[str] = []
 
-    # Detect circular dependencies (simple cycle detection)
     def has_cycle(num: int, visiting: set[int]) -> bool:
         if num in visiting:
             return True
         deps = specs.get(num, {}).get("depends_on", [])
-        visiting = visiting | {num}
-        return any(has_cycle(d, visiting) for d in deps if d in specs)
+        return any(has_cycle(d, visiting | {num}) for d in deps if d in specs)
 
     for num, spec in sorted(specs.items(), key=lambda x: (x[1]["priority"], x[0])):
         if _is_done(spec["status"]):
             continue
-
-        deps = spec.get("depends_on", [])
-
-        # Circular dependency check
         if has_cycle(num, set()):
             warnings.append(f"WO-{num} has a circular dependency — skipping")
             continue
-
-        unmet = [d for d in deps if d not in done_wos]
+        unmet = [d for d in spec.get("depends_on", []) if d not in done_wos]
         if unmet:
             holding.append({
-                "wo": num,
-                "title": spec["title"],
-                "priority": spec["priority"],
-                "dependencies_met": False,
-                "blocked_by": unmet,
+                "wo": num, "title": spec["title"], "priority": spec["priority"],
+                "dependencies_met": False, "blocked_by": unmet,
                 "reason": f"Waiting on WO-{', WO-'.join(str(d) for d in unmet)}",
             })
         else:
             dispatch.append({
-                "wo": num,
-                "title": spec["title"],
-                "priority": spec["priority"],
-                "effort": spec["effort"],
-                "dependencies_met": True,
+                "wo": num, "title": spec["title"], "priority": spec["priority"],
+                "effort": spec["effort"], "dependencies_met": True,
                 "recommended_action": "start",
-                "reason": "Open, dependencies met" if deps else "Open, no dependencies",
+                "reason": "Open, dependencies met" if spec.get("depends_on") else "Open, no dependencies",
             })
 
-    # Sort dispatch by priority then WO number
     priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
     dispatch.sort(key=lambda x: (priority_order.get(x["priority"], 9), x["wo"]))
-
     return dispatch[:MAX_PARALLEL_WOS * 3], holding, warnings
 
 
-# ── Daily summary ────────────────────────────────────────────────────────────
+# ── Daily summary ─────────────────────────────────────────────────────────────
 
 async def _maybe_post_summary(client: httpx.AsyncClient, output: dict) -> None:
     global _last_summary_day
     if not DAILY_SUMMARY_HOUR or not SUMMARY_ISSUE_NUMBER:
         return
     now = datetime.now(UTC)
-    if now.hour != int(DAILY_SUMMARY_HOUR):
-        return
-    if now.day == _last_summary_day:
+    if now.hour != int(DAILY_SUMMARY_HOUR) or now.day == _last_summary_day:
         return
 
     board = output["board_summary"]
-    dispatch = output["dispatch_queue"]
-    active = output["active_work"]
-
     lines = [
         f"## Factory Daily Summary — {now.strftime('%a %b %d, %Y')}",
         "",
@@ -272,36 +475,13 @@ async def _maybe_post_summary(client: httpx.AsyncClient, output: dict) -> None:
         f"{board['in_review']} In Review · {board['blocked']} Blocked · {board['done_this_week']} done this week",
         "",
     ]
-
-    if dispatch:
-        lines.append("**Ready to start:**")
-        for item in dispatch[:5]:
-            lines.append(f"- WO-{item['wo']} ({item['priority']}): {item['title']}")
-        lines.append("")
-
-    if active:
-        lines.append("**In Progress:**")
-        for item in active:
-            agent = f" — {item['agent']}, {item['step']}" if item.get("agent") else ""
-            lines.append(f"- WO-{item['wo']}: {item['title']}{agent}")
-        lines.append("")
-
-    holding = output.get("holding_queue", [])
-    if holding:
-        lines.append("**Blocked (unmet deps):**")
-        for item in holding[:5]:
-            lines.append(f"- WO-{item['wo']} depends on WO-{', WO-'.join(str(d) for d in item['blocked_by'])}")
-        lines.append("")
-
-    if output.get("recommendations"):
-        lines.append("**Recommendations:**")
-        for r in output["recommendations"][:5]:
-            lines.append(f"- {r}")
-
+    for item in output.get("dispatch_queue", [])[:5]:
+        lines.append(f"- WO-{item['wo']} ({item['priority']}): {item['title']}")
     body = "\n".join(lines)
 
     try:
-        comments = await _get(client, f"/repos/{GITHUB_REPO}/issues/{SUMMARY_ISSUE_NUMBER}/comments", {"per_page": 100})
+        comments = await _get(client, f"/repos/{GITHUB_REPO}/issues/{SUMMARY_ISSUE_NUMBER}/comments",
+                              {"per_page": 100})
         existing = next((c for c in comments if "Factory Daily Summary" in c.get("body", "")), None)
         if existing:
             await client.patch(
@@ -314,12 +494,9 @@ async def _maybe_post_summary(client: httpx.AsyncClient, output: dict) -> None:
                 headers=_headers(), json={"body": body},
             )
         _last_summary_day = now.day
-        print(f"[orchestrator] Posted daily summary to issue #{SUMMARY_ISSUE_NUMBER}")
     except Exception as e:
         print(f"[orchestrator] Failed to post summary: {e}")
 
-
-# ── Load watchdog data ───────────────────────────────────────────────────────
 
 def _load_watchdog() -> dict | None:
     if not WATCHDOG_PATH.exists():
@@ -330,10 +507,11 @@ def _load_watchdog() -> dict | None:
         return None
 
 
-# ── Main poll ────────────────────────────────────────────────────────────────
+# ── Main poll loop ────────────────────────────────────────────────────────────
 
 async def poll() -> None:
-    now_str = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    global _orchestrator_output
+    now_str = _utcnow()
 
     async with httpx.AsyncClient(timeout=20) as client:
         specs, active_branch_wos, pr_wos, merged_this_week, plan_raw = await asyncio.gather(
@@ -351,43 +529,34 @@ async def poll() -> None:
                 if not _is_done(s["status"]) and num not in active_branch_wos and num not in pr_wos}
     blocked_wos = {num for num, s in specs.items() if _is_blocked(s["status"])}
 
-    # ── Plan engine ───────────────────────────────────────────────────────────
     plan_next: dict | None = None
     plan_queue_sorted: list[dict] = []
     if plan_raw:
         wo_statuses = _build_wo_statuses(specs, active_branch_wos, pr_wos, done_wos)
         plan_next = next_wo(plan_raw, wo_statuses)
         plan_queue_sorted = sorted_queue(plan_raw, wo_statuses)
-        print(f"[orchestrator] plan.next = {plan_next.get('wo') if plan_next else 'none'}")
 
     dispatch_queue, holding_queue, cycle_warnings = _resolve_dependencies(
-        {num: s for num, s in specs.items() if num in open_wos},
-        done_wos,
+        {num: s for num, s in specs.items() if num in open_wos}, done_wos,
     )
 
-    # Active work details
+    # Enrich active_work with dispatch state (agent/step from API claims)
     active_work = []
-    for num in sorted(in_progress_wos):
+    for num in sorted(in_progress_wos | in_review_wos):
         spec = specs.get(num, {})
+        wo_id = f"WO-{num}"
+        claim = _dispatch_state.get(wo_id, {})
         active_work.append({
             "wo": num,
             "title": spec.get("title", f"WO-{num}"),
-            "branch": f"wo/{num}-*",
-            "agent": None,
-            "step": None,
-        })
-    for num in sorted(in_review_wos):
-        spec = specs.get(num, {})
-        active_work.append({
-            "wo": num,
-            "title": spec.get("title", f"WO-{num}"),
-            "branch": None,
-            "pr": True,
-            "agent": None,
-            "step": None,
+            "branch": f"wo/{num}-*" if num in in_progress_wos else None,
+            "pr": num in in_review_wos,
+            "agent": claim.get("agent"),
+            "workstation": claim.get("workstation"),
+            "step": claim.get("step"),
+            "status": claim.get("status"),
         })
 
-    # Recommendations
     watchdog = _load_watchdog()
     recommendations: list[str] = []
     if dispatch_queue:
@@ -396,20 +565,23 @@ async def poll() -> None:
     if watchdog:
         errors = watchdog.get("summary", {}).get("errors", 0)
         if errors:
-            recommendations.append(f"{errors} PR(s) have errors — check the CI View for details")
+            recommendations.append(f"{errors} PR(s) have errors — check the CI View")
         runners_busy = watchdog.get("summary", {}).get("runners_busy", 0)
         runners_online = watchdog.get("summary", {}).get("runners_online", 0)
         if runners_online > 0 and runners_busy >= runners_online:
-            recommendations.append("All runners busy — hold off starting new WOs until a runner frees up")
+            recommendations.append("All runners busy — hold off starting new WOs")
     if len(in_progress_wos) >= MAX_PARALLEL_WOS:
-        recommendations.append(f"At parallel WO limit ({MAX_PARALLEL_WOS}) — complete in-progress work before starting more")
-    if cycle_warnings:
-        recommendations.extend(cycle_warnings)
+        recommendations.append(f"At parallel WO limit ({MAX_PARALLEL_WOS})")
+    recommendations.extend(cycle_warnings)
 
-    output = {
+    # Pending validations count for status site banner
+    pending_validations = [v for v in _validations if v.get("status") == "pending"]
+
+    _orchestrator_output = {
         "generated_at": now_str,
         "poll_interval_seconds": POLL_INTERVAL,
         "max_parallel_wos": MAX_PARALLEL_WOS,
+        "pending_validations": len(pending_validations),
         "plan": {
             "loaded": plan_raw is not None,
             "last_updated": plan_raw.get("last_updated") if plan_raw else None,
@@ -423,8 +595,8 @@ async def poll() -> None:
         "runner_capacity": {
             "total": watchdog.get("summary", {}).get("runners_online", 0) if watchdog else 0,
             "busy": watchdog.get("summary", {}).get("runners_busy", 0) if watchdog else 0,
-            "available": max(0, watchdog.get("summary", {}).get("runners_online", 0) -
-                           watchdog.get("summary", {}).get("runners_busy", 0)) if watchdog else 0,
+            "available": max(0, (watchdog.get("summary", {}).get("runners_online", 0) or 0) -
+                           (watchdog.get("summary", {}).get("runners_busy", 0) or 0)) if watchdog else 0,
         },
         "board_summary": {
             "total": len(specs),
@@ -442,32 +614,13 @@ async def poll() -> None:
     }
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(json.dumps(output, indent=2))
+    OUTPUT_PATH.write_text(json.dumps(_orchestrator_output, indent=2))
     print(f"[orchestrator] {now_str} — {len(specs)} WOs, {len(dispatch_queue)} dispatchable, "
-          f"{len(in_progress_wos)} in-progress, {len(in_review_wos)} in-review")
+          f"{len(in_progress_wos)} in-progress, {len(pending_validations)} awaiting validation")
 
     async with httpx.AsyncClient(timeout=20) as client:
-        await _maybe_post_summary(client, output)
-
-
-async def main() -> None:
-    print(f"[orchestrator] Starting — repo={GITHUB_REPO}, interval={POLL_INTERVAL}s, max_parallel={MAX_PARALLEL_WOS}")
-    if not GITHUB_TOKEN or not GITHUB_REPO:
-        print("[orchestrator] ERROR: GITHUB_TOKEN and GITHUB_REPO must be set")
-        return
-
-    await poll()
-
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(poll, "interval", seconds=POLL_INTERVAL)
-    scheduler.start()
-
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
+        await _maybe_post_summary(client, _orchestrator_output)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    uvicorn.run("orchestrator:app", host="0.0.0.0", port=API_PORT, log_level="info")
