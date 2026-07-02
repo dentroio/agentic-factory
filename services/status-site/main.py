@@ -457,9 +457,10 @@ def _compute_plan_stats(plan_data: dict) -> dict:
     """
     Pre-compute milestone and phase progress stats server-side so the
     template doesn't need Jinja2 tests that aren't available (e.g. 'containing').
+    Uses all_wos (full PLAN.json queue including done/in_progress) for accurate %.
     Returns an augmented plan_data copy with milestone_stats and phase_stats.
     """
-    queue = plan_data.get("queue", [])
+    all_wos = plan_data.get("all_wos") or plan_data.get("queue", [])
     milestones = plan_data.get("milestones", [])
     phases = plan_data.get("phases", [])
 
@@ -467,8 +468,8 @@ def _compute_plan_stats(plan_data: dict) -> dict:
     milestone_stats: dict[str, dict] = {}
     for ms in milestones:
         ms_id = ms["id"]
-        ms_wos = [w for w in queue if ms_id in w.get("blocks_milestones", [])]
-        ms_done = [w for w in ms_wos if w.get("status", "").lower() == "done"]
+        ms_wos = [w for w in all_wos if ms_id in w.get("blocks_milestones", [])]
+        ms_done = [w for w in ms_wos if w.get("status", "").lower() in {"done", "complete"}]
         total = len(ms_wos)
         pct = round(len(ms_done) / total * 100) if total else 0
         milestone_stats[ms_id] = {
@@ -481,14 +482,15 @@ def _compute_plan_stats(plan_data: dict) -> dict:
     phase_stats: dict[str, dict] = {}
     for phase in phases:
         ph_id = phase["id"]
-        ph_wos = [w for w in queue if w.get("phase") == ph_id]
-        ph_done = [w for w in ph_wos if w.get("status", "").lower() == "done"]
+        ph_wos = [w for w in all_wos if w.get("phase") == ph_id]
+        ph_done = [w for w in ph_wos if w.get("status", "").lower() in {"done", "complete"}]
         total = len(ph_wos)
         pct = round(len(ph_done) / total * 100) if total else 0
         phase_stats[ph_id] = {
             "total": total,
             "done": len(ph_done),
             "pct": pct,
+            "wos": [w["wo"] for w in ph_wos],
         }
 
     result = dict(plan_data)
@@ -515,6 +517,8 @@ async def plan_dashboard(request: Request):
                 "loaded": True,
                 "next": None,
                 "queue": raw.get("queue", []),
+                "all_wos": raw.get("queue", []),
+                "deferred": raw.get("deferred", []),
                 "milestones": raw.get("milestones", []),
                 "phases": raw.get("phases", []),
                 "last_updated": raw.get("last_updated"),
