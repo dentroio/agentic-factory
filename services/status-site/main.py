@@ -294,16 +294,31 @@ async def dashboard(request: Request):
 
 @app.get("/wo/{number}", response_class=HTMLResponse)
 async def wo_detail(request: Request, number: int):
-    files = await gh.list_wo_files()
-    match = next((f for f in files if f["name"].startswith(f"WO-{number}-")), None)
-    if not match:
-        return HTMLResponse("<h1>WO not found</h1>", status_code=404)
-    content = await gh.get_file_content(match["path"])
-    spec = parse_wo_file(content, match["name"])
+    try:
+        files = await gh.list_wo_files()
+        match = next((f for f in files if f["name"].startswith(f"WO-{number}-")), None)
+        if not match:
+            return HTMLResponse(
+                f"<h1 style='font-family:monospace;padding:2rem'>WO-{number} not found</h1>",
+                status_code=404,
+            )
+        content = await gh.get_file_content(match["path"])
+        spec = parse_wo_file(content, match["name"])
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="error.html",
+            context={
+                "site_title": SITE_TITLE,
+                "message": f"Could not load WO-{number}: {exc}",
+                "refresh_seconds": 60,
+            },
+            status_code=502,
+        )
     return templates.TemplateResponse(
         request=request,
         name="wo_detail.html",
-        context={"site_title": SITE_TITLE, "spec": spec, "refresh_seconds": 300},
+        context={"site_title": SITE_TITLE, "spec": spec, "refresh_seconds": 300, "github_repo": GITHUB_REPO},
     )
 
 

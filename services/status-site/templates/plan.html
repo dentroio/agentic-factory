@@ -48,7 +48,7 @@
 
 {# ── Milestone cards ───────────────────────────────────────────────────── #}
 {% if plan.milestones %}
-<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
   {% for ms in plan.milestones %}
   {% set ms_stat = plan.milestone_stats[ms.id] if plan.milestone_stats and ms.id in plan.milestone_stats else {"total": 0, "done": 0, "pct": 0} %}
   <div class="glass-panel p-5">
@@ -81,7 +81,7 @@
 
 {# ── Phase progress bars ───────────────────────────────────────────────── #}
 {% if plan.phases %}
-<div class="glass-panel overflow-hidden mb-8">
+<div class="glass-panel overflow-hidden mb-4">
   <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
     <h2 class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Phase Progression</h2>
   </div>
@@ -124,15 +124,15 @@
 {# ── Priority queue list ────────────────────────────────────────────────── #}
 {% if plan.queue %}
 <div class="glass-panel overflow-hidden">
-  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
+  <div class="px-5 py-3 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
     <h2 class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Priority Queue ({{ plan.queue | length }} WOs)</h2>
-    <span class="text-[10px] text-slate-500">Highlighted item represents next cleared work order</span>
+    <span class="text-[10px] text-slate-500">↑ next cleared</span>
   </div>
-  <div class="divide-y divide-slate-800/30">
+  <div class="divide-y divide-slate-800/30 max-h-[520px] overflow-y-auto">
     {% for item in plan.queue %}
     {% set is_next = plan.next and item.wo == plan.next.wo %}
     {% set status = item.status | lower %}
-    <div class="flex items-center gap-4 px-5 py-3 transition-colors
+    <div class="flex items-center gap-3 px-4 py-2 transition-colors
       {% if is_next %}bg-indigo-500/5 border-l-4 border-indigo-500{% elif status in ['done'] %}opacity-40{% elif status in ['deferred'] %}opacity-30{% endif %} hover:bg-slate-900/10">
 
       {# Next WO Indicator / Pins #}
