@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import github_client as gh
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from status_reader import format_duration, get_agent_status
@@ -28,6 +28,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
 ORCHESTRATOR_PATH = Path(os.getenv("ORCHESTRATOR_PATH", "/orchestrator/orchestrator.json"))
+PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 
 
 def _load_watchdog() -> dict | None:
@@ -54,6 +55,26 @@ def _load_orchestrator() -> dict | None:
         if (datetime.now(UTC) - generated).total_seconds() > int(os.getenv("POLL_INTERVAL", "300")) * 2:
             return None
         return data
+    except Exception:
+        return None
+
+
+def _load_plan_from_orchestrator() -> dict | None:
+    """Return the plan sub-dict from orchestrator.json if available and loaded."""
+    orch = _load_orchestrator()
+    if not orch:
+        return None
+    plan = orch.get("plan")
+    if not plan or not plan.get("loaded"):
+        return None
+    return plan
+
+
+async def _fetch_plan_from_github() -> dict | None:
+    """Fallback: fetch PLAN.json directly from GitHub when orchestrator is offline."""
+    try:
+        content = await gh.get_file_content(PLAN_PATH)
+        return json.loads(content)
     except Exception:
         return None
 
@@ -429,6 +450,149 @@ async def ci_dashboard(request: Request):
         "pr_checks": pr_checks,
         "ci": ci,
         "watchdog": watchdog,
+    })
+
+
+def _compute_plan_stats(plan_data: dict) -> dict:
+    """
+    Pre-compute milestone and phase progress stats server-side so the
+    template doesn't need Jinja2 tests that aren't available (e.g. 'containing').
+    Returns an augmented plan_data copy with milestone_stats and phase_stats.
+    """
+    queue = plan_data.get("queue", [])
+    milestones = plan_data.get("milestones", [])
+    phases = plan_data.get("phases", [])
+
+    # Milestone stats: count WOs that block each milestone
+    milestone_stats: dict[str, dict] = {}
+    for ms in milestones:
+        ms_id = ms["id"]
+        ms_wos = [w for w in queue if ms_id in w.get("blocks_milestones", [])]
+        ms_done = [w for w in ms_wos if w.get("status", "").lower() == "done"]
+        total = len(ms_wos)
+        pct = round(len(ms_done) / total * 100) if total else 0
+        milestone_stats[ms_id] = {
+            "total": total,
+            "done": len(ms_done),
+            "pct": pct,
+        }
+
+    # Phase stats: count WOs per phase
+    phase_stats: dict[str, dict] = {}
+    for phase in phases:
+        ph_id = phase["id"]
+        ph_wos = [w for w in queue if w.get("phase") == ph_id]
+        ph_done = [w for w in ph_wos if w.get("status", "").lower() == "done"]
+        total = len(ph_wos)
+        pct = round(len(ph_done) / total * 100) if total else 0
+        phase_stats[ph_id] = {
+            "total": total,
+            "done": len(ph_done),
+            "pct": pct,
+        }
+
+    result = dict(plan_data)
+    result["milestone_stats"] = milestone_stats
+    result["phase_stats"] = phase_stats
+    return result
+
+
+@app.get("/plan", response_class=HTMLResponse)
+async def plan_dashboard(request: Request):
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return templates.TemplateResponse(request=request, name="error.html", context={
+            "site_title": SITE_TITLE, "message": "GITHUB_TOKEN and GITHUB_REPO required."
+        })
+
+    plan_from_orch = _load_plan_from_orchestrator()
+    if plan_from_orch:
+        raw_plan = plan_from_orch
+        plan_source = "orchestrator"
+    else:
+        raw = await _fetch_plan_from_github()
+        if raw:
+            raw_plan = {
+                "loaded": True,
+                "next": None,
+                "queue": raw.get("queue", []),
+                "milestones": raw.get("milestones", []),
+                "phases": raw.get("phases", []),
+                "last_updated": raw.get("last_updated"),
+            }
+        else:
+            raw_plan = None
+        plan_source = "github" if raw else "unavailable"
+
+    plan_data = _compute_plan_stats(raw_plan) if raw_plan else None
+    orchestrator = _load_orchestrator()
+
+    return templates.TemplateResponse(request=request, name="plan.html", context={
+        "site_title": SITE_TITLE,
+        "refresh_seconds": REFRESH_SECONDS,
+        "github_repo": GITHUB_REPO,
+        "plan": plan_data,
+        "plan_source": plan_source,
+        "orchestrator": orchestrator,
+    })
+
+
+@app.get("/api/plan")
+async def api_plan():
+    """Return the full plan including phases, milestones, sorted queue, and next WO."""
+    plan = _load_plan_from_orchestrator()
+    if plan:
+        return JSONResponse(content=plan)
+    raw = await _fetch_plan_from_github()
+    if not raw:
+        raise HTTPException(status_code=503, detail="Plan unavailable — orchestrator offline and GitHub fetch failed")
+    return JSONResponse(content={
+        "loaded": True,
+        "source": "github_direct",
+        "last_updated": raw.get("last_updated"),
+        "milestones": raw.get("milestones", []),
+        "phases": raw.get("phases", []),
+        "queue": raw.get("queue", []),
+        "next": None,  # can't compute without plan_engine in this container
+    })
+
+
+@app.get("/api/plan/next")
+async def api_plan_next():
+    """Return the highest-priority open, unblocked WO from the plan queue."""
+    plan = _load_plan_from_orchestrator()
+    if plan and plan.get("next") is not None:
+        return JSONResponse(content=plan["next"])
+    # Fallback: if orchestrator is offline, return first open item from raw plan
+    raw = await _fetch_plan_from_github()
+    if not raw:
+        raise HTTPException(status_code=503, detail="Plan unavailable")
+    queue = raw.get("queue", [])
+    for item in queue:
+        status = item.get("status", "open").lower()
+        if status not in {"done", "deferred", "claimed", "in_progress", "review"}:
+            deps = item.get("depends_on", [])
+            if not deps:
+                return JSONResponse(content=item)
+    raise HTTPException(status_code=404, detail="No eligible WO found in queue")
+
+
+@app.patch("/api/plan/wos/{wo}")
+async def api_plan_patch_wo(wo: str, request: Request):
+    """
+    Stub: accept priority/phase/pin changes for a WO.
+    Full GitHub write-back is out of scope for WO-358; returns 200 with the
+    received payload so agents can confirm the endpoint is wired.
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    return JSONResponse(content={
+        "ok": True,
+        "wo": wo,
+        "applied": body,
+        "note": "Write-back to GitHub PLAN.json is pending (WO-359). Changes accepted but not persisted.",
     })
 
 

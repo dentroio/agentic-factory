@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block page_title %}Plan — {{ site_title }}{% endblock %}
+{% block content %}
+
+{# ── Header ────────────────────────────────────────────────────────────── #}
+<div class="flex items-start justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-bold text-slate-900">Factory Plan</h1>
+    <p class="text-sm text-slate-500 mt-1">
+      Priority queue, milestone progress, and phase breakdown.
+      {% if plan %}
+      Source: <span class="font-mono text-xs text-slate-400">{{ plan_source }}</span>
+      {% if plan.last_updated %}· last updated <span class="font-mono text-xs text-slate-400">{{ plan.last_updated }}</span>{% endif %}
+      {% endif %}
+    </p>
+  </div>
+  {% if plan and plan.next %}
+  <div class="bg-blue-600 text-white rounded-xl px-5 py-3 shadow-sm flex items-center gap-3">
+    <div>
+      <div class="text-xs font-semibold uppercase tracking-wide opacity-75 mb-0.5">Next WO</div>
+      <div class="text-lg font-bold font-mono leading-tight">{{ plan.next.wo }}</div>
+      <div class="text-xs opacity-90 leading-snug max-w-48 truncate">{{ plan.next.title }}</div>
+    </div>
+    <div class="ml-2 flex flex-col gap-1 items-end">
+      <span class="text-xs font-bold bg-white/20 rounded px-2 py-0.5">{{ plan.next.priority }}</span>
+      <span class="text-xs bg-white/20 rounded px-2 py-0.5">{{ plan.next.effort }}</span>
+      {% if plan.next.pin %}<span class="text-xs bg-yellow-400/30 rounded px-2 py-0.5">PINNED</span>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% if not plan %}
+<div class="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 text-amber-800 text-sm">
+  Plan data unavailable. The orchestrator may be starting up — refresh in a moment.
+</div>
+{% else %}
+
+{# ── Milestone cards ───────────────────────────────────────────────────── #}
+{% if plan.milestones %}
+<div class="grid grid-cols-2 gap-4 mb-6">
+  {% for ms in plan.milestones %}
+  {% set ms_stat = plan.milestone_stats[ms.id] if plan.milestone_stats and ms.id in plan.milestone_stats else {"total": 0, "done": 0, "pct": 0} %}
+  <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+    <div class="flex items-start justify-between mb-2">
+      <div>
+        <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-0.5">Milestone</div>
+        <div class="text-sm font-bold text-slate-800 leading-snug">{{ ms.label }}</div>
+      </div>
+      <div class="text-right">
+        <div class="text-xl font-bold {% if ms_stat.pct == 100 %}text-green-600{% elif ms_stat.pct >= 50 %}text-blue-600{% else %}text-slate-600{% endif %}">{{ ms_stat.pct }}%</div>
+        <div class="text-xs text-slate-400">{{ ms_stat.done }}/{{ ms_stat.total }} done</div>
+      </div>
+    </div>
+    <div class="h-2 bg-slate-100 rounded-full overflow-hidden mb-2">
+      <div class="h-full rounded-full {% if ms_stat.pct == 100 %}bg-green-500{% elif ms_stat.pct >= 50 %}bg-blue-500{% else %}bg-slate-400{% endif %}"
+           style="width: {{ ms_stat.pct }}%"></div>
+    </div>
+    <div class="text-xs text-slate-400">Target: {{ ms.target_date }}</div>
+    {% if ms.description %}
+    <div class="text-xs text-slate-500 mt-1 leading-snug">{{ ms.description[:80] }}{% if ms.description | length > 80 %}...{% endif %}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ── Phase progress bars ───────────────────────────────────────────────── #}
+{% if plan.phases %}
+<div class="bg-white border border-slate-200 rounded-xl overflow-hidden mb-6 shadow-sm">
+  <div class="px-4 py-3 border-b border-slate-100 bg-slate-50">
+    <h2 class="text-sm font-semibold text-slate-600">Phase Progress</h2>
+  </div>
+  <div class="divide-y divide-slate-100">
+    {% for phase in plan.phases %}
+    {% set ph_stat = plan.phase_stats[phase.id] if plan.phase_stats and phase.id in plan.phase_stats else {"total": 0, "done": 0, "pct": 0} %}
+    <div class="px-4 py-3">
+      <div class="flex items-center justify-between mb-1.5">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-semibold text-slate-800">{{ phase.label }}</span>
+          {% if phase.parallel %}
+          <span class="text-xs bg-purple-100 text-purple-700 rounded px-1.5 py-0.5 font-medium">parallel</span>
+          {% endif %}
+          {% if phase.milestone %}
+          <span class="text-xs bg-slate-100 text-slate-500 rounded px-1.5 py-0.5">→ {{ phase.milestone }}</span>
+          {% endif %}
+        </div>
+        <div class="flex items-center gap-3 text-xs text-slate-400">
+          <span>{{ ph_stat.done }}/{{ ph_stat.total }} WOs</span>
+          <span class="font-semibold {% if ph_stat.pct == 100 %}text-green-600{% else %}text-slate-600{% endif %}">{{ ph_stat.pct }}%</span>
+          {% if phase.target_date %}
+          <span>due {{ phase.target_date }}</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+        <div class="h-full rounded-full {% if ph_stat.pct == 100 %}bg-green-500{% elif ph_stat.pct >= 50 %}bg-blue-500{% else %}bg-blue-400{% endif %}"
+             style="width: {{ ph_stat.pct }}%"></div>
+      </div>
+      {% if phase.description %}
+      <div class="text-xs text-slate-400 mt-1">{{ phase.description }}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{# ── Priority queue list ────────────────────────────────────────────────── #}
+{% if plan.queue %}
+<div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+  <div class="px-4 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+    <h2 class="text-sm font-semibold text-slate-600">Priority Queue ({{ plan.queue | length }} WOs)</h2>
+    <span class="text-xs text-slate-400">Arrow marks next eligible WO</span>
+  </div>
+  <div class="divide-y divide-slate-100">
+    {% for item in plan.queue %}
+    {% set is_next = plan.next and item.wo == plan.next.wo %}
+    {% set status = item.status | lower %}
+    <div class="flex items-center gap-3 px-4 py-2.5 {% if is_next %}bg-blue-50 border-l-4 border-blue-500{% elif status in ['done'] %}opacity-50{% elif status in ['deferred'] %}opacity-40{% endif %} hover:bg-slate-50 transition-colors">
+
+      {# Arrow for next WO #}
+      <div class="w-5 flex-shrink-0 flex justify-center">
+        {% if is_next %}
+        <svg class="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clip-rule="evenodd"/>
+        </svg>
+        {% elif item.pin %}
+        <svg class="w-3.5 h-3.5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+        </svg>
+        {% endif %}
+      </div>
+
+      {# WO ID #}
+      <a href="/wo/{{ item.wo | replace('WO-', '') }}"
+         class="text-xs font-mono font-bold {% if is_next %}text-blue-700{% else %}text-slate-600{% endif %} hover:underline w-16 flex-shrink-0">
+        {{ item.wo }}
+      </a>
+
+      {# Title #}
+      <span class="flex-1 text-sm {% if is_next %}font-semibold text-slate-900{% else %}text-slate-700{% endif %} truncate">
+        {{ item.title }}
+      </span>
+
+      {# Phase chip #}
+      <span class="text-xs bg-slate-100 text-slate-500 rounded px-1.5 py-0.5 flex-shrink-0 font-medium">{{ item.phase }}</span>
+
+      {# Priority chip #}
+      <span class="text-xs font-bold rounded px-2 py-0.5 flex-shrink-0 font-mono
+        {% if item.priority == 'P0' %}bg-red-100 text-red-700
+        {% elif item.priority == 'P1' %}bg-orange-100 text-orange-700
+        {% elif item.priority == 'P2' %}bg-blue-100 text-blue-700
+        {% else %}bg-slate-100 text-slate-500{% endif %}">
+        {{ item.priority }}
+      </span>
+
+      {# Effort chip #}
+      <span class="text-xs bg-slate-100 text-slate-500 rounded px-1.5 py-0.5 flex-shrink-0 w-6 text-center">{{ item.effort }}</span>
+
+      {# Status chip #}
+      <span class="text-xs rounded-full px-2.5 py-0.5 font-medium flex-shrink-0
+        {% if status == 'done' %}bg-green-100 text-green-700
+        {% elif status == 'in_progress' %}bg-blue-100 text-blue-700
+        {% elif status == 'review' %}bg-amber-100 text-amber-700
+        {% elif status == 'claimed' %}bg-purple-100 text-purple-700
+        {% elif status == 'deferred' %}bg-slate-100 text-slate-400
+        {% elif status == 'blocked' %}bg-red-100 text-red-700
+        {% else %}bg-slate-100 text-slate-500{% endif %}">
+        {% if status == 'in_progress' %}in progress{% else %}{{ status }}{% endif %}
+      </span>
+
+      {# Milestone blockers #}
+      {% if item.blocks_milestones %}
+      <div class="flex gap-1 flex-shrink-0">
+        {% for ms in item.blocks_milestones %}
+        <span class="text-xs bg-red-50 text-red-600 border border-red-200 rounded px-1.5 py-0.5">{{ ms }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="bg-white border border-slate-200 rounded-xl px-5 py-8 text-center text-slate-400 text-sm shadow-sm">
+  No WOs in queue.
+</div>
+{% endif %}
+
+{# ── Deferred section ──────────────────────────────────────────────────── #}
+{% if orchestrator and orchestrator.plan and orchestrator.plan.queue %}
+{# Deferred items are not in the queue list, they're in plan.deferred in the raw PLAN — skip for now #}
+{% endif %}
+
+{% endif %}{# end plan check #}
+
+{% endblock %}
