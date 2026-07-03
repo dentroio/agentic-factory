@@ -20,6 +20,10 @@
       <div class="text-sm text-slate-400 font-display font-medium uppercase tracking-wider">In Progress</div>
       <div class="text-xl font-display font-bold text-indigo-400 mt-1 text-glow-blue">{{ columns.in_progress | length }}</div>
     </div>
+    <div class="glass-panel px-4 py-2 text-center min-w-24 border-l-2 border-l-amber-500/50">
+      <div class="text-sm text-slate-400 font-display font-medium uppercase tracking-wider">Open</div>
+      <div class="text-xl font-display font-bold text-amber-400 mt-1">{{ columns.open | length }}</div>
+    </div>
     <div class="glass-panel px-4 py-2 text-center min-w-24 border-l-2 border-l-red-500/50">
       <div class="text-sm text-slate-400 font-display font-medium uppercase tracking-wider">Blocked</div>
       <div class="text-xl font-display font-bold text-red-400 mt-1 text-glow-red">{{ columns.blocked | length }}</div>
@@ -193,129 +197,132 @@
 
 </div>
 
-{# ── Program roll-up ───────────────────────────────────────────────────── #}
-{% if programs %}
-<div id="programs-panel" class="mb-4 glass-panel overflow-hidden">
-  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
-    <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Program Trackers</span>
-  </div>
-  <div class="overflow-x-auto">
-    <table class="w-full text-xs text-left">
-      <thead>
-        <tr>
-          <th class="px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Program / Initiative</th>
-          <th class="px-3 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider text-center w-20">Total</th>
-          <th class="px-3 py-3 text-xs font-semibold text-emerald-400 uppercase tracking-wider text-center w-20">Done</th>
-          <th class="px-3 py-3 text-xs font-semibold text-indigo-400 uppercase tracking-wider text-center w-24">In Progress</th>
-          <th class="px-3 py-3 text-xs font-semibold text-amber-400 uppercase tracking-wider text-center w-24">In Review</th>
-          <th class="px-3 py-3 text-xs font-semibold text-rose-400 uppercase tracking-wider text-center w-20">Blocked</th>
-          <th class="px-5 py-3 text-xs font-semibold text-slate-400 tracking-wider w-48">Completion Progress</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-800/30">
-        {% for prog_name, prog in programs.items() %}
-        <tr class="hover:bg-slate-900/20 transition-colors">
-          <td class="px-5 py-3.5 font-display font-semibold text-slate-200">{{ prog_name }}</td>
-          <td class="px-3 py-3.5 text-center text-slate-300 font-mono font-bold">{{ prog.total }}</td>
-          <td class="px-3 py-3.5 text-center text-emerald-400 font-mono font-bold">{{ prog.done }}</td>
-          <td class="px-3 py-3.5 text-center text-indigo-400 font-mono">{{ prog.in_progress }}</td>
-          <td class="px-3 py-3.5 text-center text-amber-400 font-mono">{{ prog.in_review }}</td>
-          <td class="px-3 py-3.5 text-center text-rose-400 font-mono font-bold">{{ prog.blocked }}</td>
-          <td class="px-5 py-3.5">
-            <div class="flex items-center gap-3">
-              <div class="flex-1 bg-slate-950/60 border border-slate-900 rounded-full h-2 overflow-hidden">
-                <div class="bg-gradient-to-r from-emerald-500 to-teal-400 h-2 rounded-full" style="width:{{ prog.pct }}%"></div>
+{# ── Programs + Dispatch (side by side) ───────────────────────────────── #}
+<div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
+
+  {# Programs table #}
+  {% if programs %}
+  <div id="programs-panel" class="glass-panel overflow-hidden flex flex-col">
+    <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex-shrink-0">
+      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Program Trackers ({{ programs | length }})</span>
+    </div>
+    <div class="overflow-y-auto max-h-[320px] overflow-x-auto">
+      <table class="w-full text-xs text-left">
+        <thead class="sticky top-0 bg-slate-950/90 backdrop-blur-sm z-10">
+          <tr>
+            <th class="px-4 py-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Program</th>
+            <th class="px-2 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-center w-12">Total</th>
+            <th class="px-2 py-2.5 text-[10px] font-semibold text-emerald-400 uppercase tracking-wider text-center w-12">Done</th>
+            <th class="px-2 py-2.5 text-[10px] font-semibold text-indigo-400 uppercase tracking-wider text-center w-14">Active</th>
+            <th class="px-2 py-2.5 text-[10px] font-semibold text-rose-400 uppercase tracking-wider text-center w-14">Blocked</th>
+            <th class="px-4 py-2.5 text-[10px] font-semibold text-slate-400 tracking-wider w-32">Progress</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800/30">
+          {% for prog_name, prog in programs.items() %}
+          <tr class="hover:bg-slate-900/20 transition-colors">
+            <td class="px-4 py-2.5 font-display font-semibold text-slate-200 text-[11px] leading-tight max-w-[200px]">{{ prog_name }}</td>
+            <td class="px-2 py-2.5 text-center text-slate-400 font-mono text-[10px]">{{ prog.total }}</td>
+            <td class="px-2 py-2.5 text-center text-emerald-400 font-mono font-bold text-[10px]">{{ prog.done }}</td>
+            <td class="px-2 py-2.5 text-center font-mono text-[10px]">
+              <span class="{% if (prog.in_progress + prog.in_review) > 0 %}text-indigo-400{% else %}text-slate-600{% endif %}">
+                {{ prog.in_progress + prog.in_review }}
+              </span>
+            </td>
+            <td class="px-2 py-2.5 text-center font-mono font-bold text-[10px]">
+              <span class="{% if prog.blocked > 0 %}text-rose-400{% else %}text-slate-600{% endif %}">{{ prog.blocked }}</span>
+            </td>
+            <td class="px-4 py-2.5">
+              <div class="flex items-center gap-2">
+                <div class="flex-1 bg-slate-950/60 border border-slate-900 rounded-full h-1.5 overflow-hidden">
+                  <div class="bg-gradient-to-r from-emerald-500 to-teal-400 h-1.5 rounded-full" style="width:{{ prog.pct }}%"></div>
+                </div>
+                <span class="text-[9px] text-slate-500 font-mono w-8 text-right">{{ prog.pct }}%</span>
               </div>
-              <span class="text-[10px] text-slate-400 font-mono font-bold w-10 text-right">{{ prog.pct }}%</span>
-            </div>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endif %}
-
-{# ── Dispatch advisory (orchestrator) ──────────────────────────────────── #}
-{% if orchestrator %}
-<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-  
-  {# Ready to Dispatch #}
-  <div class="glass-panel overflow-hidden border border-indigo-500/20 bg-indigo-500/5">
-    <div class="px-5 py-3.5 bg-indigo-950/20 border-b border-indigo-900/30 flex items-center justify-between">
-      <span class="text-xs font-display font-bold text-indigo-300 uppercase tracking-widest flex items-center gap-2">
-        <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
-        <span>Next Up — Ready to Start ({{ orchestrator.dispatch_queue | length }})</span>
-      </span>
-      <span class="text-[10px] font-mono text-indigo-400">Limit: {{ orchestrator.max_parallel_wos }} concurrent</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
-    {% if orchestrator.dispatch_queue %}
-    <div class="divide-y divide-slate-800/30">
-      {% for item in orchestrator.dispatch_queue %}
-      <div class="flex items-center gap-3 px-5 py-3 hover:bg-slate-900/20">
-        <span class="text-[9px] font-bold rounded font-mono px-2 py-0.5
-          {% if item.priority == 'P0' %}badge-glass-p0
-          {% elif item.priority == 'P1' %}badge-glass-p1
-          {% elif item.priority == 'P2' %}badge-glass-p2
-          {% else %}badge-glass-p3{% endif %}">
-          {{ item.priority }}
+  </div>
+  {% endif %}
+
+  {# Dispatch advisory (orchestrator) #}
+  <div class="flex flex-col gap-4">
+    {% if orchestrator %}
+    <div class="glass-panel overflow-hidden border border-indigo-500/20 bg-indigo-500/5 flex-1">
+      <div class="px-5 py-3.5 bg-indigo-950/20 border-b border-indigo-900/30 flex items-center justify-between">
+        <span class="text-xs font-display font-bold text-indigo-300 uppercase tracking-widest flex items-center gap-2">
+          <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+          <span>Next Up ({{ orchestrator.dispatch_queue | length }})</span>
         </span>
-        <a href="/wo/{{ item.wo }}" class="text-xs font-bold text-indigo-400 hover:underline font-mono">WO-{{ item.wo }}</a>
-        <span class="text-xs text-slate-300 truncate flex-1 leading-snug">{{ item.title }}</span>
-        {% if item.effort %}
-        <span class="text-[10px] text-slate-500 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">{{ item.effort }}</span>
-        {% endif %}
+        <span class="text-[10px] font-mono text-indigo-400">max {{ orchestrator.max_parallel_wos }} concurrent</span>
       </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="px-5 py-6 text-xs text-slate-500 text-center">No work orders currently cleared for dispatch.</p>
-    {% endif %}
-  </div>
-
-  {# Waiting on Dependencies #}
-  <div class="glass-panel overflow-hidden">
-    <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
-      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Waiting on Dependencies ({{ orchestrator.holding_queue | length }})</span>
-      <span class="text-[10px] text-slate-500">These WOs are blocked until their dependencies finish</span>
-    </div>
-    {% if orchestrator.holding_queue %}
-    <div class="divide-y divide-slate-800/30 max-h-[300px] overflow-y-auto">
-      {% for item in orchestrator.holding_queue %}
-      <div class="px-5 py-3 hover:bg-slate-900/20 transition-colors">
-        <div class="flex items-center gap-3 mb-1">
-          <a href="/wo/{{ item.wo }}" class="text-xs font-bold font-mono text-slate-400 hover:text-indigo-400 hover:underline">WO-{{ item.wo }}</a>
-          <span class="text-xs text-slate-200 truncate flex-1 font-medium">{{ item.title }}</span>
+      {% if orchestrator.dispatch_queue %}
+      <div class="divide-y divide-slate-800/30 max-h-[140px] overflow-y-auto">
+        {% for item in orchestrator.dispatch_queue %}
+        <div class="flex items-center gap-3 px-5 py-2.5 hover:bg-slate-900/20">
+          <span class="text-[9px] font-bold rounded font-mono px-2 py-0.5
+            {% if item.priority == 'P0' %}badge-glass-p0
+            {% elif item.priority == 'P1' %}badge-glass-p1
+            {% elif item.priority == 'P2' %}badge-glass-p2
+            {% else %}badge-glass-p3{% endif %}">
+            {{ item.priority }}
+          </span>
+          <a href="/wo/{{ item.wo }}" class="text-xs font-bold text-indigo-400 hover:underline font-mono">WO-{{ item.wo }}</a>
+          <span class="text-xs text-slate-300 truncate flex-1 leading-snug">{{ item.title }}</span>
+          {% if item.effort %}<span class="text-[10px] text-slate-500 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">{{ item.effort }}</span>{% endif %}
         </div>
-        <div class="text-[11px] text-slate-500 font-mono">{{ item.reason }}</div>
+        {% endfor %}
       </div>
-      {% endfor %}
+      {% else %}
+      <p class="px-5 py-4 text-xs text-slate-500 text-center">No work orders currently cleared for dispatch.</p>
+      {% endif %}
     </div>
+
+    <div class="glass-panel overflow-hidden flex-1">
+      <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
+        <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Waiting on Dependencies ({{ orchestrator.holding_queue | length }})</span>
+      </div>
+      {% if orchestrator.holding_queue %}
+      <div class="divide-y divide-slate-800/30 max-h-[130px] overflow-y-auto">
+        {% for item in orchestrator.holding_queue %}
+        <div class="px-5 py-2.5 hover:bg-slate-900/20 transition-colors">
+          <div class="flex items-center gap-3 mb-0.5">
+            <a href="/wo/{{ item.wo }}" class="text-xs font-bold font-mono text-slate-400 hover:text-indigo-400 hover:underline">WO-{{ item.wo }}</a>
+            <span class="text-xs text-slate-200 truncate flex-1 font-medium">{{ item.title }}</span>
+          </div>
+          <div class="text-[10px] text-slate-500 font-mono">{{ item.reason }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="px-5 py-4 text-xs text-slate-500 text-center">Holding queue is empty.</p>
+      {% endif %}
+    </div>
+
+    {% if orchestrator.recommendations %}
+    <div class="glass-panel p-4 border border-amber-500/20 bg-amber-500/5">
+      <div class="text-xs font-display font-bold text-amber-300 mb-2 uppercase tracking-wider flex items-center gap-2">
+        <span>⚠</span><span>Orchestrator Recommendations</span>
+      </div>
+      <ul class="space-y-1.5">
+        {% for r in orchestrator.recommendations %}
+        <li class="text-xs text-slate-300 flex items-start gap-2"><span class="text-amber-500">•</span><span>{{ r }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
     {% else %}
-    <p class="px-5 py-6 text-xs text-slate-500 text-center">Holding queue is empty.</p>
+    <div class="glass-panel p-5 text-xs text-slate-500 text-center flex items-center justify-center h-full min-h-[120px]">
+      Orchestrator offline — dispatch data unavailable.
+    </div>
     {% endif %}
   </div>
-</div>
 
-{% if orchestrator.recommendations %}
-<div class="glass-panel p-4 border border-amber-500/20 bg-amber-500/5 mb-4">
-  <div class="text-xs font-display font-bold text-amber-300 mb-3 uppercase tracking-wider flex items-center gap-2">
-    <span>⚠</span>
-    <span>Orchestrator Recommendations</span>
-  </div>
-  <ul class="space-y-2">
-    {% for r in orchestrator.recommendations %}
-    <li class="text-xs text-slate-300 flex items-start gap-2">
-      <span class="text-amber-500">•</span>
-      <span>{{ r }}</span>
-    </li>
-    {% endfor %}
-  </ul>
 </div>
-{% endif %}
-
-{% endif %}
 
 {# ── Open WO table ─────────────────────────────────────────────────────── #}
 <div id="open-wos-panel" class="glass-panel overflow-hidden">
@@ -324,30 +331,28 @@
       Open Work Orders ({{ (columns.open | length) + (columns.in_progress | length) + (columns.review | length) + (columns.blocked | length) }})
     </span>
   </div>
-  <div class="overflow-x-auto max-h-[420px] overflow-y-auto">
+  <div class="overflow-x-auto max-h-[360px] overflow-y-auto">
     <table class="w-full text-xs text-left">
-      <thead>
+      <thead class="sticky top-0 bg-slate-950/90 backdrop-blur-sm z-10">
         <tr>
-          <th class="px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider w-24">WO</th>
-          <th class="px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Title</th>
-          <th class="px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider w-20">Priority</th>
-          <th class="px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider w-36">Status</th>
-          <th class="px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider w-24">Effort</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-24">WO</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Title</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-20">Priority</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-36">Status</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-20">Effort</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-800/30">
         {% for spec in (columns.blocked + columns.in_progress + columns.review + columns.open) %}
         <tr class="hover:bg-slate-900/20 transition-colors">
-          <td class="px-5 py-3.5">
+          <td class="px-5 py-3">
             <a href="/wo/{{ spec.number }}" class="text-xs font-mono font-bold text-indigo-400 hover:underline">WO-{{ spec.number }}</a>
           </td>
-          <td class="px-5 py-3.5 text-slate-200 font-medium">{{ spec.title }}</td>
-          <td class="px-5 py-3.5">
-            <span class="text-[9px] font-bold rounded font-mono px-2 py-0.5 uppercase {{ spec.priority_class }}">
-              {{ spec.priority }}
-            </span>
+          <td class="px-5 py-3 text-slate-200 font-medium">{{ spec.title }}</td>
+          <td class="px-5 py-3">
+            <span class="text-[9px] font-bold rounded font-mono px-2 py-0.5 uppercase {{ spec.priority_class }}">{{ spec.priority }}</span>
           </td>
-          <td class="px-5 py-3.5">
+          <td class="px-5 py-3">
             <span class="text-[11px] font-semibold
               {% if spec.board_column == 'blocked' %}text-red-400 text-glow-red
               {% elif spec.board_column == 'in_progress' %}text-indigo-400 text-glow-blue
@@ -356,7 +361,7 @@
               {{ spec.status | truncate(30) }}
             </span>
           </td>
-          <td class="px-5 py-3.5 text-slate-400 font-mono">{{ spec.effort or "—" }}</td>
+          <td class="px-5 py-3 text-slate-400 font-mono">{{ spec.effort or "—" }}</td>
         </tr>
         {% endfor %}
       </tbody>
