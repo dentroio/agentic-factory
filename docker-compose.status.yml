@@ -7,7 +7,7 @@ services:
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_REPO=${GITHUB_REPO}
-      - SITE_TITLE=${SITE_TITLE:-AI Factory Status}
+      - SITE_TITLE=${SITE_TITLE:-AI Factory}
       - REFRESH_SECONDS=${REFRESH_SECONDS:-60}
       - WO_PATH=${WO_PATH:-docs/project_management/work_orders}
       - RUNS_PATH=${RUNS_PATH:-docs/factory/runs}
