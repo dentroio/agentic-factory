@@ -7,14 +7,16 @@ services:
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_REPO=${GITHUB_REPO}
-      - SITE_TITLE=${SITE_TITLE:-AI Factory Status}
+      - SITE_TITLE=${SITE_TITLE:-AI Factory}
       - REFRESH_SECONDS=${REFRESH_SECONDS:-60}
       - WO_PATH=${WO_PATH:-docs/project_management/work_orders}
       - RUNS_PATH=${RUNS_PATH:-docs/factory/runs}
       - PLAN_PATH=${PLAN_PATH:-docs/factory/PLAN.json}
+      - ORCHESTRATOR_URL=http://orchestrator:8100
     volumes:
       - watchdog-data:/watchdog:ro
       - orchestrator-data:/orchestrator:ro
+      - factory-config:/config
     restart: unless-stopped
     depends_on:
       - pr-watchdog
@@ -40,6 +42,8 @@ services:
   orchestrator:
     build:
       context: ./services/orchestrator
+    ports:
+      - "8100:8100"
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_REPO=${GITHUB_REPO}
@@ -50,6 +54,7 @@ services:
       - PLAN_PATH=${PLAN_PATH:-docs/factory/PLAN.json}
       - DAILY_SUMMARY_HOUR=${DAILY_SUMMARY_HOUR:-}
       - SUMMARY_ISSUE_NUMBER=${SUMMARY_ISSUE_NUMBER:-}
+      - API_PORT=8100
     volumes:
       - orchestrator-data:/data
       - watchdog-data:/watchdog:ro
@@ -58,3 +63,4 @@ services:
 volumes:
   watchdog-data:
   orchestrator-data:
+  factory-config:
