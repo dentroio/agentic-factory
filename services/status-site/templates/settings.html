@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block page_title %}Settings — {{ site_title }}{% endblock %}
+{% block content %}
+
+<div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-8">
+  <div>
+    <h1 class="text-xl font-display font-bold text-slate-100">Settings</h1>
+    <p class="text-xs text-slate-400 mt-1">Configure the AI Factory — projects, integrations, and runtime options.</p>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+  <a href="/settings/projects" class="glass-panel p-5 group hover:border-indigo-500/40 transition-all block">
+    <div class="flex items-start gap-4">
+      <div class="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center flex-shrink-0 group-hover:bg-indigo-500/20 transition-colors">
+        <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="text-sm font-bold text-slate-100 group-hover:text-indigo-300 transition-colors">Projects</div>
+        <div class="text-xs text-slate-400 mt-1 leading-relaxed">Add or remove GitHub repositories tracked by the factory. Each project gets its own WO board, plan queue, and orchestrator slot.</div>
+      </div>
+    </div>
+  </a>
+
+  <div class="glass-panel p-5 opacity-50 cursor-not-allowed">
+    <div class="flex items-start gap-4">
+      <div class="w-10 h-10 rounded-xl bg-slate-800/50 border border-slate-700/30 flex items-center justify-center flex-shrink-0">
+        <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="text-sm font-bold text-slate-500">Authentication <span class="text-[9px] font-mono bg-slate-800 text-slate-600 border border-slate-700/30 rounded px-1.5 py-0.5 ml-1">coming soon</span></div>
+        <div class="text-xs text-slate-600 mt-1 leading-relaxed">Manage GitHub token scopes and per-project access credentials.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="glass-panel p-5 opacity-50 cursor-not-allowed">
+    <div class="flex items-start gap-4">
+      <div class="w-10 h-10 rounded-xl bg-slate-800/50 border border-slate-700/30 flex items-center justify-center flex-shrink-0">
+        <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="text-sm font-bold text-slate-500">Agents <span class="text-[9px] font-mono bg-slate-800 text-slate-600 border border-slate-700/30 rounded px-1.5 py-0.5 ml-1">coming soon</span></div>
+        <div class="text-xs text-slate-600 mt-1 leading-relaxed">Configure agent roster, workstation assignments, and max parallel WOs per agent type.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="glass-panel p-5 opacity-50 cursor-not-allowed">
+    <div class="flex items-start gap-4">
+      <div class="w-10 h-10 rounded-xl bg-slate-800/50 border border-slate-700/30 flex items-center justify-center flex-shrink-0">
+        <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"/>
+        </svg>
+      </div>
+      <div>
+        <div class="text-sm font-bold text-slate-500">Milestones <span class="text-[9px] font-mono bg-slate-800 text-slate-600 border border-slate-700/30 rounded px-1.5 py-0.5 ml-1">coming soon</span></div>
+        <div class="text-xs text-slate-600 mt-1 leading-relaxed">Define milestone target dates and WO assignments directly from the UI.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}

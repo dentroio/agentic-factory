@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block page_title %}Projects — Settings — {{ site_title }}{% endblock %}
+{% block content %}
+
+<div class="flex items-center gap-3 mb-1">
+  <a href="/settings" class="text-xs text-slate-500 hover:text-slate-300 transition-colors">Settings</a>
+  <span class="text-slate-700">/</span>
+  <span class="text-xs text-slate-300">Projects</span>
+</div>
+<div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
+  <div>
+    <h1 class="text-xl font-display font-bold text-slate-100">Projects</h1>
+    <p class="text-xs text-slate-400 mt-1">GitHub repositories tracked by the AI Factory. The factory monitors WOs, PRs, CI health, and plan progress for each project.</p>
+  </div>
+</div>
+
+{% if saved %}
+<div class="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border bg-emerald-500/8 border-emerald-500/20 text-emerald-300 text-xs">
+  <svg class="w-4 h-4 flex-shrink-0 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+  {% if saved == 'removed' %}
+  Project removed.
+  {% else %}
+  Project <span class="font-mono font-semibold text-emerald-200">{{ saved }}</span> added successfully.
+  {% endif %}
+</div>
+{% endif %}
+
+{% if error %}
+<div class="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border bg-red-500/8 border-red-500/20 text-red-300 text-xs">
+  <svg class="w-4 h-4 flex-shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+  {{ error }}
+</div>
+{% endif %}
+
+{# Current project list #}
+<div class="glass-panel overflow-hidden mb-6">
+  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
+    <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Tracked Projects ({{ projects | length + 1 }})</span>
+    <span class="text-[10px] text-slate-500">Primary project is set via GITHUB_REPO env var</span>
+  </div>
+  <div class="divide-y divide-slate-800/30">
+
+    {# Primary project (from env) #}
+    <div class="flex items-center gap-4 px-5 py-3.5">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-0.5">
+          <span class="text-xs font-mono font-bold text-slate-100">{{ github_repo }}</span>
+          <span class="text-[9px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded px-1.5 py-0.5 font-mono uppercase">primary</span>
+        </div>
+        <div class="text-[10px] text-slate-500 font-mono">Set via GITHUB_REPO environment variable · cannot be removed here</div>
+      </div>
+      <a href="https://github.com/{{ github_repo }}" target="_blank" class="text-[10px] text-slate-500 hover:text-slate-300 font-mono transition-colors flex-shrink-0">
+        github.com/{{ github_repo }} →
+      </a>
+    </div>
+
+    {# Additional projects #}
+    {% for project in projects %}
+    <div class="flex items-center gap-4 px-5 py-3.5">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-0.5">
+          <span class="text-xs font-mono font-bold text-slate-200">{{ project.repo }}</span>
+          {% if project.label and project.label != project.repo.split('/')[1] %}
+          <span class="text-[10px] text-slate-400">{{ project.label }}</span>
+          {% endif %}
+        </div>
+        <div class="text-[10px] text-slate-500 font-mono">
+          WOs: {{ project.wo_path }} · Plan: {{ project.plan_path }}
+          {% if project.added_at %} · Added {{ project.added_at[:10] }}{% endif %}
+        </div>
+      </div>
+      <div class="flex items-center gap-3 flex-shrink-0">
+        <a href="https://github.com/{{ project.repo }}" target="_blank" class="text-[10px] text-slate-500 hover:text-slate-300 font-mono transition-colors">
+          GitHub →
+        </a>
+        <form method="post" action="/settings/projects/remove" onsubmit="return confirm('Remove {{ project.repo }}?')">
+          <input type="hidden" name="repo" value="{{ project.repo }}">
+          <button type="submit" class="text-[10px] text-rose-500 hover:text-rose-400 font-mono transition-colors px-2 py-1 rounded border border-rose-500/20 hover:border-rose-500/40">
+            Remove
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+
+    {% if not projects %}
+    <div class="px-5 py-6 text-xs text-slate-500 text-center">No additional projects added yet.</div>
+    {% endif %}
+
+  </div>
+</div>
+
+{# Add project form #}
+<div class="glass-panel overflow-hidden">
+  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
+    <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Add a Project</span>
+  </div>
+  <form method="post" action="/settings/projects/add" class="px-5 py-5 space-y-4">
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">GitHub Repo <span class="text-rose-400">*</span></label>
+        <input type="text" name="repo" placeholder="owner/repo-name" required
+               class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono placeholder-slate-600
+                      focus:outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/30 transition-all">
+        <p class="text-[10px] text-slate-600 mt-1">e.g. <span class="font-mono">myorg/my-product</span></p>
+      </div>
+
+      <div>
+        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Display Label</label>
+        <input type="text" name="label" placeholder="My Product (optional)"
+               class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-600
+                      focus:outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/30 transition-all">
+        <p class="text-[10px] text-slate-600 mt-1">Defaults to the repo name</p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">WO Directory</label>
+        <input type="text" name="wo_path" value="docs/project_management/work_orders"
+               class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+                      focus:outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/30 transition-all">
+        <p class="text-[10px] text-slate-600 mt-1">Path to WO markdown files in the repo</p>
+      </div>
+
+      <div>
+        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Plan File</label>
+        <input type="text" name="plan_path" value="docs/factory/PLAN.json"
+               class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+                      focus:outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/30 transition-all">
+        <p class="text-[10px] text-slate-600 mt-1">Path to the PLAN.json priority queue</p>
+      </div>
+    </div>
+
+    <div class="pt-2 border-t border-slate-800/50 flex items-start gap-4">
+      <button type="submit" class="px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors border border-indigo-500/50">
+        Add Project
+      </button>
+      <div class="text-[10px] text-slate-500 leading-relaxed pt-1.5">
+        After adding a project, the factory will monitor it alongside the primary project.
+        To integrate the factory process, open a bootstrap PR in the new repo with
+        <span class="font-mono bg-slate-800/60 px-1 py-0.5 rounded">CLAUDE.md</span>,
+        <span class="font-mono bg-slate-800/60 px-1 py-0.5 rounded">AGENT_PROCESS.md</span>, and a
+        <span class="font-mono bg-slate-800/60 px-1 py-0.5 rounded">PLAN.json</span> skeleton.
+      </div>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

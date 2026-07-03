@@ -73,31 +73,90 @@
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
 
   {# ── Velocity ────────────────────────────────────────────────────────── #}
-  <div class="lg:col-span-2 glass-panel p-4">
-    <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest mb-3">WO Velocity (Last 8 Weeks)</h2>
-    {% if velocity %}
-    <div class="space-y-2">
-      {% set max_count = velocity | map(attribute='count') | max %}
-      {% set safe_max = [max_count, 1] | max %}
-      {% for week in velocity %}
-      <div class="flex items-center gap-3 text-xs">
-        <span class="text-slate-500 w-14 text-right font-mono text-[10px]">{{ week.label }}</span>
-        <div class="flex-1 bg-slate-950/60 border border-slate-800/30 rounded h-5 overflow-hidden flex items-center">
-          {% if week.count > 0 %}
-          {% set bar_pct = [(week.count * 100 / safe_max) | round | int, 100] | min %}
-          <div class="bg-gradient-to-r from-indigo-500 to-cyan-500 h-full flex items-center px-2 transition-all duration-500"
-               style="width: {{ bar_pct }}%">
-            <span class="text-white font-mono font-semibold text-[9px]">{{ week.count }}</span>
-          </div>
-          {% else %}
-          <span class="text-slate-700 font-mono text-[10px] px-2">0</span>
-          {% endif %}
-        </div>
+  <div class="lg:col-span-2 glass-panel p-4 flex flex-col gap-4">
+    <div>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest">WO Velocity (Last 8 Weeks)</h2>
+        {% if velocity_summary %}
+        <span class="text-[10px] font-mono text-slate-500">avg <span class="text-indigo-400 font-bold">{{ velocity_summary.avg_per_week }}</span> WOs/week (last 4 wks)</span>
+        {% endif %}
       </div>
-      {% endfor %}
+      {% if velocity %}
+      <div class="space-y-2">
+        {% set max_count = velocity | map(attribute='count') | max %}
+        {% set safe_max = [max_count, 1] | max %}
+        {% for week in velocity %}
+        <div class="flex items-center gap-3 text-xs">
+          <span class="text-slate-500 w-14 text-right font-mono text-[10px]">{{ week.label }}</span>
+          <div class="flex-1 bg-slate-950/60 border border-slate-800/30 rounded h-5 overflow-hidden flex items-center">
+            {% if week.count > 0 %}
+            {% set bar_pct = [(week.count * 100 / safe_max) | round | int, 100] | min %}
+            <div class="bg-gradient-to-r from-indigo-500 to-cyan-500 h-full flex items-center px-2 transition-all duration-500"
+                 style="width: {{ bar_pct }}%">
+              <span class="text-white font-mono font-semibold text-[9px]">{{ week.count }}</span>
+            </div>
+            {% else %}
+            <span class="text-slate-700 font-mono text-[10px] px-2">0</span>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-xs text-slate-500 text-center py-4">No merged PRs in the last 8 weeks.</p>
+      {% endif %}
     </div>
-    {% else %}
-    <p class="text-xs text-slate-500 text-center py-4">No merged PRs in the last 8 weeks.</p>
+
+    {# ── Milestone Projections ──────────────────────────────────────────── #}
+    {% if velocity_summary and velocity_summary.avg_per_week > 0 %}
+    <div class="border-t border-slate-800/50 pt-4">
+      <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest mb-3">Milestone Projections</h2>
+      <div class="space-y-3">
+        {% for ms in velocity_summary.milestone_projections %}
+        <div class="flex items-center gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-xs font-semibold text-slate-200 truncate">{{ ms.label }}</span>
+              <span class="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase font-mono flex-shrink-0
+                {% if ms.status == 'on_track' %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/20
+                {% elif ms.status == 'close' %}bg-amber-500/10 text-amber-400 border border-amber-500/20
+                {% elif ms.status == 'at_risk' %}bg-rose-500/10 text-rose-400 border border-rose-500/20
+                {% else %}bg-slate-800 text-slate-500 border border-slate-700/20{% endif %}">
+                {% if ms.status == 'on_track' %}on track
+                {% elif ms.status == 'close' %}close
+                {% elif ms.status == 'at_risk' %}at risk
+                {% else %}unknown{% endif %}
+              </span>
+            </div>
+            <div class="flex items-center gap-3 text-[10px] text-slate-500 font-mono">
+              <span>{{ ms.remaining_wos }} WOs left</span>
+              <span class="text-slate-700">·</span>
+              <span>target <span class="text-slate-400">{{ ms.target_date or "none" }}</span></span>
+              <span class="text-slate-700">·</span>
+              <span>projected <span class="{% if ms.status == 'at_risk' %}text-rose-400{% elif ms.status == 'close' %}text-amber-400{% else %}text-emerald-400{% endif %}">{{ ms.projected_date }}</span></span>
+              {% if ms.days_delta is not none %}
+              <span class="text-slate-700">·</span>
+              <span class="{% if ms.days_delta < 0 %}text-rose-400{% elif ms.days_delta < 14 %}text-amber-400{% else %}text-slate-400{% endif %}">
+                {% if ms.days_delta >= 0 %}{{ ms.days_delta }}d buffer{% else %}{{ (ms.days_delta * -1) }}d late{% endif %}
+              </span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        {% if velocity_summary.projected_done %}
+        <div class="pt-2 border-t border-slate-800/40 flex items-center gap-3 text-[10px] text-slate-500 font-mono">
+          <span class="text-slate-400">All {{ velocity_summary.remaining_open }} open WOs:</span>
+          <span class="text-slate-300 font-semibold">projected done {{ velocity_summary.projected_done }}</span>
+          <span class="text-slate-600">at {{ velocity_summary.avg_per_week }} WOs/week</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% elif velocity_summary and velocity_summary.avg_per_week == 0 %}
+    <div class="border-t border-slate-800/50 pt-3">
+      <p class="text-[10px] text-slate-600 font-mono">No recent merge activity — projections unavailable.</p>
+    </div>
     {% endif %}
   </div>
 

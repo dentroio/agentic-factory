@@ -16,6 +16,7 @@ services:
     volumes:
       - watchdog-data:/watchdog:ro
       - orchestrator-data:/orchestrator:ro
+      - factory-config:/config
     restart: unless-stopped
     depends_on:
       - pr-watchdog
@@ -62,3 +63,4 @@ services:
 volumes:
   watchdog-data:
   orchestrator-data:
+  factory-config:

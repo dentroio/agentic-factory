@@ -32,6 +32,7 @@ ORCHESTRATOR_PATH = Path(os.getenv("ORCHESTRATOR_PATH", "/orchestrator/orchestra
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
 VALIDATIONS_PATH = Path("/orchestrator/pending_validations.json")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
+FACTORY_CONFIG_PATH = Path(os.getenv("FACTORY_CONFIG_PATH", "/config/factory-config.json"))
 
 
 def _load_watchdog() -> dict | None:
@@ -50,21 +51,33 @@ def _load_watchdog() -> dict | None:
 
 
 def _load_orchestrator() -> dict | None:
+    """Load orchestrator state — stale after 2× POLL_INTERVAL (dispatch/agent data)."""
     if not ORCHESTRATOR_PATH.exists():
         return None
     try:
         data = json.loads(ORCHESTRATOR_PATH.read_text())
         generated = datetime.fromisoformat(data["generated_at"].replace("Z", "+00:00"))
-        if (datetime.now(UTC) - generated).total_seconds() > int(os.getenv("POLL_INTERVAL", "300")) * 2:
+        stale_secs = int(os.getenv("POLL_INTERVAL", "300")) * 2
+        if (datetime.now(UTC) - generated).total_seconds() > stale_secs:
             return None
         return data
     except Exception:
         return None
 
 
+def _load_orchestrator_file() -> dict | None:
+    """Load orchestrator state file without a staleness check — for plan/milestone data."""
+    if not ORCHESTRATOR_PATH.exists():
+        return None
+    try:
+        return json.loads(ORCHESTRATOR_PATH.read_text())
+    except Exception:
+        return None
+
+
 def _load_plan_from_orchestrator() -> dict | None:
-    """Return the plan sub-dict from orchestrator.json if available and loaded."""
-    orch = _load_orchestrator()
+    """Return the plan sub-dict — uses the no-staleness loader so plan is always shown."""
+    orch = _load_orchestrator_file()
     if not orch:
         return None
     plan = orch.get("plan")
@@ -385,6 +398,58 @@ async def pm_dashboard(request: Request):
             "bar": "█" * count if count else "·",
         })
 
+    # Velocity projection
+    recent_counts = [w["count"] for w in velocity[-4:]]
+    avg_velocity = sum(recent_counts) / max(len(recent_counts), 1)
+    remaining_open = len(columns.get("open", [])) + len(columns.get("in_progress", [])) + len(columns.get("review", []))
+    weeks_to_done = (remaining_open / avg_velocity) if avg_velocity > 0 else None
+    projected_done = (now + timedelta(weeks=weeks_to_done)).date().isoformat() if weeks_to_done is not None else None
+
+    plan_data = _load_plan_from_orchestrator()
+    milestone_projections: list[dict] = []
+    if plan_data and avg_velocity > 0:
+        all_plan_wos = plan_data.get("all_wos") or plan_data.get("queue", [])
+        for ms in plan_data.get("milestones", []):
+            ms_id = ms["id"]
+            ms_wos = [w for w in all_plan_wos if ms_id in w.get("blocks_milestones", [])]
+            remaining = sum(1 for w in ms_wos if w.get("status", "open").lower() not in {"done", "complete"})
+            weeks_needed = remaining / avg_velocity
+            proj_date = (now + timedelta(weeks=weeks_needed)).date()
+            target_str = ms.get("target_date")
+            target_date = None
+            if target_str:
+                try:
+                    from datetime import date as _date
+                    target_date = _date.fromisoformat(target_str)
+                except Exception:
+                    pass
+            if target_date:
+                days_delta = (target_date - proj_date).days
+                if days_delta >= 14:
+                    status = "on_track"
+                elif days_delta >= 0:
+                    status = "close"
+                else:
+                    status = "at_risk"
+            else:
+                status = "unknown"
+            milestone_projections.append({
+                "id": ms_id,
+                "label": ms["label"],
+                "target_date": target_str,
+                "remaining_wos": remaining,
+                "projected_date": proj_date.isoformat(),
+                "status": status,
+                "days_delta": (target_date - proj_date).days if target_date else None,
+            })
+
+    velocity_summary = {
+        "avg_per_week": round(avg_velocity, 1),
+        "remaining_open": remaining_open,
+        "projected_done": projected_done,
+        "milestone_projections": milestone_projections,
+    }
+
     # Blocked items from watchdog
     blocked_alerts = [a for a in (watchdog or {}).get("alerts", []) if a.get("severity") == "error" and a.get("pr_number")]
 
@@ -404,6 +469,7 @@ async def pm_dashboard(request: Request):
         "done_count": len(columns.get("done", [])),
         "programs": dict(sorted(programs.items())),
         "velocity": velocity,
+        "velocity_summary": velocity_summary,
         "blocked_alerts": blocked_alerts,
         "active_agents": active_agents,
         "watchdog": watchdog,
@@ -668,6 +734,83 @@ async def proxy_reject(wo: str, request: Request):
             return JSONResponse(content=resp.json(), status_code=resp.status_code)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Orchestrator unreachable: {e}")
+
+
+def _load_factory_config() -> dict:
+    if not FACTORY_CONFIG_PATH.exists():
+        return {"projects": [], "created_at": None}
+    try:
+        return json.loads(FACTORY_CONFIG_PATH.read_text())
+    except Exception:
+        return {"projects": [], "created_at": None}
+
+
+def _save_factory_config(cfg: dict) -> None:
+    FACTORY_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    FACTORY_CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_root(request: Request):
+    return templates.TemplateResponse(request=request, name="settings.html", context={
+        "site_title": SITE_TITLE,
+        "refresh_seconds": 3600,
+        "github_repo": GITHUB_REPO,
+    })
+
+
+@app.get("/settings/projects", response_class=HTMLResponse)
+async def settings_projects(request: Request, saved: str = "", error: str = ""):
+    cfg = _load_factory_config()
+    return templates.TemplateResponse(request=request, name="settings_projects.html", context={
+        "site_title": SITE_TITLE,
+        "refresh_seconds": 3600,
+        "github_repo": GITHUB_REPO,
+        "projects": cfg.get("projects", []),
+        "saved": saved,
+        "error": error,
+    })
+
+
+@app.post("/settings/projects/add", response_class=HTMLResponse)
+async def settings_projects_add(request: Request):
+    from fastapi.responses import RedirectResponse
+    form = await request.form()
+    repo = str(form.get("repo", "")).strip()
+    label = str(form.get("label", "")).strip()
+    wo_path = str(form.get("wo_path", "docs/project_management/work_orders")).strip()
+    plan_path = str(form.get("plan_path", "docs/factory/PLAN.json")).strip()
+
+    if not repo or "/" not in repo:
+        return RedirectResponse(url="/settings/projects?error=Invalid+repo+format+%28owner%2Frepo%29", status_code=303)
+
+    cfg = _load_factory_config()
+    projects = cfg.get("projects", [])
+
+    if any(p["repo"] == repo for p in projects):
+        return RedirectResponse(url=f"/settings/projects?error=Project+{repo}+already+exists", status_code=303)
+
+    projects.append({
+        "repo": repo,
+        "label": label or repo.split("/")[1],
+        "wo_path": wo_path,
+        "plan_path": plan_path,
+        "added_at": datetime.now(UTC).isoformat(),
+    })
+    cfg["projects"] = projects
+    _save_factory_config(cfg)
+    return RedirectResponse(url=f"/settings/projects?saved={repo}", status_code=303)
+
+
+@app.post("/settings/projects/remove", response_class=HTMLResponse)
+async def settings_projects_remove(request: Request):
+    from fastapi.responses import RedirectResponse
+    form = await request.form()
+    repo = str(form.get("repo", "")).strip()
+    cfg = _load_factory_config()
+    cfg["projects"] = [p for p in cfg.get("projects", []) if p["repo"] != repo]
+    _save_factory_config(cfg)
+    return RedirectResponse(url="/settings/projects?saved=removed", status_code=303)
 
 
 @app.get("/health")
