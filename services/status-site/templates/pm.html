@@ -346,7 +346,12 @@
         {% for spec in (columns.blocked + columns.in_progress + columns.review + columns.open) %}
         <tr class="hover:bg-slate-900/20 transition-colors">
           <td class="px-5 py-3">
-            <a href="/wo/{{ spec.number }}" class="text-xs font-mono font-bold text-indigo-400 hover:underline">WO-{{ spec.number }}</a>
+            <div class="flex items-center gap-1.5">
+              <a href="/wo/{{ spec.number }}" class="text-xs font-mono font-bold text-indigo-400 hover:underline">WO-{{ spec.number }}</a>
+              {% if spec.repo and spec.repo != github_repo %}
+              <span class="text-[8px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-mono">{{ spec.repo.split("/")[-1] }}</span>
+              {% endif %}
+            </div>
           </td>
           <td class="px-5 py-3 text-slate-200 font-medium">{{ spec.title }}</td>
           <td class="px-5 py-3">

@@ -54,6 +54,7 @@ services:
       - PLAN_PATH=${PLAN_PATH:-docs/factory/PLAN.json}
       - DAILY_SUMMARY_HOUR=${DAILY_SUMMARY_HOUR:-}
       - SUMMARY_ISSUE_NUMBER=${SUMMARY_ISSUE_NUMBER:-}
+      - SECONDARY_REPOS=${SECONDARY_REPOS:-}
       - API_PORT=8100
     volumes:
       - orchestrator-data:/data

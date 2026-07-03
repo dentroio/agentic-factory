@@ -14,6 +14,7 @@ class WOSpec:
     depends_on: list[int]
     program: str
     raw: str
+    repo: str = ""
     # runtime fields set after load
     agent_name: str = ""
     agent_step: str = ""
@@ -71,7 +72,7 @@ class WOSpec:
         return ""
 
 
-def parse_wo_file(content: str, filename: str) -> WOSpec | None:
+def parse_wo_file(content: str, filename: str, repo: str = "") -> WOSpec | None:
     m = re.match(r"WO-(\d+)", filename)
     if not m:
         return None
@@ -108,6 +109,7 @@ def parse_wo_file(content: str, filename: str) -> WOSpec | None:
         depends_on=depends_on,
         program=program,
         raw=content,
+        repo=repo,
     )
 
 
