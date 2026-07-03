@@ -77,7 +77,7 @@ def parse_wo_file(content: str, filename: str) -> WOSpec | None:
         return None
     number = int(m.group(1))
 
-    title_m = re.search(r"^# WO-\d+ — (.+)$", content, re.MULTILINE)
+    title_m = re.search(r"^# (?:WO-[\d–-]+|Work Order \d+)\s*[—:]\s*(.+)$", content, re.MULTILINE)
     title = title_m.group(1).strip() if title_m else f"WO-{number}"
 
     def extract(label: str) -> str:
