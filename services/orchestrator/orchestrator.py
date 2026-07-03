@@ -24,6 +24,19 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
 MAX_PARALLEL_WOS = int(os.getenv("MAX_PARALLEL_WOS", "2"))
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
+
+# Optional: comma-separated secondary repos to include in the WO board.
+# Format: "owner/repo" or "owner/repo:docs/work_orders" to override WO path.
+# Secondary repos contribute WO specs to the board only — PLAN.json and the
+# dispatch queue always come from GITHUB_REPO.
+_SECONDARY_REPOS_RAW = [r.strip() for r in os.getenv("SECONDARY_REPOS", "").split(",") if r.strip()]
+SECONDARY_REPOS: list[tuple[str, str]] = []
+for _entry in _SECONDARY_REPOS_RAW:
+    if ":" in _entry:
+        _repo, _path = _entry.split(":", 1)
+        SECONDARY_REPOS.append((_repo.strip(), _path.strip()))
+    else:
+        SECONDARY_REPOS.append((_entry, WO_PATH))
 RUNS_PATH = os.getenv("RUNS_PATH", "docs/factory/runs")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 DAILY_SUMMARY_HOUR = os.getenv("DAILY_SUMMARY_HOUR", "")
@@ -339,12 +352,12 @@ def _is_blocked(status: str) -> bool:
 
 # ── GitHub data fetchers ──────────────────────────────────────────────────────
 
-async def _fetch_wo_specs(client: httpx.AsyncClient) -> dict[int, dict]:
+async def _fetch_wo_specs(client: httpx.AsyncClient, repo: str = GITHUB_REPO, wo_path: str = WO_PATH) -> dict[int, dict]:
     try:
-        items = await _get(client, f"/repos/{GITHUB_REPO}/contents/{WO_PATH}")
+        items = await _get(client, f"/repos/{repo}/contents/{wo_path}")
         wo_files = [i for i in items if i["name"].endswith(".md") and i["name"].startswith("WO-")]
     except Exception as e:
-        print(f"[orchestrator] Failed to list WO files: {e}")
+        print(f"[orchestrator] Failed to list WO files for {repo}: {e}")
         return {}
 
     specs: dict[int, dict] = {}
@@ -353,10 +366,11 @@ async def _fetch_wo_specs(client: httpx.AsyncClient) -> dict[int, dict]:
         if not num:
             continue
         try:
-            data = await _get(client, f"/repos/{GITHUB_REPO}/contents/{f['path']}")
+            data = await _get(client, f"/repos/{repo}/contents/{f['path']}")
             content = base64.b64decode(data["content"]).decode("utf-8")
             specs[num] = {
                 "number": num,
+                "repo": repo,
                 "title": _parse_title(content, num),
                 "status": _parse_status(content),
                 "priority": _parse_priority(content),
@@ -364,21 +378,21 @@ async def _fetch_wo_specs(client: httpx.AsyncClient) -> dict[int, dict]:
                 "depends_on": _parse_depends_on(content),
             }
         except Exception as e:
-            print(f"[orchestrator] Failed to fetch WO-{num}: {e}")
+            print(f"[orchestrator] Failed to fetch WO-{num} from {repo}: {e}")
     return specs
 
 
-async def _fetch_active_branches(client: httpx.AsyncClient) -> set[int]:
+async def _fetch_active_branches(client: httpx.AsyncClient, repo: str = GITHUB_REPO) -> set[int]:
     try:
-        branches = await _get(client, f"/repos/{GITHUB_REPO}/branches", {"per_page": 100})
+        branches = await _get(client, f"/repos/{repo}/branches", {"per_page": 100})
         return {int(m.group(1)) for b in branches if (m := re.match(r"wo/(\d+)-", b["name"]))}
     except Exception:
         return set()
 
 
-async def _fetch_open_pr_wos(client: httpx.AsyncClient) -> set[int]:
+async def _fetch_open_pr_wos(client: httpx.AsyncClient, repo: str = GITHUB_REPO) -> set[int]:
     try:
-        prs = await _get(client, f"/repos/{GITHUB_REPO}/pulls", {"state": "open", "per_page": 100})
+        prs = await _get(client, f"/repos/{repo}/pulls", {"state": "open", "per_page": 100})
         return {int(m.group(1)) for p in prs if (m := re.search(r"WO-(\d+)", p.get("title", "")))}
     except Exception:
         return set()
@@ -514,14 +528,40 @@ async def poll() -> None:
     now_str = _utcnow()
 
     async with httpx.AsyncClient(timeout=20) as client:
-        specs, active_branch_wos, pr_wos, merged_this_week, plan_raw = await asyncio.gather(
-            _fetch_wo_specs(client),
-            _fetch_active_branches(client),
-            _fetch_open_pr_wos(client),
-            _fetch_merged_wo_count_this_week(client),
-            _fetch_plan(client),
+        # Primary repo fetches (always)
+        primary_specs_task = _fetch_wo_specs(client, GITHUB_REPO, WO_PATH)
+        active_branches_task = _fetch_active_branches(client, GITHUB_REPO)
+        pr_wos_task = _fetch_open_pr_wos(client, GITHUB_REPO)
+        merged_task = _fetch_merged_wo_count_this_week(client)
+        plan_task = _fetch_plan(client)
+
+        # Secondary repo fetches (parallel)
+        secondary_tasks = [
+            _fetch_wo_specs(client, repo, wo_path)
+            for repo, wo_path in SECONDARY_REPOS
+        ]
+
+        results = await asyncio.gather(
+            primary_specs_task,
+            active_branches_task,
+            pr_wos_task,
+            merged_task,
+            plan_task,
+            *secondary_tasks,
         )
 
+    primary_specs: dict[int, dict] = results[0]
+    active_branch_wos: set[int] = results[1]
+    pr_wos: set[int] = results[2]
+    merged_this_week: int = results[3]
+    plan_raw: dict | None = results[4]
+
+    # Merge secondary specs (secondary repos contribute board visibility only)
+    specs: dict[int, dict] = dict(primary_specs)
+    for sec_specs in results[5:]:
+        specs.update(sec_specs)
+
+    # Sets for board summary use all specs; dispatch queue uses primary-repo specs only
     done_wos = {num for num, s in specs.items() if _is_done(s["status"])}
     in_progress_wos = active_branch_wos - pr_wos - done_wos
     in_review_wos = pr_wos - done_wos
@@ -529,15 +569,19 @@ async def poll() -> None:
                 if not _is_done(s["status"]) and num not in active_branch_wos and num not in pr_wos}
     blocked_wos = {num for num, s in specs.items() if _is_blocked(s["status"])}
 
+    # Plan engine only operates on primary repo WOs
+    primary_open_wos = {num for num in open_wos if specs[num].get("repo", GITHUB_REPO) == GITHUB_REPO}
+
     plan_next: dict | None = None
     plan_queue_sorted: list[dict] = []
     if plan_raw:
-        wo_statuses = _build_wo_statuses(specs, active_branch_wos, pr_wos, done_wos)
+        wo_statuses = _build_wo_statuses(primary_specs, active_branch_wos, pr_wos,
+                                         {n for n in done_wos if n in primary_specs})
         plan_next = next_wo(plan_raw, wo_statuses)
         plan_queue_sorted = sorted_queue(plan_raw, wo_statuses)
 
     dispatch_queue, holding_queue, cycle_warnings = _resolve_dependencies(
-        {num: s for num, s in specs.items() if num in open_wos}, done_wos,
+        {num: s for num, s in specs.items() if num in primary_open_wos}, done_wos,
     )
 
     # Enrich active_work with dispatch state (agent/step from API claims)

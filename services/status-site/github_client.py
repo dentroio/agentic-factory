@@ -44,8 +44,20 @@ async def list_wo_files() -> list[dict]:
     return [i for i in items if i["name"].endswith(".md") and i["name"].startswith("WO-")]
 
 
+async def list_wo_files_for(repo: str, wo_path: str) -> list[dict]:
+    path = f"/repos/{repo}/contents/{wo_path}"
+    items = await _get(path)
+    return [i for i in items if i["name"].endswith(".md") and i["name"].startswith("WO-")]
+
+
 async def get_file_content(file_path: str) -> str:
     path = f"/repos/{GITHUB_REPO}/contents/{file_path}"
+    data = await _get(path)
+    return base64.b64decode(data["content"]).decode("utf-8")
+
+
+async def get_file_content_for(repo: str, file_path: str) -> str:
+    path = f"/repos/{repo}/contents/{file_path}"
     data = await _get(path)
     return base64.b64decode(data["content"]).decode("utf-8")
 

@@ -117,9 +117,33 @@ async def _load_wos() -> tuple[dict[int, WOSpec], bool]:
     for f, content in zip(files, contents):
         if isinstance(content, Exception):
             continue
-        spec = parse_wo_file(content, f["name"])
+        spec = parse_wo_file(content, f["name"], repo=GITHUB_REPO)
         if spec:
             results[spec.number] = spec
+
+    # Load WOs from secondary repos registered via Settings → Projects
+    cfg = _load_factory_config()
+    for project in cfg.get("projects", []):
+        repo = project.get("repo", "")
+        wo_path = project.get("wo_path", "") or WO_PATH
+        if not repo:
+            continue
+        try:
+            sec_files = await gh.list_wo_files_for(repo, wo_path)
+        except Exception as e:
+            print(f"[status-site] Could not list WOs for {repo}: {e}")
+            continue
+        sec_contents = await asyncio.gather(
+            *[gh.get_file_content_for(repo, f["path"]) for f in sec_files],
+            return_exceptions=True,
+        )
+        for f, content in zip(sec_files, sec_contents):
+            if isinstance(content, Exception):
+                continue
+            spec = parse_wo_file(content, f["name"], repo=repo)
+            if spec:
+                results[spec.number] = spec
+
     return results, True
 
 
