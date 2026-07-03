@@ -6,29 +6,80 @@ Extracted from an active development project. Still evolving.
 
 ---
 
+## Live Dashboard
+
+The factory ships three Docker services that run alongside your project:
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| `factory-status` | 8099 | Web dashboard — Overview, PM view, Engineering, Plan |
+| `orchestrator` | — | Polls WO files + PRs every 5 min, posts daily summaries, drives dispatch |
+| `pr-watchdog` | — | Tracks every open PR: CI state, stale detection, merge eligibility |
+
+**Start them:**
+
+```bash
+cp .env.example .env          # fill in GITHUB_TOKEN, GITHUB_REPO
+docker compose -f docker-compose.status.yml up -d
+open http://localhost:8099
+```
+
+**Rebuild after code changes:**
+
+```bash
+docker compose -f docker-compose.status.yml build <service>
+docker compose -f docker-compose.status.yml up -d <service> --force-recreate
+```
+
+`.env` required variables:
+
+```env
+GITHUB_TOKEN=ghp_...          # classic PAT: repo + read:org
+GITHUB_REPO=your-org/your-repo
+```
+
+Optional:
+
+```env
+SITE_TITLE=My Factory         # dashboard title
+REFRESH_SECONDS=60            # page auto-refresh interval
+WO_PATH=docs/project_management/work_orders
+RUNS_PATH=docs/factory/runs
+PLAN_PATH=docs/factory/PLAN.json
+POLL_INTERVAL=300             # orchestrator + watchdog poll cadence (seconds)
+MAX_PARALLEL_WOS=2            # max concurrent agent assignments
+POST_COMMENTS=false           # set true to have watchdog post GitHub PR comments
+```
+
+---
+
 ## What's in the box
 
 | File / Dir | Purpose |
 |------------|---------|
-| `AGENT_PROCESS.md` | Single source of truth for how agents work: risk tiers, WO flow, branch/PR rules, parallel agent coordination |
+| `AGENT_PROCESS.md` | Single source of truth for agents: risk tiers, WO flow, branch/PR rules, parallel coordination |
 | `CLAUDE.md` | Claude Code entry point — read automatically by `claude` CLI |
 | `AGENTS.md` | OpenAI/Codex/generic entry point |
 | `.cursor/rules/agent-process.mdc` | Cursor IDE entry point (`alwaysApply: true`) |
 | `Makefile.template` | Copy to `Makefile` — fill in `{{FILL IN}}` sections for your stack |
+| `.env.example` | Environment variable reference for the container runtime |
+| **Container Runtime** | |
+| `docker-compose.status.yml` | Brings up all three factory services |
+| `services/factory-status/` | FastAPI + Jinja2 status dashboard |
+| `services/orchestrator/` | WO dispatch loop — reads PLAN.json, assigns WOs, posts summaries |
+| `services/pr-watchdog/` | PR lifecycle monitor — CI health, stale PRs, merge eligibility |
 | **CI / Review** | |
 | `.github/workflows/ai-review.yml` | Blocking AI code review on every PR — exits 1 on "Review required" |
 | `.github/workflows/ci.yml.template` | Copy to `ci.yml` — fill in lint/test/build steps |
 | `.github/workflows/deploy.yml.template` | Copy to `deploy.yml` — parameterized CD pipeline with smoke tests |
-| `.github/dependabot.yml.template` | Monthly dependency updates with PR limits and grouping — prevents Actions minute floods |
-| `scripts/ai_review.py` | Claude-powered code review — 7 universal checks + project-specific context |
-| `scripts/review_context.txt` | Project-specific checks added to the AI reviewer |
-| **SDLC Agents** | |
-| `.github/workflows/planning-agent.yml` | Triggered by `new-wo` issue label → drafts WO spec → opens PR |
 | `.github/workflows/verifier.yml` | Post-merge → checks AC from WO spec against diff → opens follow-up issue on failure |
-| `.github/workflows/ci-failure-notifier.yml` | When CI fails → posts failure details + log excerpt on the PR so the agent knows what to fix |
-| `.github/workflows/merge-advisor.yml` | After AI review → synthesizes all signals → posts ✅/⚠️/❌ merge recommendation |
+| `.github/workflows/ci-failure-notifier.yml` | CI fails → posts details + log excerpt on the PR |
+| `.github/workflows/merge-advisor.yml` | Synthesizes all signals → posts ✅/⚠️/❌ merge recommendation |
 | `.github/workflows/post-merge-memory.yml` | Post-merge → extracts lessons → opens memory PR |
 | `.github/workflows/observability.yml` | Scheduled → polls health endpoint → creates incident issue on anomaly |
+| `.github/dependabot.yml.template` | Monthly dependency updates with PR limits — prevents Actions minute floods |
+| `scripts/ai_review.py` | Claude-powered code review — 7 universal checks + project-specific context |
+| `scripts/review_context.txt` | Project-specific checks added to the AI reviewer |
 | `scripts/planning_agent.py` | Converts issue title+body into a filled WO spec |
 | `scripts/verifier_agent.py` | Verifies acceptance criteria from WO spec against a PR diff |
 | `scripts/merge_advisor.py` | Synthesizes CI, AI review, risk tier, diff analysis into merge recommendation |
@@ -36,7 +87,8 @@ Extracted from an active development project. Still evolving.
 | `scripts/observability_agent.py` | Polls metrics endpoint, detects threshold violations |
 | `scripts/observability_thresholds.json` | Configurable error rate, latency, service health thresholds |
 | **PM / Memory** | |
-| `docs/project_management/` | Progress tracker, capability registry, WO spec template |
+| `docs/factory/PLAN.json` | Priority queue + milestone definitions — the orchestrator and status site both read this |
+| `docs/project_management/` | WO spec template, progress tracker, capability registry |
 | `memory/` | Persistent agent memory across conversations |
 
 ---
@@ -49,18 +101,11 @@ After creating your repo from this template, open Claude Code in the repo and sa
 
 The Project Engineer agent will check what's already configured, walk you through CI, CD, branch protection, AI review context, and the memory system — one step at a time. Most projects are fully set up in 15–20 minutes.
 
-To check status at any time:
-```bash
-python3 scripts/factory_status.py
-```
-
 ---
 
-## Manual bootstrap (if you prefer)
+## Manual bootstrap
 
 ### 1. Create your repo from this template
-
-Click **"Use this template"** on GitHub, or:
 
 ```bash
 gh repo create your-org/your-project --template dentroio/agentic-factory --private
@@ -74,10 +119,6 @@ cd your-project
 # macOS
 find . -not -path './.git/*' -type f | xargs grep -l '{{PROJECT_NAME}}' | \
   xargs sed -i '' 's/{{PROJECT_NAME}}/YourProjectName/g'
-
-# Linux
-find . -not -path './.git/*' -type f | xargs grep -l '{{PROJECT_NAME}}' | \
-  xargs sed -i 's/{{PROJECT_NAME}}/YourProjectName/g'
 ```
 
 ### 3. Set up the Makefile
@@ -87,21 +128,30 @@ cp Makefile.template Makefile
 # Edit Makefile — fill in all {{FILL IN}} sections for your stack
 ```
 
-### 4. Set up CI
+### 4. Configure the container runtime
+
+```bash
+cp .env.example .env
+# Set GITHUB_TOKEN and GITHUB_REPO — all other variables have defaults
+docker compose -f docker-compose.status.yml up -d
+open http://localhost:8099
+```
+
+### 5. Set up CI
 
 ```bash
 cp .github/workflows/ci.yml.template .github/workflows/ci.yml
 # Edit ci.yml — fill in {{...}} sections for your stack
 ```
 
-### 5. Add your ANTHROPIC_API_KEY secret
+### 6. Add your ANTHROPIC_API_KEY secret
 
 In your GitHub repo: **Settings → Secrets and variables → Actions → New repository secret**
 
 - Name: `ANTHROPIC_API_KEY`
 - Value: your key from [console.anthropic.com](https://console.anthropic.com)
 
-### 6. Configure GitHub Ruleset (required status checks)
+### 7. Configure GitHub Ruleset (required status checks)
 
 In your GitHub repo: **Settings → Rules → Rulesets → New ruleset**
 
@@ -112,25 +162,27 @@ Add these as required status checks for `main`:
 - `Build`
 - `Claude Code Review`
 
-### 7. Add project-specific AI review checks
+### 8. Add project-specific AI review checks
 
 Edit `scripts/review_context.txt` — add invariants that the AI reviewer should flag.
-See the file for examples and format instructions.
 
-### 8. Customize AGENT_PROCESS.md §10
+### 9. Customize AGENT_PROCESS.md §10
 
-Replace the placeholder in §10 (Critical Code Patterns) with your project's actual invariants:
-patterns the AI must always follow (e.g., DB commit rules, auth gates, migration registration).
+Replace the placeholder in §10 (Critical Code Patterns) with your project's actual invariants — DB commit rules, auth gates, migration registration, etc.
 
-### 9. Initialize memory
+### 10. Initialize memory
 
 Edit `memory/MEMORY.md` and `memory/examples/project_overview.md` with your project details.
-These files persist across Claude Code conversations and give agents immediate orientation.
 
-### 10. Write your first work order
+### 11. Write your first work order
 
-Copy `docs/project_management/work_orders/WO-000-template.md` to `WO-001-initial-setup.md`
-and fill it in. The `## Execution` section is what agents read to start working.
+Copy `docs/project_management/work_orders/WO-000-template.md` to `WO-001-initial-setup.md`.
+The `## Execution` section is what agents read to start working.
+
+### 12. Define your plan
+
+Edit `docs/factory/PLAN.json` — set your milestones and initial WO priority queue.
+The orchestrator and status dashboard both read this file from GitHub on each poll cycle.
 
 ---
 
@@ -149,15 +201,37 @@ Every work order has a risk tier that determines the merge workflow:
 
 ### Deployment model declaration
 
-Before agents start working, the project declares its deployment model in `AGENT_PROCESS.md` under `## Development Environment`. Agents read this at the start of every session. Two models are supported:
+Before agents start working, the project declares its deployment model in `AGENT_PROCESS.md` under `## Development Environment`. Two models are supported:
 
 **Local Docker (single dev machine, no CD)**
-Code changes must be pushed into the running Docker containers before verification. Agents run `make deploy-changed` after implementing a WO — this auto-detects which services changed, rebuilds and redeploys them, and blocks until healthy. There is no staging URL; everything runs on `localhost`.
+Code changes must be pushed into the running Docker containers before verification. Agents run `make deploy-changed` after implementing a WO — this auto-detects which services changed, rebuilds and redeploys them, and blocks until healthy.
 
 **CD-based (staging/production)**
 Code changes are deployed automatically after merging to main via `deploy.yml`. Agents verify against the staging URL after merge. No local container rebuild needed.
 
-The declaration tells agents: "if you can't reach localhost, stop at `make ci-local` and write verification steps for the human instead."
+### Agent SDLC ownership
+
+Each WO is owned end-to-end by an agent:
+
+1. **Claim** — agent creates `docs/factory/runs/WO-NNN.json` (atomic git lock)
+2. **Branch** — `wo/NNN-slug` is the claim; no two agents touch the same branch
+3. **Implement** — agent codes, rebuilds containers, verifies
+4. **Human checkpoint** — agent stops and asks the human to verify before committing
+5. **PR** — agent opens the PR with UI verification steps in the body
+6. **CI + AI Review** — automated gates run on every PR
+7. **Merge** — P2 auto-merges; P1/P0 wait for human approval
+8. **Watchdog** — pr-watchdog tracks CI, posts stale warnings, flags eligibility
+9. **Post-merge** — verifier checks AC, memory agent extracts lessons
+
+### Multi-agent coordination
+
+When multiple agents work concurrently (multiple sessions, or multiple workstations):
+
+- **Claim file as mutex** — creating `docs/factory/runs/WO-NNN.json` is an atomic git operation; the second agent's push fails fast
+- **One agent per service** — no two agents touch the same service simultaneously
+- **Branch as claim** — agents check for `origin/wo/NNN-*` before starting
+- **Shared files are sequential** — `adapter.py`, `main.py`, routing, `PROGRESS.md` — no parallel edits
+- **Single orchestrator** — run the orchestrator on one machine only; it is the serialization point for dispatch
 
 ### The CI gate
 
@@ -166,8 +240,6 @@ Every agent runs `make ci-local` before opening a PR. The local gate mirrors CI 
 ```
 lint → test → check-migrations → build
 ```
-
-For local Docker projects, `make ci-local` is preceded by `make deploy-changed` (container rebuild + health gate). The CI gate is code quality only — it does not deploy anything.
 
 No `|| true` bypasses. A broken step must be visible.
 
@@ -180,134 +252,72 @@ The `ai-review.yml` workflow runs on every PR:
 3. Posts a structured review comment
 4. **Exits 1 if verdict is "Review required"** — blocks merge via GitHub Ruleset
 
-Verdict meanings:
-- **LGTM** — all checks pass
-- **Needs attention** — warnings exist, merge allowed
-- **Review required** — a check failed, merge blocked
+### Memory compounds
 
-### UI verification in every PR
-
-Every PR body must include a `## UI Verification` section — a numbered checklist the developer can follow in the browser to confirm the feature works, without reading the code:
-
-```
-## UI Verification
-1. Open http://localhost:5173 — log in as admin
-2. Navigate to Settings → Connectors
-3. Click Add Connector, select WLC 9800, fill in hostname
-4. Expected: green "Connected" badge within 30 seconds
-5. Confirm no errors in browser DevTools console
-```
-
-Backend-only PRs write: `No UI changes — backend / API only.`
-
-This makes every PR self-describing for QA and human reviewers. The WO spec's `### UI Verification` subsection is where agents write these steps *before* implementing — it defines what "done" looks like in the browser.
-
-### Parallel agent coordination
-
-When multiple agents work concurrently:
-
-- **One agent per service/module** — no two agents touch the same service simultaneously
-- **Branch as claim** — creating a branch is the claim; agents check for existing branches before starting
-- **Shared files are sequential** — `adapter.py`, `main.py`, gateway routing, `PROGRESS.md` — no parallel edits
-- **Agents announce intent** in the PR description before touching shared files
-
-### Memory system
-
-The `memory/` directory persists across Claude Code conversations. It stores:
-
-- `user` — who you are, how you like to work
-- `feedback` — what the AI should do/avoid (corrections and confirmations)
-- `project` — ongoing programs, decisions, blockers
-- `reference` — where to find things in external systems
-
-See `memory/examples/` for file format.
-
----
-
-## Extending the factory
-
-### Add a new CI check
-
-1. Add the job to `.github/workflows/ci.yml`
-2. Add the step to `make ci-local` in `Makefile`
-3. Add it to the required status checks in your GitHub Ruleset
-4. Update `AGENT_PROCESS.md` §9 so agents know to expect it
-
-### Add a project-specific AI review check
-
-Add a numbered item to `scripts/review_context.txt`. Be specific — vague checks produce vague feedback.
-
-### Add a new work order type
-
-Copy `docs/project_management/work_orders/WO-000-template.md` and fill in the sections.
-The `## Execution` section is the agent's entry point — include branch name, risk tier, PR title, and files to touch.
+Every correction saved to `memory/` persists across sessions. A project with 50 saved feedback entries is dramatically easier to work on than one where agents rediscover the same invariants every conversation.
 
 ---
 
 ## Full SDLC loop
 
-The five agents form a complete cycle from production anomaly back to implemented fix:
-
 ```
-Production anomaly
-       │
-       ▼
-observability.yml ──► GitHub issue (labeled 'incident')
-                               │
-                 label 'new-wo'│ (human or auto)
-                               ▼
-                   planning-agent.yml ──► WO spec PR ──► human reviews & merges
-                                                                   │
-                                                       agent picks up WO Execution section
-                                                                   │
-                                                                   ▼
-                                                           implements on branch
-                                                                   │
-                                                              make ci-local
-                                                                   │
-                                                              opens PR
-                                                                   │
-                                                   ┌──────────────┴──────────────┐
-                                                   │                             │
-                                               ai-review.yml              ci.yml (lint/test/build)
-                                                   │                             │
-                                                   └──────────────┬──────────────┘
-                                                                  │
-                                                         merge (P2 auto / P1 human)
-                                                                  │
-                                                     ┌────────────┴────────────┐
-                                                     │                         │
-                                              verifier.yml            post-merge-memory.yml
-                                              (AC check)              (lesson extraction)
-                                                     │                         │
-                                          follow-up issue if           memory PR if lesson
-                                           criteria not met               found
+Production anomaly / new requirement
+            │
+            ▼
+  observability.yml ──► GitHub issue (labeled 'incident' or 'new-wo')
+                                 │
+                     planning-agent.yml ──► WO spec PR ──► human reviews & merges
+                                                                     │
+                                                   orchestrator reads PLAN.json priority queue
+                                                                     │
+                                                         agent picks up WO (claims it)
+                                                                     │
+                                                                     ▼
+                                                             implements on branch
+                                                                     │
+                                              human checkpoint ◄── deploys to containers
+                                                  (verify it works)
+                                                                     │
+                                                               make ci-local
+                                                                     │
+                                                               opens PR
+                                                                     │
+                                                   ┌─────────────────┴─────────────────┐
+                                                   │                                   │
+                                            ai-review.yml                     ci.yml (lint/test/build)
+                                                   │                                   │
+                                                   └─────────────────┬─────────────────┘
+                                                                     │
+                                                      pr-watchdog monitors CI health
+                                                                     │
+                                                        merge (P2 auto / P1 human)
+                                                                     │
+                                                      ┌──────────────┴──────────────┐
+                                                      │                             │
+                                               verifier.yml             post-merge-memory.yml
+                                               (AC check)               (lesson extraction)
+                                                      │                             │
+                                           follow-up issue if            memory PR if lesson
+                                            criteria not met                found
+                                                                             │
+                                                             orchestrator dispatches next WO ◄┘
 ```
-
-### Setup sequence for the full loop
-
-In addition to the base bootstrap steps:
-
-1. **Planning agent:** Add a `new-wo` label to your repo (Settings → Labels → New label)
-2. **Observability:** Add `METRICS_ENDPOINT` as a repository variable (Settings → Variables → Actions)
-3. **Deploy:** Copy `deploy.yml.template` → `deploy.yml`, fill in deploy + smoke test steps
-4. **Thresholds:** Edit `scripts/observability_thresholds.json` for your error rate and latency SLOs
 
 ---
 
 ## Philosophy
 
-**Agents are powerful but need guardrails.**
+**Agents own the SDLC, humans own the decisions.**
 
-The factory gives agents enough structure to work autonomously on P2/P3 work while ensuring humans stay in the loop for anything risky. The key insight: the cost of a false autonomy (agent breaks prod) vastly exceeds the cost of a false gate (human reviews a safe change). Gate on risk tier, not on trust.
+Agents handle the mechanical work — branching, coding, testing, PRs, cleanup. Humans set priorities (PLAN.json), approve risky changes (P0/P1), and verify the product works before each commit. The factory is the structure that keeps that division clean.
 
 **The CI gate is the contract.**
 
 `make ci-local` is what CI runs. If it passes locally, it passes in CI. Agents that skip it will eventually break the main branch and lose trust.
 
-**Memory compounds.**
+**Risk tier drives autonomy.**
 
-Every correction saved to `memory/` is a lesson that persists across sessions. A project with 50 saved feedback entries is dramatically easier to work on than one where agents rediscover the same invariants every conversation.
+P2/P3 work is fully autonomous. P1/P0 work requires human approval. The cost of a false-positive block (human reviews a safe change) is low. The cost of a false-negative (agent breaks production) is high. Gate on risk tier, not on trust level.
 
 ---
 

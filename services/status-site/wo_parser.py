@@ -41,9 +41,34 @@ class WOSpec:
         return "open"
 
     @property
+    def description(self) -> str:
+        m = re.search(
+            r"^## (?:Background|Summary|Description|Overview|Context|Problem)\s*\n+(.*?)(?=\n^##|\Z)",
+            self.raw,
+            re.MULTILINE | re.DOTALL,
+        )
+        if not m:
+            return ""
+        text = m.group(1).strip()
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text
+
+    @property
+    def sections(self) -> list[tuple[str, str]]:
+        """Return (heading, body) pairs for all ## sections except the header metadata block."""
+        skip = {"background", "summary", "description", "overview", "context", "problem"}
+        parts = re.split(r"^(## .+)$", self.raw, flags=re.MULTILINE)
+        result = []
+        for i in range(1, len(parts) - 1, 2):
+            heading = parts[i].lstrip("# ").strip()
+            body = parts[i + 1].strip()
+            if heading.lower() not in skip and body:
+                result.append((heading, body))
+        return result
+
+    @property
     def age_label(self) -> str:
-        """Days since WO was last touched — approximated from WO number recency."""
-        return ""  # enriched at runtime by caller if needed
+        return ""
 
 
 def parse_wo_file(content: str, filename: str) -> WOSpec | None:

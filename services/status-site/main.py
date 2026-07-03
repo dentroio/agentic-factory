@@ -79,11 +79,11 @@ async def _fetch_plan_from_github() -> dict | None:
         return None
 
 
-async def _load_wos() -> dict[int, WOSpec]:
+async def _load_wos() -> tuple[dict[int, WOSpec], bool]:
     try:
         files = await gh.list_wo_files()
     except Exception:
-        return {}
+        return {}, False
     results: dict[int, WOSpec] = {}
     contents = await asyncio.gather(
         *[gh.get_file_content(f["path"]) for f in files], return_exceptions=True
@@ -94,7 +94,7 @@ async def _load_wos() -> dict[int, WOSpec]:
         spec = parse_wo_file(content, f["name"])
         if spec:
             results[spec.number] = spec
-    return results
+    return results, True
 
 
 async def _load_active_branches() -> list[dict]:
@@ -240,12 +240,13 @@ async def dashboard(request: Request):
             },
         )
 
-    wos, branches, prs, ci = await asyncio.gather(
+    wos_result, branches, prs, ci = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
         _load_ci_health(),
     )
+    wos, wos_available = wos_result
 
     _apply_live_status(wos, branches, prs)
     columns = _board_columns(wos)
@@ -288,22 +289,38 @@ async def dashboard(request: Request):
             "done_count": len(columns.get("done", [])),
             "watchdog": watchdog,
             "health_status": health_status,
+            "wos_available": wos_available,
         },
     )
 
 
 @app.get("/wo/{number}", response_class=HTMLResponse)
 async def wo_detail(request: Request, number: int):
-    files = await gh.list_wo_files()
-    match = next((f for f in files if f["name"].startswith(f"WO-{number}-")), None)
-    if not match:
-        return HTMLResponse("<h1>WO not found</h1>", status_code=404)
-    content = await gh.get_file_content(match["path"])
-    spec = parse_wo_file(content, match["name"])
+    try:
+        files = await gh.list_wo_files()
+        match = next((f for f in files if f["name"].startswith(f"WO-{number}-")), None)
+        if not match:
+            return HTMLResponse(
+                f"<h1 style='font-family:monospace;padding:2rem'>WO-{number} not found</h1>",
+                status_code=404,
+            )
+        content = await gh.get_file_content(match["path"])
+        spec = parse_wo_file(content, match["name"])
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="error.html",
+            context={
+                "site_title": SITE_TITLE,
+                "message": f"Could not load WO-{number}: {exc}",
+                "refresh_seconds": 60,
+            },
+            status_code=502,
+        )
     return templates.TemplateResponse(
         request=request,
         name="wo_detail.html",
-        context={"site_title": SITE_TITLE, "spec": spec, "refresh_seconds": 300},
+        context={"site_title": SITE_TITLE, "spec": spec, "refresh_seconds": 300, "github_repo": GITHUB_REPO},
     )
 
 
@@ -314,12 +331,13 @@ async def pm_dashboard(request: Request):
             "site_title": SITE_TITLE, "message": "GITHUB_TOKEN and GITHUB_REPO required."
         })
 
-    wos, branches, prs, merged_prs = await asyncio.gather(
+    wos_result, branches, prs, merged_prs = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
         gh.list_merged_prs(days=56),
     )
+    wos, wos_available = wos_result
     _apply_live_status(wos, branches, prs)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
@@ -330,8 +348,6 @@ async def pm_dashboard(request: Request):
         prog = spec.program or "Standalone"
         programs[prog]["total"] += 1
         programs[prog][spec.board_column if spec.board_column != "review" else "in_review"] += 1
-        if spec.board_column == "done":
-            programs[prog]["done"] += 1
 
     for prog in programs.values():
         total = prog["total"]
@@ -374,6 +390,7 @@ async def pm_dashboard(request: Request):
         "active_agents": active_agents,
         "watchdog": watchdog,
         "orchestrator": orchestrator,
+        "wos_available": wos_available,
     })
 
 
@@ -457,9 +474,10 @@ def _compute_plan_stats(plan_data: dict) -> dict:
     """
     Pre-compute milestone and phase progress stats server-side so the
     template doesn't need Jinja2 tests that aren't available (e.g. 'containing').
+    Uses all_wos (full PLAN.json queue including done/in_progress) for accurate %.
     Returns an augmented plan_data copy with milestone_stats and phase_stats.
     """
-    queue = plan_data.get("queue", [])
+    all_wos = plan_data.get("all_wos") or plan_data.get("queue", [])
     milestones = plan_data.get("milestones", [])
     phases = plan_data.get("phases", [])
 
@@ -467,8 +485,8 @@ def _compute_plan_stats(plan_data: dict) -> dict:
     milestone_stats: dict[str, dict] = {}
     for ms in milestones:
         ms_id = ms["id"]
-        ms_wos = [w for w in queue if ms_id in w.get("blocks_milestones", [])]
-        ms_done = [w for w in ms_wos if w.get("status", "").lower() == "done"]
+        ms_wos = [w for w in all_wos if ms_id in w.get("blocks_milestones", [])]
+        ms_done = [w for w in ms_wos if w.get("status", "").lower() in {"done", "complete"}]
         total = len(ms_wos)
         pct = round(len(ms_done) / total * 100) if total else 0
         milestone_stats[ms_id] = {
@@ -481,14 +499,15 @@ def _compute_plan_stats(plan_data: dict) -> dict:
     phase_stats: dict[str, dict] = {}
     for phase in phases:
         ph_id = phase["id"]
-        ph_wos = [w for w in queue if w.get("phase") == ph_id]
-        ph_done = [w for w in ph_wos if w.get("status", "").lower() == "done"]
+        ph_wos = [w for w in all_wos if w.get("phase") == ph_id]
+        ph_done = [w for w in ph_wos if w.get("status", "").lower() in {"done", "complete"}]
         total = len(ph_wos)
         pct = round(len(ph_done) / total * 100) if total else 0
         phase_stats[ph_id] = {
             "total": total,
             "done": len(ph_done),
             "pct": pct,
+            "wos": [w["wo"] for w in ph_wos],
         }
 
     result = dict(plan_data)
@@ -515,6 +534,8 @@ async def plan_dashboard(request: Request):
                 "loaded": True,
                 "next": None,
                 "queue": raw.get("queue", []),
+                "all_wos": raw.get("queue", []),
+                "deferred": raw.get("deferred", []),
                 "milestones": raw.get("milestones", []),
                 "phases": raw.get("phases", []),
                 "last_updated": raw.get("last_updated"),

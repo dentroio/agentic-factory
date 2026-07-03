@@ -80,7 +80,7 @@ def _parse_depends_on(content: str) -> list[int]:
 
 def _is_done(status: str) -> bool:
     s = status.lower()
-    return "done" in s or "complete" in s or "✅" in status
+    return "done" in s or "complete" in s or "✅" in status or "deferred" in s or "superseded" in s or "abandoned" in s
 
 
 def _is_in_progress(status: str) -> bool:
@@ -415,6 +415,8 @@ async def poll() -> None:
             "last_updated": plan_raw.get("last_updated") if plan_raw else None,
             "next": plan_next,
             "queue": plan_queue_sorted,
+            "all_wos": plan_raw.get("queue", []) if plan_raw else [],
+            "deferred": plan_raw.get("deferred", []) if plan_raw else [],
             "milestones": plan_raw.get("milestones", []) if plan_raw else [],
             "phases": plan_raw.get("phases", []) if plan_raw else [],
         },
