@@ -252,8 +252,9 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         await usage_tracker.record_run(ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, False, ask_calls)
 
 
-async def main() -> None:
-    _log(f"Agent runner starting — backend={PREFERRED_AGENT}, agent={AGENT_NAME}@{HOSTNAME}")
+async def main(once: bool = False) -> None:
+    _log(f"Agent runner starting — backend={PREFERRED_AGENT}, agent={AGENT_NAME}@{HOSTNAME}"
+         + (" [--once]" if once else ""))
     _log(f"Polling orchestrator every {POLL_INTERVAL}s")
 
     # Fetch agent config from orchestrator — Settings UI changes take effect without restart
@@ -268,14 +269,24 @@ async def main() -> None:
         next_wo = await get_next()
         if next_wo and next_wo.get("wo"):
             await run_wo(next_wo, preferred_agent=active_backend)
+            if once:
+                _log("--once: WO complete, exiting")
+                break
         else:
             _log("No WO available — sleeping")
+            if once:
+                _log("--once: nothing to claim, exiting")
+                break
         await asyncio.sleep(POLL_INTERVAL)
 
 
 if __name__ == "__main__":
+    import threading
+    import draft_server
+    threading.Thread(target=draft_server.start, daemon=True, name="draft-server").start()
+    once = "--once" in sys.argv
     try:
-        asyncio.run(main())
+        asyncio.run(main(once=once))
     except KeyboardInterrupt:
         _log("Shutting down")
         sys.exit(0)

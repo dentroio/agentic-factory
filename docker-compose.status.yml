@@ -85,6 +85,8 @@ services:
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
       - CODEX_WORKFLOW_FILE=${CODEX_WORKFLOW_FILE:-codex-dispatch.yml}
       - API_PORT=8100
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AGENT_RUNNER_URL=${AGENT_RUNNER_URL:-http://host.docker.internal:8101}
     volumes:
       - orchestrator-data:/data
       - watchdog-data:/watchdog:ro

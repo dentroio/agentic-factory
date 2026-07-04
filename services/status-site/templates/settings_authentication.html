@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block page_title %}Authentication — Settings — {{ site_title }}{% endblock %}
+{% block content %}
+
+<div class="max-w-xl mx-auto">
+
+  <div class="flex items-center gap-2 text-xs text-slate-500 mb-4">
+    <a href="/settings" class="hover:text-slate-300 transition-colors">Settings</a>
+    <span>›</span>
+    <span class="text-slate-300">Authentication</span>
+  </div>
+
+  {% if saved %}
+  <div class="mb-4 p-3 border border-emerald-500/30 bg-emerald-950/10 rounded text-sm text-emerald-200 flex items-center gap-2">
+    <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+    Credentials saved. Active connections will use the new values on next call.
+    {% if restart_required %}
+    <span class="ml-auto text-[10px] font-mono text-amber-400">restart may be needed for some services</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if error %}
+  <div class="mb-4 p-3 border border-rose-500/30 bg-rose-950/10 rounded text-sm text-rose-200">
+    {{ error }}
+  </div>
+  {% endif %}
+
+  <form action="/settings/authentication" method="post" id="auth-form" class="space-y-4">
+
+    {# ── GitHub ─────────────────────────────────────────────────────── #}
+    <div class="glass-panel overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-800/40">
+        <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">GitHub</span>
+      </div>
+      <div class="px-5 py-4 space-y-4">
+
+        <div>
+          <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">
+            Personal Access Token
+            {% if github_token_set %}
+            <span class="ml-2 normal-case font-sans text-emerald-400">● set</span>
+            {% else %}
+            <span class="ml-2 normal-case font-sans text-slate-600">not set</span>
+            {% endif %}
+          </label>
+          <input type="password" name="github_token" autocomplete="off"
+            placeholder="ghp_…  (leave blank to keep current)"
+            class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+          <p class="text-[10px] text-slate-600 mt-1">
+            Needs <code class="text-slate-500">repo</code> scope.
+            Used by the factory to list files, create branches, and open PRs.
+          </p>
+        </div>
+
+        <div>
+          <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">Repository</label>
+          <input type="text" name="github_repo" value="{{ github_repo }}"
+            placeholder="owner/repo"
+            class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+          <p class="text-[10px] text-slate-600 mt-1">
+            The repository where WO specs and PLAN.json live.
+          </p>
+        </div>
+
+      </div>
+    </div>
+
+    {# ── Anthropic API ──────────────────────────────────────────────── #}
+    <div class="glass-panel overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-800/40">
+        <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Anthropic API</span>
+      </div>
+      <div class="px-5 py-4">
+        <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">
+          API Key
+          {% if anthropic_key_set %}
+          <span class="ml-2 normal-case font-sans text-emerald-400">● set</span>
+          {% else %}
+          <span class="ml-2 normal-case font-sans text-slate-600">not set</span>
+          {% endif %}
+        </label>
+        <input type="password" name="anthropic_key" autocomplete="off"
+          placeholder="sk-ant-…  (leave blank to keep current)"
+          class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+        <p class="text-[10px] text-slate-600 mt-1">
+          Optional — only required for the <strong class="text-slate-500">claude-api</strong> draft backend.
+          Agent-runner backends (Claude, Cursor, Codex, Gemini) use your CLI subscriptions instead.
+        </p>
+      </div>
+    </div>
+
+    {# ── Slack ──────────────────────────────────────────────────────── #}
+    <div class="glass-panel overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-800/40">
+        <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Slack</span>
+      </div>
+      <div class="px-5 py-4">
+        <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">
+          Webhook URL
+          {% if slack_webhook_set %}
+          <span class="ml-2 normal-case font-sans text-emerald-400">● set</span>
+          {% else %}
+          <span class="ml-2 normal-case font-sans text-slate-600">not set</span>
+          {% endif %}
+        </label>
+        <input type="password" name="slack_webhook" autocomplete="off"
+          placeholder="https://hooks.slack.com/…  (leave blank to keep current)"
+          class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+        <p class="text-[10px] text-slate-600 mt-1">
+          Factory posts WO completions and failures here.
+        </p>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-end gap-3 pt-1">
+      <a href="/settings" class="text-xs text-slate-500 hover:text-slate-300 transition-colors">Cancel</a>
+      <button type="submit" id="save-btn"
+        class="inline-flex items-center gap-2 px-5 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+        </svg>
+        Save Credentials
+      </button>
+    </div>
+
+  </form>
+
+</div>
+
+<script>
+document.getElementById('auth-form').addEventListener('submit', function() {
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true;
+  btn.innerHTML = `<svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+  </svg> Saving…`;
+});
+</script>
+
+{% endblock %}

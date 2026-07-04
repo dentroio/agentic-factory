@@ -32,6 +32,7 @@ ORCHESTRATOR_PATH = Path(os.getenv("ORCHESTRATOR_PATH", "/orchestrator/orchestra
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
 VALIDATIONS_PATH = Path("/orchestrator/pending_validations.json")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
+WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 FACTORY_CONFIG_PATH = Path(os.getenv("FACTORY_CONFIG_PATH", "/config/factory-config.json"))
 
 
@@ -290,11 +291,22 @@ async def dashboard(request: Request):
             },
         )
 
-    wos_result, branches, prs, ci = await asyncio.gather(
+    async def _load_runner_status() -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                r = await client.get(f"{ORCHESTRATOR_URL}/api/backends")
+                if r.status_code == 200:
+                    return r.json().get("agent_runner_online", False)
+        except Exception:
+            pass
+        return False
+
+    wos_result, branches, prs, ci, agent_runner_online = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
         _load_ci_health(),
+        _load_runner_status(),
     )
     wos, wos_available = wos_result
 
@@ -343,6 +355,7 @@ async def dashboard(request: Request):
             "health_status": health_status,
             "wos_available": wos_available,
             "pending_validations": pending_validations,
+            "agent_runner_online": agent_runner_online,
         },
     )
 
@@ -887,11 +900,17 @@ async def settings_projects_remove(request: Request):
 @app.get("/settings/agents", response_class=HTMLResponse)
 async def settings_agents(request: Request, saved: str = "", error: str = ""):
     cfg = {}
+    secrets = {}
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/config")
-            if r.status_code == 200:
-                cfg = r.json()
+            cfg_r, sec_r = await asyncio.gather(
+                client.get(f"{ORCHESTRATOR_URL}/api/config"),
+                client.get(f"{ORCHESTRATOR_URL}/api/secrets"),
+            )
+            if cfg_r.status_code == 200:
+                cfg = cfg_r.json()
+            if sec_r.status_code == 200:
+                secrets = sec_r.json()
     except Exception:
         pass
     return templates.TemplateResponse(request=request, name="settings_agents.html", context={
@@ -902,6 +921,7 @@ async def settings_agents(request: Request, saved: str = "", error: str = ""):
         "saved": saved,
         "error": error,
         "orchestrator_offline": not cfg,
+        "anthropic_key_set": secrets.get("ANTHROPIC_API_KEY", False),
     })
 
 
@@ -920,13 +940,16 @@ async def settings_agents_save(request: Request):
             "performance": str(form.get("reviewer_performance", "claude")).strip(),
         },
     }
+    anthropic_key = str(form.get("anthropic_key", "")).strip()
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.put(f"{ORCHESTRATOR_URL}/api/config", json=payload)
             if r.status_code != 200:
                 return RedirectResponse(url=f"/settings/agents?error=Save+failed+({r.status_code})", status_code=303)
-    except Exception as e:
-        return RedirectResponse(url=f"/settings/agents?error=Orchestrator+unreachable", status_code=303)
+            if anthropic_key:
+                await client.put(f"{ORCHESTRATOR_URL}/api/secrets", json={"ANTHROPIC_API_KEY": anthropic_key})
+    except Exception:
+        return RedirectResponse(url="/settings/agents?error=Orchestrator+unreachable", status_code=303)
     return RedirectResponse(url="/settings/agents?saved=1", status_code=303)
 
 
@@ -986,6 +1009,66 @@ async def health():
     return {"status": "ok", "repo": GITHUB_REPO, "token_set": bool(GITHUB_TOKEN)}
 
 
+@app.get("/settings/authentication", response_class=HTMLResponse)
+async def settings_authentication(request: Request, saved: str = "", error: str = ""):
+    secrets: dict = {}
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/secrets")
+            if r.status_code == 200:
+                secrets = r.json()
+    except Exception:
+        pass
+    return templates.TemplateResponse(request=request, name="settings_authentication.html", context={
+        "site_title": SITE_TITLE,
+        "refresh_seconds": 3600,
+        "github_repo": GITHUB_REPO,
+        "saved": saved,
+        "error": error,
+        "github_token_set": bool(GITHUB_TOKEN) or secrets.get("GITHUB_TOKEN", False),
+        "anthropic_key_set": secrets.get("ANTHROPIC_API_KEY", False),
+        "slack_webhook_set": secrets.get("SLACK_WEBHOOK_URL", False),
+        "restart_required": False,
+    })
+
+
+@app.post("/settings/authentication", response_class=HTMLResponse)
+async def settings_authentication_save(request: Request):
+    from fastapi.responses import RedirectResponse
+    form = await request.form()
+    github_token = str(form.get("github_token", "")).strip()
+    github_repo = str(form.get("github_repo", "")).strip()
+    anthropic_key = str(form.get("anthropic_key", "")).strip()
+    slack_webhook = str(form.get("slack_webhook", "")).strip()
+
+    secrets_payload: dict = {}
+    if github_token:
+        secrets_payload["GITHUB_TOKEN"] = github_token
+    if anthropic_key:
+        secrets_payload["ANTHROPIC_API_KEY"] = anthropic_key
+    if slack_webhook:
+        secrets_payload["SLACK_WEBHOOK_URL"] = slack_webhook
+    if github_repo:
+        secrets_payload["GITHUB_REPO"] = github_repo
+
+    if secrets_payload:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                r = await client.put(f"{ORCHESTRATOR_URL}/api/secrets", json=secrets_payload)
+                if r.status_code != 200:
+                    return RedirectResponse(
+                        url=f"/settings/authentication?error=Save+failed+({r.status_code})",
+                        status_code=303,
+                    )
+        except Exception:
+            return RedirectResponse(
+                url="/settings/authentication?error=Orchestrator+unreachable",
+                status_code=303,
+            )
+
+    return RedirectResponse(url="/settings/authentication?saved=1", status_code=303)
+
+
 # ── Plan Authoring UI (WO-373) ────────────────────────────────────────────────
 
 import github_writer as gw
@@ -1006,18 +1089,101 @@ def _plan_context_base() -> dict:
 @app.get("/settings/plan", response_class=HTMLResponse)
 async def settings_plan(request: Request, pr_url: str = "", error: str = ""):
     ctx = _plan_context_base()
-    ctx.update({"pr_url": pr_url, "error": error, "pending_validations": []})
+    held: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=4) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/held-wos")
+            if r.status_code == 200:
+                held = r.json()
+    except Exception:
+        pass
+    ctx.update({"pr_url": pr_url, "error": error, "pending_validations": [], "held_wos": held})
     return templates.TemplateResponse(request=request, name="settings_plan.html", context=ctx)
+
+
+@app.post("/settings/plan/wos/{wo_id}/hold", response_class=HTMLResponse)
+async def settings_plan_hold_wo(wo_id: str, request: Request):
+    from fastapi.responses import RedirectResponse
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.post(f"{ORCHESTRATOR_URL}/api/wos/{wo_id}/hold")
+    except Exception:
+        pass
+    return RedirectResponse(url="/settings/plan", status_code=303)
+
+
+@app.post("/settings/plan/wos/{wo_id}/unhold", response_class=HTMLResponse)
+async def settings_plan_unhold_wo(wo_id: str, request: Request):
+    from fastapi.responses import RedirectResponse
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.request("DELETE", f"{ORCHESTRATOR_URL}/api/wos/{wo_id}/hold")
+    except Exception:
+        pass
+    return RedirectResponse(url="/settings/plan", status_code=303)
+
+
+@app.get("/settings/plan/wos/{wo_id}/edit", response_class=HTMLResponse)
+async def settings_plan_edit_wo_form(wo_id: str, request: Request, error: str = ""):
+    content = ""
+    if GITHUB_TOKEN and GITHUB_REPO:
+        try:
+            content, _ = await gw.read_wo_file(wo_id, GITHUB_TOKEN, GITHUB_REPO, WO_PATH)
+        except Exception as exc:
+            error = str(exc)[:200]
+    return templates.TemplateResponse(request=request, name="settings_plan_edit_wo.html", context={
+        "site_title": SITE_TITLE,
+        "github_repo": GITHUB_REPO,
+        "refresh_seconds": 3600,
+        "wo_id": wo_id,
+        "content": content,
+        "error": error,
+    })
+
+
+@app.post("/settings/plan/wos/{wo_id}/edit", response_class=HTMLResponse)
+async def settings_plan_edit_wo_submit(wo_id: str, request: Request):
+    from fastapi.responses import RedirectResponse
+    form = await request.form()
+    content = str(form.get("content", "")).strip()
+    if not content:
+        return RedirectResponse(url=f"/settings/plan/wos/{wo_id}/edit?error=Content+cannot+be+empty", status_code=303)
+    try:
+        result = await gw.edit_wo(wo_id, content, GITHUB_TOKEN, GITHUB_REPO, WO_PATH)
+        pr_url = result.get("pr_url", "")
+        return RedirectResponse(url=f"/settings/plan?pr_url={pr_url}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(
+            url=f"/settings/plan/wos/{wo_id}/edit?error={str(exc)[:120]}",
+            status_code=303,
+        )
 
 
 @app.get("/settings/plan/wos/new", response_class=HTMLResponse)
 async def settings_plan_new_wo(request: Request, error: str = ""):
-    plan_data = _load_plan_from_orchestrator() or {}
-    phases = plan_data.get("phases", [])
-    milestones = plan_data.get("milestones", [])
-    queue = plan_data.get("queue", [])
+    next_num = 374
+    if GITHUB_TOKEN and GITHUB_REPO:
+        try:
+            next_num = await gw.next_wo_number(GITHUB_REPO, WO_PATH, GITHUB_TOKEN)
+        except Exception:
+            pass
+    return templates.TemplateResponse(request=request, name="settings_plan_new_wo.html", context={
+        "site_title": SITE_TITLE,
+        "github_repo": GITHUB_REPO,
+        "refresh_seconds": 3600,
+        "next_wo_number": next_num,
+        "error": error,
+        "description": "",
+    })
 
-    # Auto-compute next WO number
+
+@app.post("/settings/plan/wos/draft", response_class=HTMLResponse)
+async def settings_plan_draft_wo(request: Request):
+    form = await request.form()
+    description = str(form.get("description", "")).strip()
+    if not description:
+        return RedirectResponse(url="/settings/plan/wos/new?error=Please+describe+what+you+want+to+build", status_code=303)
+
     next_num = 374
     if GITHUB_TOKEN and GITHUB_REPO:
         try:
@@ -1025,16 +1191,42 @@ async def settings_plan_new_wo(request: Request, error: str = ""):
         except Exception:
             pass
 
-    return templates.TemplateResponse(request=request, name="settings_plan_new_wo.html", context={
+    backend = str(form.get("backend", "claude-api")).strip() or "claude-api"
+
+    draft = None
+    error = ""
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.post(
+                f"{ORCHESTRATOR_URL}/api/plan/draft",
+                json={"description": description, "next_wo_num": next_num, "backend": backend},
+            )
+            if r.status_code == 200:
+                draft = r.json()
+            else:
+                error = f"Draft failed ({r.status_code}): {r.text[:200]}"
+    except Exception as e:
+        error = f"Orchestrator unreachable: {e}"
+
+    if error or not draft:
+        return templates.TemplateResponse(request=request, name="settings_plan_new_wo.html", context={
+            "site_title": SITE_TITLE,
+            "github_repo": GITHUB_REPO,
+            "refresh_seconds": 3600,
+            "next_wo_number": next_num,
+            "error": error or "Draft generation failed — try again",
+            "description": description,
+        })
+
+    ac_text = "\n".join(draft.get("acceptance_criteria", []))
+    return templates.TemplateResponse(request=request, name="settings_plan_review_wo.html", context={
         "site_title": SITE_TITLE,
         "github_repo": GITHUB_REPO,
         "refresh_seconds": 3600,
-        "phases": phases,
-        "milestones": milestones,
-        "existing_wos": [q["wo"] for q in queue if q.get("status") != "done"],
         "next_wo_number": next_num,
-        "error": error,
-        "pending_validations": [],
+        "draft": draft,
+        "ac_text": ac_text,
+        "error": "",
     })
 
 
@@ -1052,9 +1244,11 @@ async def settings_plan_create_wo(request: Request):
     if not problem or not what_to_build:
         return RedirectResponse(url="/settings/plan/wos/new?error=Problem+and+What+to+Build+are+required", status_code=303)
 
-    number = int(form.get("wo_number", "374"))
+    # Accept wo_number (review form) or number (legacy)
+    number = int(form.get("wo_number") or form.get("number") or "374")
+
     criteria_raw = str(form.get("acceptance_criteria", "")).strip()
-    criteria = [c.strip() for c in criteria_raw.split("\n") if c.strip()]
+    criteria = [c.strip() for c in criteria_raw.splitlines() if c.strip()]
 
     depends_raw = str(form.get("depends_on", "")).strip()
     depends_on = [d.strip() for d in depends_raw.split(",") if d.strip()]
@@ -1127,6 +1321,26 @@ async def settings_plan_create_milestone(request: Request):
         return RedirectResponse(url=f"/settings/plan?pr_url={result['pr_url']}", status_code=303)
     except Exception as e:
         return RedirectResponse(url=f"/settings/plan?error={str(e)[:120]}", status_code=303)
+
+
+@app.get("/api/backends")
+async def api_backends():
+    """Proxy to orchestrator /api/backends — tells the UI which agents are available."""
+    try:
+        async with httpx.AsyncClient(timeout=4) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/backends")
+            if r.status_code == 200:
+                return r.json()
+    except Exception:
+        pass
+    return {
+        "claude-api": False,
+        "agent_runner_online": False,
+        "claude": False,
+        "cursor": False,
+        "codex": False,
+        "gemini": False,
+    }
 
 
 @app.get("/api/plan/next-wo-number")

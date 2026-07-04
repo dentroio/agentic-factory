@@ -60,10 +60,13 @@ _last_summary_day: int = -1
 _dispatch_state: dict[str, dict] = {}   # wo_id → claim record
 _validations: list[dict] = []           # pending human validations
 _orchestrator_output: dict = {}         # last poll snapshot
+_held_wos: set[str] = set()            # WO IDs on hold (skip, don't claim)
+
+HOLD_PATH = DATA_DIR / "held_wos.json"
 
 
 def _load_state() -> None:
-    global _dispatch_state, _validations
+    global _dispatch_state, _validations, _held_wos
     if DISPATCH_STATE_PATH.exists():
         try:
             _dispatch_state = json.loads(DISPATCH_STATE_PATH.read_text())
@@ -74,10 +77,19 @@ def _load_state() -> None:
             _validations = json.loads(VALIDATIONS_PATH.read_text())
         except Exception:
             _validations = []
+    if HOLD_PATH.exists():
+        try:
+            _held_wos = set(json.loads(HOLD_PATH.read_text()))
+        except Exception:
+            _held_wos = set()
 
 
 def _save_dispatch() -> None:
     DISPATCH_STATE_PATH.write_text(json.dumps(_dispatch_state, indent=2))
+
+
+def _save_held() -> None:
+    HOLD_PATH.write_text(json.dumps(sorted(_held_wos), indent=2))
 
 
 def _save_validations() -> None:
@@ -185,12 +197,33 @@ async def get_next():
 
     for wo in queue:
         wo_id = wo.get("wo", "")
+        if wo_id in _held_wos:
+            continue
         claim = _dispatch_state.get(wo_id, {})
         if claim.get("status") in active_statuses:
             continue
         return {**wo, "repo": GITHUB_REPO}
 
     return {"wo": None, "reason": "queue empty or all candidates claimed/blocked"}
+
+
+@app.get("/api/held-wos")
+async def get_held_wos():
+    return sorted(_held_wos)
+
+
+@app.post("/api/wos/{wo_id}/hold")
+async def hold_wo(wo_id: str):
+    _held_wos.add(wo_id)
+    _save_held()
+    return {"held": sorted(_held_wos)}
+
+
+@app.delete("/api/wos/{wo_id}/hold")
+async def unhold_wo(wo_id: str):
+    _held_wos.discard(wo_id)
+    _save_held()
+    return {"held": sorted(_held_wos)}
 
 
 @app.post("/api/claim")
@@ -966,6 +999,150 @@ async def get_usage():
         if r.get("ts", "") >= week_ago:
             per_backend[b]["runs_this_week"] += 1
     return {"records": records[-20:], "summary": {"per_backend": per_backend}}
+
+
+# ── Secrets storage (persisted to data volume, editable from settings UI) ─────
+
+SECRETS_PATH = DATA_DIR / "secrets.json"
+
+
+def _load_secrets() -> dict:
+    if not SECRETS_PATH.exists():
+        return {}
+    try:
+        return json.loads(SECRETS_PATH.read_text())
+    except Exception:
+        return {}
+
+
+@app.get("/api/secrets")
+async def get_secrets():
+    """Return which secret keys are set — never their values."""
+    return {k: bool(v) for k, v in _load_secrets().items()}
+
+
+@app.put("/api/secrets")
+async def put_secrets(request: Request):
+    try:
+        incoming = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    secrets = _load_secrets()
+    for k, v in incoming.items():
+        if v:
+            secrets[k] = str(v)
+        elif k in secrets:
+            del secrets[k]
+    SECRETS_PATH.write_text(json.dumps(secrets, indent=2))
+    return {k: bool(v) for k, v in secrets.items()}
+
+
+# ── WO Draft generation ────────────────────────────────────────────────────────
+
+AGENT_RUNNER_URL = os.getenv("AGENT_RUNNER_URL", "http://host.docker.internal:8101")
+
+
+def _get_anthropic_key() -> str:
+    """Read ANTHROPIC_API_KEY from env first, then secrets volume (set via UI)."""
+    return os.getenv("ANTHROPIC_API_KEY") or _load_secrets().get("ANTHROPIC_API_KEY", "")
+
+_DRAFT_SYSTEM = (
+    "You are a software engineering planning agent. Convert a plain-English feature request "
+    "into a structured Work Order spec.\n\n"
+    "Return ONLY valid JSON (no markdown fences, no preamble) with these exact keys:\n"
+    "- title: short action-oriented title (max 60 chars)\n"
+    "- priority: 'P1', 'P2', or 'P3'\n"
+    "- effort: 'XS', 'S', 'M', 'L', or 'XL'\n"
+    "- services: comma-separated service names affected (e.g. 'orchestrator, status-site')\n"
+    "- problem: 2-4 sentences describing the pain point\n"
+    "- what_to_build: technical description with specific files and approach\n"
+    "- acceptance_criteria: array of 3-6 verifiable checklist items\n"
+    "- notes: any constraints or context (empty string if none)\n\n"
+    "Risk tiers: P1=core/schema changes (human merge required), "
+    "P2=additive features/UI (auto-merge allowed), P3=docs only (direct to main).\n"
+    "Effort: XS<1h | S~2h | M=half day | L=full day | XL=2-3 days"
+)
+
+
+class DraftRequest(BaseModel):
+    description: str
+    next_wo_num: int = 1
+    backend: str = "claude-api"
+
+
+@app.get("/api/backends")
+async def get_backends():
+    """Report which AI backends are available (API key set / CLI installed)."""
+    result: dict[str, bool | str] = {
+        "claude-api": bool(_get_anthropic_key()),
+        "agent_runner_online": False,
+        "claude": False,
+        "cursor": False,
+        "codex": False,
+        "gemini": False,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.get(f"{AGENT_RUNNER_URL}/health")
+            if r.status_code == 200:
+                data = r.json()
+                result["agent_runner_online"] = True
+                for b in ("claude", "cursor", "codex", "gemini"):
+                    result[b] = data.get("backends", {}).get(b, False)
+    except Exception:
+        pass
+    return result
+
+
+@app.post("/api/plan/draft")
+async def plan_draft(req: DraftRequest):
+    backend = req.backend or "claude-api"
+
+    if backend == "claude-api":
+        api_key = _get_anthropic_key()
+        if not api_key:
+            raise HTTPException(
+                status_code=503,
+                detail="Anthropic API key not configured. Add it in Settings → Agents, or select a CLI backend.",
+            )
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            msg = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1024,
+                system=_DRAFT_SYSTEM,
+                messages=[{
+                    "role": "user",
+                    "content": f"WO number: {req.next_wo_num:03d}\n\nRequest:\n{req.description}",
+                }],
+            )
+            text = msg.content[0].text.strip()
+            if text.startswith("```"):
+                text = re.sub(r"^```[a-z]*\n?", "", text)
+                text = re.sub(r"\n?```$", "", text)
+            data = json.loads(text)
+            return data
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=500, detail=f"LLM returned invalid JSON: {e}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # CLI backend — proxy to agent-runner draft server (runs on host)
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.post(
+                f"{AGENT_RUNNER_URL}/api/draft",
+                json={"description": req.description, "next_wo_num": req.next_wo_num, "backend": backend},
+            )
+            if r.status_code == 200:
+                return r.json()
+            raise HTTPException(status_code=r.status_code, detail=r.text[:300])
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="Agent runner not reachable. Start it with: make agent-once  (or make agent-install for the daemon)",
+        )
 
 
 if __name__ == "__main__":

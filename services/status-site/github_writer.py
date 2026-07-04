@@ -196,6 +196,70 @@ async def create_wo(
         return {"pr_url": pr["html_url"], "wo_number": number, "branch": branch}
 
 
+async def read_wo_file(wo_id: str, token: str, repo: str, wo_path: str) -> tuple[str, str]:
+    """Return (raw_content, file_path) for the given WO ID, or raise ValueError."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        items = await _get(client, f"/repos/{repo}/contents/{wo_path}", token)
+        if not isinstance(items, list):
+            raise ValueError("Could not list WO files")
+        match = next(
+            (f for f in items if isinstance(f, dict) and f.get("name", "").startswith(f"{wo_id}-")),
+            None,
+        )
+        if not match:
+            raise ValueError(f"No spec file found for {wo_id}")
+        raw = await client.get(
+            f"https://api.github.com/repos/{repo}/contents/{match['path']}",
+            headers=_headers(token),
+        )
+        raw.raise_for_status()
+        data = raw.json()
+        content = base64.b64decode(data["content"]).decode()
+        return content, match["path"]
+
+
+async def edit_wo(wo_id: str, new_content: str, token: str, repo: str, wo_path: str) -> dict:
+    """Update an existing WO spec file and open a PR."""
+    number = wo_id.replace("WO-", "").lstrip("0") or "0"
+    branch = f"factory/edit-wo-{number}"
+
+    async with httpx.AsyncClient(timeout=25) as client:
+        items = await _get(client, f"/repos/{repo}/contents/{wo_path}", token)
+        if not isinstance(items, list):
+            raise ValueError("Could not list WO files")
+        match = next(
+            (f for f in items if isinstance(f, dict) and f.get("name", "").startswith(f"{wo_id}-")),
+            None,
+        )
+        if not match:
+            raise ValueError(f"No spec file found for {wo_id}")
+
+        ref = await _get(client, f"/repos/{repo}/git/ref/heads/main", token)
+        base_sha = ref["object"]["sha"]
+        try:
+            await _post(client, f"/repos/{repo}/git/refs", token, {
+                "ref": f"refs/heads/{branch}",
+                "sha": base_sha,
+            })
+        except Exception:
+            pass  # branch already exists — reuse it
+
+        await _put(client, f"/repos/{repo}/contents/{match['path']}", token, {
+            "message": f"docs(pm): update {wo_id} spec",
+            "content": base64.b64encode(new_content.encode()).decode(),
+            "sha": match["sha"],
+            "branch": branch,
+        })
+
+        pr = await _post(client, f"/repos/{repo}/pulls", token, {
+            "title": f"docs(pm): update {wo_id} spec",
+            "body": "Updated via AI Factory Plan Authoring UI.",
+            "head": branch,
+            "base": "main",
+        })
+        return {"pr_url": pr["html_url"]}
+
+
 async def add_phase(
     phase_data: dict, token: str, repo: str, plan_path: str
 ) -> dict:

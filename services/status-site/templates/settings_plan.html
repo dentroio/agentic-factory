@@ -45,14 +45,31 @@
       <div class="px-5 py-6 text-center text-xs text-slate-600">No open WOs — create one above.</div>
       {% endif %}
       {% for wo in open_wos %}
-      <div class="px-5 py-3 flex items-center gap-3">
+      {% set is_held = wo.wo in held_wos %}
+      <div class="px-5 py-3 flex items-center gap-3 {% if is_held %}opacity-50{% endif %}">
         <span class="text-[10px] font-mono text-slate-500 w-14 flex-shrink-0">{{ wo.wo }}</span>
-        <span class="text-xs text-slate-300 flex-1 truncate">{{ wo.title }}</span>
+        <span class="text-xs {% if is_held %}text-slate-500 line-through{% else %}text-slate-300{% endif %} flex-1 truncate">{{ wo.title }}</span>
+        {% if is_held %}
+        <span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500">held</span>
+        {% else %}
         <span class="text-[9px] font-mono px-1.5 py-0.5 rounded
           {% if wo.priority == 'P1' %}bg-rose-500/10 text-rose-400
           {% elif wo.priority == 'P2' %}bg-amber-500/10 text-amber-400
           {% else %}bg-slate-700 text-slate-400{% endif %}">{{ wo.priority }}</span>
+        {% endif %}
         <span class="text-[9px] text-slate-600 font-mono">{{ wo.effort }}</span>
+        <a href="/settings/plan/wos/{{ wo.wo }}/edit" title="Edit spec"
+          class="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-slate-700/40 text-slate-500 hover:text-indigo-400 hover:border-indigo-700/40 transition-colors">
+          ✎
+        </a>
+        <form method="post" action="/settings/plan/wos/{{ wo.wo }}/{% if is_held %}unhold{% else %}hold{% endif %}" class="flex-shrink-0">
+          <button type="submit" title="{% if is_held %}Resume — allow agent to claim{% else %}Hold — prevent agent from claiming{% endif %}"
+            class="text-[10px] px-1.5 py-0.5 rounded border transition-colors
+              {% if is_held %}border-emerald-700/40 text-emerald-500 hover:bg-emerald-900/20
+              {% else %}border-slate-700/40 text-slate-500 hover:text-amber-400 hover:border-amber-700/40{% endif %}">
+            {% if is_held %}▶ Resume{% else %}⏸ Hold{% endif %}
+          </button>
+        </form>
       </div>
       {% endfor %}
     </div>

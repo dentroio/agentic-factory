@@ -74,6 +74,17 @@ read -rs SLACK_WEBHOOK_VAL
 echo ""
 _store_keychain "SLACK_WEBHOOK_URL" "$SLACK_WEBHOOK_VAL"
 
+# Anthropic API Key (for WO spec generation in orchestrator)
+echo ""
+echo "── Anthropic API Key (for WO spec generation) ──────────"
+echo "  Used by the orchestrator to generate WO specs from plain-English"
+echo "  descriptions. Get it at https://console.anthropic.com/settings/keys"
+echo "  Press Enter to skip (you can add it later)."
+printf "  Key: "
+read -rs ANTHROPIC_KEY_VAL
+echo ""
+_store_keychain "ANTHROPIC_API_KEY" "$ANTHROPIC_KEY_VAL"
+
 # Preferred agent backend
 echo ""
 echo "── Agent Backend ────────────────────────────────────────"
