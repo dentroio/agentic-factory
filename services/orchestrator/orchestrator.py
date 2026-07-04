@@ -104,6 +104,9 @@ class ValidateRequest(BaseModel):
     workstation: str = ""
     verify_url: str = ""
     steps: list[str] = []
+    ci_passed: bool = True
+    security_passed: bool = True
+    thread_summary: str = ""
 
 
 class ValidationDecision(BaseModel):
@@ -208,7 +211,22 @@ async def checkin(wo: str, agent: str, step: str = ""):
 
 @app.post("/api/validate")
 async def request_validation(req: ValidateRequest):
-    """Agent signals it needs human sign-off before committing."""
+    """Agent signals it needs human sign-off before committing.
+
+    Rejects with 422 if CI or security gate not met — the agent must fix
+    the failures and call /api/validate again with passing results.
+    """
+    gate_failures = []
+    if not req.ci_passed:
+        gate_failures.append("CI checks failed")
+    if not req.security_passed:
+        gate_failures.append("security scan found CRITICAL or HIGH findings")
+    if gate_failures:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Quality gate not met: {'; '.join(gate_failures)}",
+        )
+
     if req.wo in _dispatch_state:
         _dispatch_state[req.wo]["status"] = "awaiting_human"
         _save_dispatch()
@@ -219,6 +237,9 @@ async def request_validation(req: ValidateRequest):
         "workstation": req.workstation,
         "verify_url": req.verify_url,
         "steps": req.steps,
+        "ci_passed": req.ci_passed,
+        "security_passed": req.security_passed,
+        "thread_summary": req.thread_summary,
         "requested_at": _utcnow(),
         "status": "pending",
     })
