@@ -25,6 +25,7 @@ from orchestrator_client import (
 )
 from prompt_builder import build_prompt, slug_from_title
 from quality_gate import run_quality_gate
+from thread_monitor import ThreadMonitor, _is_question
 
 
 def _log(msg: str) -> None:
@@ -38,8 +39,43 @@ async def _checkin_loop(wo_id: str, interval: int = 90) -> None:
         await checkin(wo_id, "working")
 
 
-async def _poll_approval(wo_id: str, timeout: int = AGENT_TIMEOUT) -> str:
-    """Poll dispatch state until approved, rejected, or timeout."""
+async def _handle_qa(wo_id: str, question: str, monitor: ThreadMonitor, backend) -> None:
+    """Answer a human question without blocking the main agent task."""
+    if backend is None:
+        await monitor.post(f"**Q: {question}**\n\nNo agent backend available to answer right now.")
+        return
+    answer = await backend.ask(
+        f"While working on {wo_id}, the human asked: {question}\n\n"
+        f"Answer briefly in the context of this work order. Be concise (2-4 sentences)."
+    )
+    if answer:
+        await monitor.post(f"**Q: {question}**\n\n{answer}")
+
+
+async def _thread_monitor_loop(wo_id: str, monitor: ThreadMonitor, backend) -> None:
+    """Background task: poll thread every 15s for human messages while agent works."""
+    await asyncio.sleep(30)  # give agent time to start before first poll
+    while True:
+        await asyncio.sleep(15)
+        messages = await monitor.poll()
+        for msg in messages:
+            content = msg.get("content", "").strip()
+            if not content:
+                continue
+            _log(f"[{wo_id}] thread message from human: {content[:80]}")
+            if _is_question(content):
+                asyncio.create_task(_handle_qa(wo_id, content, monitor, backend))
+            else:
+                await backend.inject(content)
+                await monitor.post(f"Guidance received — incorporated: _{content[:120]}_")
+
+
+async def _poll_approval(
+    wo_id: str, monitor: "ThreadMonitor | None" = None, timeout: int = AGENT_TIMEOUT
+) -> str:
+    """Poll dispatch state until approved, rejected, or timeout.
+    Handles thread Q&A from humans while waiting.
+    """
     waited = 0
     while waited < timeout:
         await asyncio.sleep(15)
@@ -49,6 +85,12 @@ async def _poll_approval(wo_id: str, timeout: int = AGENT_TIMEOUT) -> str:
             return "approved"
         if status == "rejected":
             return "rejected"
+        if monitor:
+            messages = await monitor.poll()
+            for msg in messages:
+                content = msg.get("content", "").strip()
+                if content and _is_question(content):
+                    asyncio.create_task(_handle_qa(wo_id, content, monitor, None))
     return "timeout"
 
 
@@ -78,8 +120,11 @@ async def run_wo(wo_spec: dict) -> None:
     await checkin(wo_id, "starting agent")
     await post_thread_message(wo_id, f"Starting implementation of **{wo_id}**: {title}")
 
-    # Run the agent with a timeout
+    monitor = ThreadMonitor(wo_id)
+
+    # Run the agent with a timeout; thread monitor runs in parallel
     checkin_task = asyncio.create_task(_checkin_loop(wo_id))
+    monitor_task = asyncio.create_task(_thread_monitor_loop(wo_id, monitor, backend))
     try:
         async with asyncio.timeout(AGENT_TIMEOUT):
             async for chunk in backend.run(prompt, worktree_path):
@@ -90,6 +135,7 @@ async def run_wo(wo_spec: dict) -> None:
         _log(f"{wo_id} timed out after {AGENT_TIMEOUT}s")
     finally:
         checkin_task.cancel()
+        monitor_task.cancel()
 
     _log(f"{wo_id} agent run complete — running quality gate")
     await checkin(wo_id, "quality gate: running CI + security scan")
@@ -139,9 +185,10 @@ async def run_wo(wo_spec: dict) -> None:
         _log(f"{wo_id} validate rejected — agent must fix and retry (manual intervention needed)")
         return
 
-    # Wait for human decision
+    # Wait for human decision — also poll thread for questions during wait
     _log(f"{wo_id} awaiting human approval...")
-    decision = await _poll_approval(wo_id)
+    await monitor.post("Implementation submitted for review. Monitoring thread for questions while waiting...")
+    decision = await _poll_approval(wo_id, monitor=monitor)
     if decision == "approved":
         _log(f"{wo_id} approved — agent should commit and push (handled in agent subprocess)")
         await complete(wo_id)
