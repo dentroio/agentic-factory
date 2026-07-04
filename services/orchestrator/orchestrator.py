@@ -13,8 +13,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+import thread as thread_store
 from github_dispatch import trigger_codex_workflow
 from notifications import notify_validation_needed
 from plan_engine import next_wo, sorted_queue
@@ -118,6 +120,15 @@ class CodexDispatchRequest(BaseModel):
     slug: str = ""
 
 
+class ThreadMessage(BaseModel):
+    author: str            # "claude-runner", "human", "system", "codex-reviewer"
+    role: str              # "agent" | "human" | "reviewer" | "system"
+    type: str = "text"     # "text" | "ci_result" | "security_finding" | "review" | "image"
+    content: str
+    image_url: str = ""
+    metadata: dict = {}
+
+
 class ValidationDecision(BaseModel):
     decided_by: str
     notes: str = ""
@@ -128,6 +139,7 @@ class ValidationDecision(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    thread_store.THREADS_DIR.mkdir(parents=True, exist_ok=True)
     _load_state()
 
     if not GITHUB_TOKEN or not GITHUB_REPO:
@@ -202,6 +214,9 @@ async def claim_wo(req: ClaimRequest):
         "status": "claimed",
     }
     _save_dispatch()
+    thread_store.append_message(wo_id, thread_store.system_message(
+        f"{wo_id} claimed by **{req.agent}** on `{req.workstation or 'unknown'}`"
+    ))
     print(f"[orchestrator] {wo_id} claimed by {req.agent} on {req.workstation}")
     return {"ok": True, "wo": wo_id, "agent": req.agent}
 
@@ -253,6 +268,22 @@ async def request_validation(req: ValidateRequest):
         "status": "pending",
     })
     _save_validations()
+
+    # Post system message and agent summary to thread
+    ci_badge = "✅ CI passed" if req.ci_passed else "❌ CI failed"
+    sec_badge = "✅ Security passed" if req.security_passed else "❌ Security issues found"
+    thread_store.append_message(req.wo, thread_store.system_message(
+        f"Awaiting human review — {ci_badge} · {sec_badge}",
+        metadata={"ci_passed": req.ci_passed, "security_passed": req.security_passed},
+    ))
+    if req.thread_summary:
+        thread_store.append_message(req.wo, thread_store.make_message(
+            author=req.agent,
+            role="agent",
+            msg_type="text",
+            content=req.thread_summary,
+        ))
+
     print(f"[orchestrator] {req.wo} awaiting human validation from {req.agent}")
 
     # Fire-and-forget push notifications (ntfy + Slack)
@@ -284,6 +315,10 @@ async def approve_validation(wo: str, decision: ValidationDecision):
             if wo in _dispatch_state:
                 _dispatch_state[wo]["status"] = "awaiting_commit"
                 _save_dispatch()
+            thread_store.append_message(wo, thread_store.system_message(
+                f"✅ Approved by **{decision.decided_by}**"
+                + (f" — {decision.notes}" if decision.notes else "")
+            ))
             print(f"[orchestrator] {wo} approved by {decision.decided_by}")
             return {"ok": True}
     raise HTTPException(status_code=404, detail=f"No pending validation for {wo}")
@@ -301,6 +336,10 @@ async def reject_validation(wo: str, decision: ValidationDecision):
             if wo in _dispatch_state:
                 _dispatch_state[wo]["status"] = "rejected"
                 _save_dispatch()
+            thread_store.append_message(wo, thread_store.system_message(
+                f"✗ Rejected by **{decision.decided_by}**"
+                + (f"\n\nGuidance: {decision.notes}" if decision.notes else "")
+            ))
             print(f"[orchestrator] {wo} rejected by {decision.decided_by}: {decision.notes}")
             return {"ok": True}
     raise HTTPException(status_code=404, detail=f"No pending validation for {wo}")
@@ -319,8 +358,68 @@ async def complete_wo(req: CompleteRequest):
     global _validations
     _validations = [v for v in _validations if v["wo"] != wo_id]
     _save_validations()
+    thread_store.append_message(wo_id, thread_store.system_message(
+        f"✅ WO complete — merged and closed by **{req.agent}**"
+    ))
     print(f"[orchestrator] {wo_id} marked complete by {req.agent}")
     return {"ok": True}
+
+
+# ── Thread API ────────────────────────────────────────────────────────────────
+
+@app.post("/api/thread/{wo}/messages")
+async def post_thread_message(wo: str, msg: ThreadMessage):
+    """Post a message to a WO's thread (agent or human)."""
+    stored = thread_store.append_message(wo, thread_store.make_message(
+        author=msg.author,
+        role=msg.role,
+        msg_type=msg.type,
+        content=msg.content,
+        image_url=msg.image_url,
+        metadata=dict(msg.metadata),
+    ))
+    return stored
+
+
+@app.get("/api/thread/{wo}/messages")
+async def get_thread_messages(wo: str, since: str = ""):
+    """Return all messages for a WO, or only those after `since` (message id)."""
+    messages = thread_store.load_thread(wo)
+    if since:
+        messages = [m for m in messages if m.get("id", "") > since]
+    return messages
+
+
+@app.get("/api/thread/{wo}/stream")
+async def stream_thread(wo: str, since: str = ""):
+    """SSE stream — sends new thread messages as they arrive (2 s poll)."""
+    async def generate():
+        last_id = since
+        try:
+            while True:
+                messages = thread_store.load_thread(wo)
+                new_msgs = [m for m in messages if m.get("id", "") > last_id]
+                if new_msgs:
+                    last_id = new_msgs[-1]["id"]
+                    for msg in new_msgs:
+                        yield f"data: {json.dumps(msg)}\n\n"
+                else:
+                    yield ": keepalive\n\n"
+                await asyncio.sleep(2)
+        except (GeneratorExit, asyncio.CancelledError):
+            pass
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/threads")
+async def get_all_threads():
+    """Summary of all WO threads: {wo_id: {count, last}}."""
+    return thread_store.all_thread_summaries()
 
 
 @app.post("/api/dispatch-codex")

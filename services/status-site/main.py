@@ -370,10 +370,27 @@ async def wo_detail(request: Request, number: int):
             },
             status_code=502,
         )
+    # Load thread (non-fatal if orchestrator is down)
+    thread_messages: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            t_resp = await client.get(f"{ORCHESTRATOR_URL}/api/thread/WO-{number}/messages")
+            if t_resp.status_code == 200:
+                thread_messages = t_resp.json()
+    except Exception:
+        pass
+
     return templates.TemplateResponse(
         request=request,
         name="wo_detail.html",
-        context={"site_title": SITE_TITLE, "spec": spec, "refresh_seconds": 300, "github_repo": GITHUB_REPO},
+        context={
+            "site_title": SITE_TITLE,
+            "spec": spec,
+            "refresh_seconds": 300,
+            "github_repo": GITHUB_REPO,
+            "thread_messages": thread_messages,
+            "wo_id": f"WO-{number}",
+        },
     )
 
 
@@ -724,6 +741,36 @@ async def api_plan_patch_wo(wo: str, request: Request):
         "applied": body,
         "note": "Write-back to GitHub PLAN.json is pending (WO-359). Changes accepted but not persisted.",
     })
+
+
+@app.get("/api/thread/{wo}/messages")
+async def proxy_thread_messages(wo: str, since: str = ""):
+    """Proxy thread messages from the orchestrator."""
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            params = {"since": since} if since else {}
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/thread/{wo}/messages", params=params)
+            return JSONResponse(content=resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        return JSONResponse(content=[], status_code=200)
+
+
+@app.post("/api/thread/{wo}/messages")
+async def proxy_post_thread_message(wo: str, request: Request):
+    """Proxy a human-authored message to the orchestrator thread."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body.setdefault("author", "human")
+    body.setdefault("role", "human")
+    body.setdefault("type", "text")
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/thread/{wo}/messages", json=body)
+            return JSONResponse(content=resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Orchestrator unreachable: {e}")
 
 
 @app.post("/api/validations/{wo}/approve")
