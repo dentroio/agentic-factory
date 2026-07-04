@@ -176,16 +176,16 @@ cp .github/workflows/ci.yml.template .github/workflows/ci.yml
 # Edit ci.yml — fill in {{...}} sections for your stack
 ```
 
-### 6. Add your ANTHROPIC_API_KEY secret (optional)
+### 6. Add your ANTHROPIC_API_KEY to GitHub repo secrets
 
-Only required if you want the **claude-api** draft backend (direct Anthropic API calls from Docker). Subscription-based backends (Claude, Cursor, Codex, Gemini CLIs) don't need it.
+The GitHub Actions AI review workflows (`ai-review.yml`, `planning-agent.yml`, etc.) call the Anthropic API directly — they can't use a local CLI subscription. This key is required for those workflows.
 
 In your GitHub repo: **Settings → Secrets and variables → Actions → New repository secret**
 
 - Name: `ANTHROPIC_API_KEY`
 - Value: your key from [console.anthropic.com](https://console.anthropic.com)
 
-You can also set it at runtime via **Settings → Authentication** in the factory dashboard.
+For the factory runtime (WO spec drafting), you can also set the key via **Settings → Authentication** in the dashboard. The subscription CLI backends don't need it at all.
 
 ### 7. Configure GitHub Ruleset (required status checks)
 
@@ -212,13 +212,15 @@ Edit `memory/MEMORY.md` and `memory/examples/project_overview.md` with your proj
 
 ### 11. Write your first work order
 
-Copy `docs/project_management/work_orders/WO-000-template.md` to `WO-001-initial-setup.md`.
-The `## Execution` section is what agents read to start working.
+The easiest path is the factory UI: open **Settings → Plan → Create WO**, describe what you want, let AI generate the spec, review it, and click Open PR.
+
+Alternatively, copy `docs/project_management/work_orders/WO-000-template.md` to `WO-001-initial-setup.md` and fill it in manually. The `## Execution` section is what agents read before starting implementation.
 
 ### 12. Define your plan
 
-Edit `docs/factory/PLAN.json` — set your milestones and initial WO priority queue.
-The orchestrator and status dashboard both read this file from GitHub on each poll cycle.
+Use the factory UI: **Settings → Plan → Add Phase** and **Add Milestone** to build your timeline. Changes open GitHub PRs automatically.
+
+Alternatively, edit `docs/factory/PLAN.json` directly — set your milestones and initial WO queue. The orchestrator and status dashboard both read this file from GitHub on each poll cycle.
 
 ---
 

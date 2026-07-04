@@ -6,9 +6,9 @@ The factory has two complementary layers:
 
 1. **GitHub Actions layer** — stateless CI/CD workflows that run on GitHub's infrastructure: AI code review, CI auto-fix, planning agent, merge advisor, post-merge verifier, observability monitor. No external servers required.
 
-2. **Runtime Docker layer** — a local or server-side Docker Compose stack that provides the live orchestrator, status dashboard, autonomous agent runner, and collaboration tools. This layer can dispatch work, monitor agents in real time, and receive screenshots and annotations from browser extensions.
+2. **Runtime Docker layer** — a local Docker Compose stack that provides the live orchestrator, status dashboard, autonomous agent runner, and collaboration tools. This layer dispatches work, monitors agents in real time, manages credentials, and receives screenshots and annotations from browser extensions.
 
-Both layers share the same `PLAN.json` state and `docs/factory/` work order specs in the Clarion repository.
+Both layers share the same `PLAN.json` state and `docs/factory/` work order specs in the target repository.
 
 ---
 
@@ -18,30 +18,37 @@ Both layers share the same `PLAN.json` state and `docs/factory/` work order spec
 
 | Service | Port | Description |
 |---------|------|-------------|
-| `factory-status` | 8099 | Live dashboard — WO queue, PM view, thread panel, settings, plan authoring |
-| `orchestrator` | 8100 | REST API for agent dispatch, claim/validate lifecycle, thread storage, image serving |
-| `pr-watchdog` | (internal) | Background poller — stale PR detection, queue depth warnings |
-| `agent-runner` | (opt-in) | Autonomous WO execution via Claude / Cursor / Codex CLI backends |
+| `factory-status` | 8099 | Live dashboard — WO queue, PM view, thread panel, plan authoring, settings, authentication |
+| `orchestrator` | 8100 | REST API for agent dispatch, claim/validate lifecycle, secrets vault, hold/unhold queue, draft proxy |
+| `pr-watchdog` | (internal) | Background poller — stale PR detection, CI health, merge eligibility |
+| `agent-runner` | host | Autonomous WO execution via subscription CLI backends; exposes draft server on port 8101 |
 
-Start all services:
+**Start all services (macOS):**
+
 ```bash
-docker compose -f docker-compose.status.yml up -d
-# agent-runner is an opt-in profile:
-docker compose -f docker-compose.status.yml --profile agent up -d
+make agent-setup              # one-time: stores GitHub token, repo, Slack webhook in macOS Keychain
+make up                       # reads Keychain → .env.runtime → starts Docker services
+open http://localhost:8099
+```
+
+**Rebuild after code changes:**
+
+```bash
+make restart                  # rebuild all images + force-recreate containers
 ```
 
 ---
 
 ### Orchestrator (`services/orchestrator/`)
 
-The orchestrator is a FastAPI application (APScheduler polling loop, port 8100) that manages the WO lifecycle.
+The orchestrator is a FastAPI application (APScheduler polling loop, port 8100) that manages the WO lifecycle, credential storage, and draft generation routing.
 
 **Key endpoints:**
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/status` | GET | Current dispatch state — active WO, agent, step |
-| `/api/next` | GET | Next WO from the priority queue (respects pins, dependencies, status) |
+| `/api/next` | GET | Next WO from the priority queue (respects pins, dependencies, status, hold list) |
 | `/api/claim` | POST | Agent claims a WO; orchestrator marks it in-flight |
 | `/api/checkin` | POST | Agent heartbeat with current step description |
 | `/api/validate` | POST | Agent requests human review; returns 422 if `ci_passed=false` or `security_passed=false` |
@@ -51,31 +58,55 @@ The orchestrator is a FastAPI application (APScheduler polling loop, port 8100) 
 | `/api/threads` | GET | Summary of all active WO threads |
 | `/api/thread/{wo}/images/{filename}` | GET | Serve a stored annotation image |
 | `/api/dispatch-codex` | POST | Trigger a Codex GitHub Actions workflow run |
+| `/api/secrets` | GET | Return secrets presence map `{key: bool}` — values are never returned |
+| `/api/secrets` | PUT | Merge new key/value pairs into the secrets vault |
+| `/api/backends` | GET | Aggregate backend availability — API key status + agent-runner online/offline + available CLIs |
+| `/api/plan/draft` | POST | Generate a WO spec from a natural-language description; routes to Anthropic API or agent-runner draft server |
+| `/api/held-wos` | GET | List of WO IDs currently on hold |
+| `/api/wos/{wo_id}/hold` | POST | Add a WO to the hold list — orchestrator skips it when assigning work |
+| `/api/wos/{wo_id}/hold` | DELETE | Remove a WO from the hold list |
+
+**Secrets vault:** Credentials are stored at `/data/secrets.json` inside the orchestrator's Docker volume. They persist across restarts. The `GET /api/secrets` endpoint returns a boolean presence map — it never returns actual values. Set credentials via the factory dashboard (Settings → Authentication) or directly via `PUT /api/secrets`.
+
+**Hold/unhold queue:** The hold list is persisted at `/data/held_wos.json`. When `get_next()` is called, any WO in the hold set is skipped. Hold state survives container restarts.
 
 **Thread storage:** Per-WO conversation lives in `/data/threads/{wo}.json`. System messages are auto-posted on lifecycle transitions (claim, validate, approve, reject, complete). Image messages store base64-decoded PNGs in `/data/threads/images/{wo}/{timestamp}.png`.
 
 **Quality gate enforcement:** `/api/validate` rejects (HTTP 422) any call where `ci_passed=false` or `security_passed=false`. This is a hard gate — agents cannot request human review for broken code.
 
-**Notification hooks:** On successful validate, the orchestrator fires `notifications.py` which POSTs to ntfy.sh and Slack Block Kit webhooks if `NTFY_URL` / `SLACK_WEBHOOK_URL` are set. Both are no-ops if the env vars are absent.
+**Draft routing:** `POST /api/plan/draft` accepts `{description, next_wo_num, backend}`. If `backend=claude-api`, it calls the Anthropic SDK directly using the key from the secrets vault. For all other backends (`claude`, `cursor`, `codex`, `gemini`), it proxies the request to the agent-runner draft server at `http://host.docker.internal:8101/api/draft` — so subscription CLI credentials never need to be in Docker.
+
+**Notification hooks:** On successful validate, the orchestrator fires `notifications.py` which POSTs to ntfy.sh and Slack Block Kit webhooks if `NTFY_URL` / `SLACK_WEBHOOK_URL` are configured (in secrets vault or environment variables). Both are no-ops if absent.
 
 ---
 
 ### Factory Status Site (`services/status-site/`)
 
-A FastAPI + Jinja2 server (port 8099) that renders the live dashboard and provides CORS proxies for browser extensions.
+A FastAPI + Jinja2 server (port 8099) that renders the live dashboard, provides settings pages, and proxies credential operations to the orchestrator.
 
 **Views:**
 
 | Route | Purpose |
 |-------|---------|
-| `/` | Overview — active WO card, pending validation badge, quick stats |
+| `/` | Overview — active WO card, pending validation badge, quick stats, agent-runner online badge |
 | `/pm` | PM View — velocity bar chart (8 weeks), milestone progress, program roll-up |
 | `/engineering` | CI health, run history, pass rate |
 | `/plan` | Milestone cards, phase progress, WO priority queue |
 | `/wo/<n>` | WO detail — structured spec, live thread panel (SSE), review findings |
-| `/settings` | Multi-repo config, connector health |
-| `/settings/plan` | Plan Authoring Hub — open WOs, phases, milestones |
-| `/settings/plan/wos/new` | WO creation form → GitHub PR via `github_writer.py` |
+| `/usage` | Per-backend usage stats — runs, success rate, estimated requests |
+| `/settings` | Settings hub — links to all settings pages |
+| `/settings/agents` | Agent configuration (preferred backend, reviewer backends, timeout) + Anthropic key panel |
+| `/settings/authentication` | GitHub token, Anthropic API key, Slack webhook — reads presence from orchestrator secrets |
+| `/settings/plan` | Plan Authoring Hub — open WOs (with hold/unhold + edit), phases, milestones |
+| `/settings/plan/wos/new` | WO creation — natural language textarea + backend selector |
+| `/settings/plan/wos/draft` | POST handler — calls orchestrator draft endpoint, renders review form |
+| `/settings/plan/wos` | POST handler — assembles WO data, calls `github_writer.create_wo()`, redirects with PR URL |
+| `/settings/plan/wos/{wo_id}/edit` | GET — loads raw markdown from GitHub; POST — calls `github_writer.edit_wo()`, redirects with PR URL |
+| `/settings/plan/wos/{wo_id}/hold` | POST — proxies to orchestrator `POST /api/wos/{wo_id}/hold` |
+| `/settings/plan/wos/{wo_id}/unhold` | POST — proxies to orchestrator `DELETE /api/wos/{wo_id}/hold` |
+| `/settings/plan/phases` | POST handler — calls `github_writer.add_phase()` |
+| `/settings/plan/milestones` | POST handler — calls `github_writer.add_milestone()` |
+| `/api/backends` | Proxies orchestrator `/api/backends` — available to the new WO form's JS |
 
 **CORS proxy (for Oryntra Chrome extension):**
 
@@ -86,30 +117,60 @@ A FastAPI + Jinja2 server (port 8099) that renders the live dashboard and provid
 
 ---
 
-### Plan Authoring (`services/orchestrator/github_writer.py`)
+### Plan Authoring (`services/status-site/github_writer.py`)
 
-The WO creation form POSTs to the orchestrator, which calls `github_writer.py`. This module:
-1. Authenticates to GitHub via `GITHUB_TOKEN`.
-2. Creates a feature branch on `sgerhart/clarion` (the PLAN.json repo).
-3. Writes the new WO spec as a markdown file in `docs/factory/work_orders/`.
-4. Updates `docs/factory/PLAN.json` to include the new WO entry.
-5. Opens a PR so the WO gets human review before entering the queue.
+`github_writer.py` handles all GitHub write operations from the factory UI. It authenticates with `GITHUB_TOKEN` and performs operations against the configured repository.
+
+**Functions:**
+
+| Function | What it does |
+|----------|-------------|
+| `next_wo_number()` | Lists `WO_PATH` directory, extracts WO numbers, returns max + 1 |
+| `render_wo_template()` | Generates the standard WO markdown spec from structured data |
+| `create_wo()` | Creates a spec file + PLAN.json entry on a branch, opens a PR |
+| `read_wo_file()` | Fetches raw markdown content for an existing WO spec |
+| `edit_wo()` | Updates an existing WO spec file on a new branch, opens a PR |
+| `add_phase()` | Adds a phase to PLAN.json on a branch, opens a PR |
+| `add_milestone()` | Adds a milestone to PLAN.json on a branch, opens a PR |
+
+**WO creation flow:**
+1. User describes the desired feature in a single textarea on the New WO page.
+2. User selects which AI backend generates the structured spec.
+3. Status site POSTs to orchestrator `/api/plan/draft` with the description and backend choice.
+4. Orchestrator routes to Anthropic SDK (for `claude-api`) or proxies to agent-runner draft server (for subscription CLIs).
+5. AI returns a JSON object with `title`, `priority`, `effort`, `services`, `problem`, `what_to_build`, `acceptance_criteria`, `notes`.
+6. Status site renders the review form with all fields pre-filled and editable.
+7. User reviews, edits, and clicks Open PR.
+8. `github_writer.create_wo()` creates the spec file, updates PLAN.json, opens the PR.
+9. After the PR merges, the orchestrator picks up the WO on its next poll cycle.
 
 ---
 
 ### Agent Runner (`services/agent-runner/`)
 
-The agent runner (opt-in Docker Compose profile) is an autonomous loop that claims WOs from the orchestrator and executes them using a configurable AI backend.
+The agent runner is an autonomous loop (macOS host process, not Docker) that claims WOs from the orchestrator and executes them using a configurable AI backend. It also starts the draft server daemon that the orchestrator calls for subscription-based WO spec generation.
+
+**`--once` flag:** Run `make agent-once` or pass `--once` to claim and complete exactly one WO then exit. Useful for testing or manually triggering a specific WO without starting the full daemon.
+
+**Draft server (`draft_server.py`):**
+
+A lightweight stdlib HTTP server that starts as a daemon thread inside the agent-runner process on port 8101. It exposes:
+
+- `GET /health` — returns `{"status": "ok", "backends": {...}}` where `backends` maps each CLI name to a boolean (found in PATH or at known install path)
+- `POST /api/draft` — accepts `{description, next_wo_num, backend}`, calls `backend.ask(prompt)`, returns the structured JSON spec
+
+The orchestrator calls this server when a subscription CLI backend is selected for WO drafting. This design keeps CLI credentials on the host machine — the Docker container never needs them.
 
 **Backends** (`services/agent-runner/backends/`):
 
-| Backend | `run()` | `ask()` |
-|---------|---------|---------|
-| `ClaudeBackend` | Claude Code CLI (`claude -p --dangerously-skip-permissions`) | Claude `--print` |
-| `CursorBackend` | Cursor headless CLI (`agent -p --force`) | OpenAI API → Claude CLI fallback |
-| `CodexBackend` | Codex CLI (`codex exec -p`) | OpenAI API directly |
+| Backend | `run()` — agentic execution | `ask()` — text Q&A |
+|---------|---------------------------|---------------------|
+| `ClaudeBackend` | `claude --print --dangerously-skip-permissions` | `claude --print` |
+| `CursorBackend` | `agent --print --force` | `agent --print --mode ask` |
+| `CodexBackend` | `codex exec -` (reads prompt from stdin) | `codex review` |
+| `GeminiBackend` | `gemini --yolo -p` | `gemini -p` |
 
-**Critical distinction:** `run()` is agentic file-editing; `ask()` is pure text Q&A. Reviewer roles must use `ask()` — never `run()`. Codex and Cursor have no native text API, so their `ask()` methods use the OpenAI chat completions API instead of calling the CLI.
+**Critical distinction:** `run()` is agentic file-editing — the agent reads code, creates files, runs commands. `ask()` is pure text Q&A — no side effects. Reviewer roles and draft server calls must use `ask()` — never `run()`.
 
 **Execution flow per WO:**
 
@@ -182,11 +243,11 @@ Each reviewer outputs zero or more `FINDING: {...}` JSON blocks. The chain stops
 | correctness | `CORRECTNESS_REVIEWER_BACKEND` | CRITICAL, HIGH |
 | performance | `PERF_REVIEWER_BACKEND` | CRITICAL |
 
-Default backend for all reviewers is `claude`. Set to `codex` or `cursor` to use GPT-4o via OpenAI API.
+Default backend for all reviewers is `claude`. Reviewer `ask()` calls go through the standard backend interface — they use the same subscription CLI as the main agent.
 
 ---
 
-### Oryntra Chrome Extension (`dentroio/Oryntra`, `feat/factory-thread-integration`)
+### Oryntra Chrome Extension (`dentroio/Oryntra`)
 
 A Chrome MV3 extension that lets engineers annotate browser screenshots and post them directly to a WO thread.
 
@@ -220,7 +281,7 @@ WO detail thread panel renders inline image with click-to-zoom
 
 ### Quality Gate (`services/agent-runner/quality_gate.py`)
 
-Three checks run in parallel:
+Four checks run in parallel:
 
 1. **`make ci-local`** — project's full CI suite (lint, type check, tests). Exit code 1 = blocking.
 2. **bandit** — Python SAST. Blocking on `CRITICAL` or `HIGH` confidence+severity findings.
@@ -231,7 +292,7 @@ Three checks run in parallel:
 
 ---
 
-## GitHub Actions Layer (original design)
+## GitHub Actions Layer
 
 ### Components and Data Flow
 
@@ -247,13 +308,10 @@ planning-agent.yml
     |                                        |
     |                              human reviews & merges
     |                                        |
-    |                              Agent reads ## Execution section
-    |                                        |
-    |                              implements on wo/NNN-slug branch
-    |                                        |
-    |                              make ci-local (local gate)
-    |                                        |
-    |                              git push + PR opened
+    |                              (same lifecycle as UI-created WOs)
+    |
+    | OR: WO created via factory UI (Settings → Plan → Create WO)
+    |    └── AI draft → review form → github_writer.create_wo() → GitHub PR → merge
     |
     |── (on push to PR branch) ──> ci.yml (lint / test / build)
     |                                  |
@@ -367,10 +425,7 @@ observability.yml
 
 **Output path:** `docs/project_management/work_orders/WO-NNN-${slug}.md`. Configurable via the `WO_SPECS_DIR` repository variable.
 
-**Failure modes:**
-- Issue body is empty: script receives `"(no body provided)"` and still produces a spec (lower quality).
-- WO directory does not exist: `os.makedirs` in the script creates it.
-- Concurrent labels: if two issues are labeled `new-wo` within the same GitHub Actions queue, both runs compute the same next WO number. The second push will fail because the branch already exists. The second run can be manually re-triggered.
+**Alternative:** WO specs can also be created directly from the factory dashboard (Settings → Plan → Create WO) without triggering this workflow. Both paths produce the same spec format and PR structure — the orchestrator treats them identically.
 
 ---
 
@@ -386,8 +441,6 @@ observability.yml
 5. If `steps.verify.outcome == 'failure'`: create a follow-up GitHub issue with `bug` and `needs-triage` labels. The issue body includes the full verification report and instructions to label it `new-wo`.
 
 **WO spec discovery:** `verifier_agent.py` parses `WO-(\d+)` from the PR title, then scans the WO directory for a file matching `WO-NNN-*.md`. If not found, the script writes a "no spec found" report and exits 0 (non-blocking).
-
-**Verdict parsing:** Same bottom-up scan as `ai_review.py` — scans reversed lines for `"Criteria not met"`, then `"All criteria met"` or `"Partial"`. Exits 1 only on explicit `"Criteria not met"` match.
 
 ---
 
@@ -474,8 +527,6 @@ Body text: the lesson, with "Why:" and "How to apply:" lines for feedback/projec
 5. Named services in `thresholds.unhealthy_services` with non-healthy status → violation.
 
 **On violation:** Calls Claude to write an incident report in `## Problem / ## Suggested Investigation` format (under 300 words). Creates a GitHub issue with `incident` and `needs-triage` labels. The issue body instructs the reader to label it `new-wo` to trigger the planning agent — closing the full SDLC loop from production anomaly to implementation.
-
-**`--no-ai` flag:** The `observability_agent.py` script accepts `--no-ai` to skip the Claude call and write a raw violation list. Useful for testing threshold detection without an API key.
 
 ---
 
@@ -564,7 +615,7 @@ Over time, the memory directory becomes the project's institutional knowledge ba
 
 The observability agent is a pull-based health monitor. It does not receive push notifications — it polls the configured endpoint every 15 minutes and compares the response against configurable thresholds.
 
-**Endpoint contract:** The endpoint must return JSON. It should include at minimum a `status` field. Optional but supported: `error_rate_pct`, `p99_latency_ms`, and a `services` object with named service statuses. If your health endpoint does not match these field names exactly, the threshold check returns no violations (endpoint reachability is still checked).
+**Endpoint contract:** The endpoint must return JSON. It should include at minimum a `status` field. Optional but supported: `error_rate_pct`, `p99_latency_ms`, and a `services` object with named service statuses.
 
 **Threshold file format:**
 ```json
@@ -594,7 +645,14 @@ Add a numbered item to `scripts/review_context.txt`. The format is plain text �
 
 These checks are injected into the system prompt as `PROJECT-SPECIFIC CHECKS` and appear as additional rows in the verdict table alongside the seven universal checks.
 
-### Adding a custom agent
+### Adding a new agent backend
+
+1. Create `services/agent-runner/backends/yourbackend.py` implementing `run(prompt, worktree)` and `ask(prompt)`.
+2. Register it in the backends `__init__.py` and in `draft_server.py`'s `_probe_backends()` function.
+3. Add detection logic (path to check with `shutil.which` or a known install path).
+4. The backend selector in the New WO form will show it as available once the draft server detects the CLI.
+
+### Adding a custom GitHub Actions agent
 
 1. Write a Python script in `scripts/` following the same pattern: parse arguments, check for `ANTHROPIC_API_KEY`, call `anthropic.Anthropic().messages.create()`, write output to `--output`, exit 0 or 1 based on outcome.
 2. Create a workflow in `.github/workflows/` that installs `anthropic`, calls the script, and handles the output (post comment, create issue, open PR, etc.).
@@ -604,19 +662,19 @@ These checks are injected into the system prompt as `PROJECT-SPECIFIC CHECKS` an
 
 All scripts use `model="claude-sonnet-4-6"`. Change this string in each script. The scripts use the Anthropic SDK directly — to use a different provider, replace the `anthropic.Anthropic()` client with the appropriate SDK and adjust the `messages.create()` call signature.
 
-### Extending the WO spec format
-
-The WO template is defined in `scripts/planning_agent.py` as `WO_TEMPLATE`. Add fields to the template and update the `SYSTEM_PROMPT` to instruct Claude to fill them in. Also update `AGENT_PROCESS.md §4` so human reviewers know what to expect in the spec.
-
 ---
 
 ## Security Model
 
-### Secrets
+### Credentials and secrets
 
-One secret is required: `ANTHROPIC_API_KEY`, stored in GitHub repository secrets under Settings → Secrets and variables → Actions. It is read in the workflows as `${{ secrets.ANTHROPIC_API_KEY }}` and passed to scripts via environment variable.
+The factory uses two complementary credential stores:
 
-The `GITHUB_TOKEN` used by `actions/github-script` is the automatic token GitHub provisions per workflow run. Its permissions are declared explicitly in each workflow's `permissions:` block — the factory uses the minimum necessary permissions for each workflow.
+**macOS Keychain** (host machine) — used by `scripts/factory-env.sh` at startup. `make agent-setup` stores `GITHUB_TOKEN`, `GITHUB_REPO`, `SLACK_WEBHOOK_URL`, and `ANTHROPIC_API_KEY` in Keychain under service name `dentroio-factory`. On `make up`, these are read from Keychain and written to `.env.runtime`, which `docker compose` consumes. Credentials never touch the filesystem as plaintext files.
+
+**Orchestrator secrets vault** (`/data/secrets.json` in the Docker volume) — set via `Settings → Authentication` in the dashboard or via `PUT /api/secrets`. The vault persists across container restarts. `GET /api/secrets` returns a boolean presence map — actual values are never returned over the API. The vault is the runtime source of truth for credentials that the orchestrator needs during operation (ANTHROPIC_API_KEY for the draft endpoint, SLACK_WEBHOOK_URL for notifications).
+
+**GitHub Actions secrets** — `ANTHROPIC_API_KEY` must be set in GitHub repo secrets for AI review workflows to function. `GITHUB_TOKEN` is provisioned automatically per workflow run.
 
 ### What the agents can do
 
@@ -625,6 +683,7 @@ The `GITHUB_TOKEN` used by `actions/github-script` is the automatic token GitHub
 - Post PR comments and create issues (via `GITHUB_TOKEN` with `pull-requests: write` and `issues: write`).
 - Call the Anthropic API with the repository's API key.
 - Call the configured health endpoint (outbound HTTP from GitHub Actions runners).
+- Claim and execute WOs from the orchestrator's queue.
 
 ### What the agents cannot do
 
@@ -658,3 +717,5 @@ The workflows pass PR titles, PR bodies, issue titles, and issue bodies into Cla
 **No merge queue.** The `auto-update-prs.yml` workflow approximates GitHub Merge Queue behavior (available on Team/Enterprise plans) by updating behind branches on every push to `main`. Under high concurrency — many agent PRs merging in quick succession — there can be a brief window where a PR merges on a stale SHA. The required status checks mitigate this: a PR must have passing checks on its HEAD SHA to merge.
 
 **Agent PR detection is heuristic.** `ci-auto-fix.yml` and `ai-review-applier.yml` identify agent PRs by the `agent-pr` label or by checking if the PR author is in a hardcoded list of bot accounts (`github-actions[bot]`, `claude-code-bot`). Add your agent account usernames to this list in both workflows.
+
+**Draft server requires agent-runner running.** Subscription CLI backends (Claude, Cursor, Codex, Gemini) for WO spec drafting require the agent-runner process to be active on the host machine. If agent-runner is not running, only the `claude-api` backend is available for draft generation. The New WO form detects this and marks unavailable backends.
