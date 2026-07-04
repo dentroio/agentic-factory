@@ -1,8 +1,237 @@
 # Agentic Engineering Factory — Technical Architecture
 
-## System Overview
+## Architecture Overview
 
-The factory is a collection of GitHub Actions workflows, Python scripts, and configuration files that run entirely within GitHub's infrastructure. There are no external servers, no databases, no message queues, and no proprietary platforms. The only external dependency is the Anthropic API.
+The factory has two complementary layers:
+
+1. **GitHub Actions layer** — stateless CI/CD workflows that run on GitHub's infrastructure: AI code review, CI auto-fix, planning agent, merge advisor, post-merge verifier, observability monitor. No external servers required.
+
+2. **Runtime Docker layer** — a local or server-side Docker Compose stack that provides the live orchestrator, status dashboard, autonomous agent runner, and collaboration tools. This layer can dispatch work, monitor agents in real time, and receive screenshots and annotations from browser extensions.
+
+Both layers share the same `PLAN.json` state and `docs/factory/` work order specs in the Clarion repository.
+
+---
+
+## Runtime Factory (Docker Compose Stack)
+
+### Services at a Glance
+
+| Service | Port | Description |
+|---------|------|-------------|
+| `factory-status` | 8099 | Live dashboard — WO queue, PM view, thread panel, settings, plan authoring |
+| `orchestrator` | 8100 | REST API for agent dispatch, claim/validate lifecycle, thread storage, image serving |
+| `pr-watchdog` | (internal) | Background poller — stale PR detection, queue depth warnings |
+| `agent-runner` | (opt-in) | Autonomous WO execution via Claude / Cursor / Codex CLI backends |
+
+Start all services:
+```bash
+docker compose -f docker-compose.status.yml up -d
+# agent-runner is an opt-in profile:
+docker compose -f docker-compose.status.yml --profile agent up -d
+```
+
+---
+
+### Orchestrator (`services/orchestrator/`)
+
+The orchestrator is a FastAPI application (APScheduler polling loop, port 8100) that manages the WO lifecycle.
+
+**Key endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/status` | GET | Current dispatch state — active WO, agent, step |
+| `/api/next` | GET | Next WO from the priority queue (respects pins, dependencies, status) |
+| `/api/claim` | POST | Agent claims a WO; orchestrator marks it in-flight |
+| `/api/checkin` | POST | Agent heartbeat with current step description |
+| `/api/validate` | POST | Agent requests human review; returns 422 if `ci_passed=false` or `security_passed=false` |
+| `/api/complete` | POST | Agent signals PR merged; WO transitions to done |
+| `/api/thread/{wo}/messages` | GET / POST | Read or post messages to a WO's thread |
+| `/api/thread/{wo}/stream` | GET | SSE stream — 2 s poll + keepalive |
+| `/api/threads` | GET | Summary of all active WO threads |
+| `/api/thread/{wo}/images/{filename}` | GET | Serve a stored annotation image |
+| `/api/dispatch-codex` | POST | Trigger a Codex GitHub Actions workflow run |
+
+**Thread storage:** Per-WO conversation lives in `/data/threads/{wo}.json`. System messages are auto-posted on lifecycle transitions (claim, validate, approve, reject, complete). Image messages store base64-decoded PNGs in `/data/threads/images/{wo}/{timestamp}.png`.
+
+**Quality gate enforcement:** `/api/validate` rejects (HTTP 422) any call where `ci_passed=false` or `security_passed=false`. This is a hard gate — agents cannot request human review for broken code.
+
+**Notification hooks:** On successful validate, the orchestrator fires `notifications.py` which POSTs to ntfy.sh and Slack Block Kit webhooks if `NTFY_URL` / `SLACK_WEBHOOK_URL` are set. Both are no-ops if the env vars are absent.
+
+---
+
+### Factory Status Site (`services/status-site/`)
+
+A FastAPI + Jinja2 server (port 8099) that renders the live dashboard and provides CORS proxies for browser extensions.
+
+**Views:**
+
+| Route | Purpose |
+|-------|---------|
+| `/` | Overview — active WO card, pending validation badge, quick stats |
+| `/pm` | PM View — velocity bar chart (8 weeks), milestone progress, program roll-up |
+| `/engineering` | CI health, run history, pass rate |
+| `/plan` | Milestone cards, phase progress, WO priority queue |
+| `/wo/<n>` | WO detail — structured spec, live thread panel (SSE), review findings |
+| `/settings` | Multi-repo config, connector health |
+| `/settings/plan` | Plan Authoring Hub — open WOs, phases, milestones |
+| `/settings/plan/wos/new` | WO creation form → GitHub PR via `github_writer.py` |
+
+**CORS proxy (for Oryntra Chrome extension):**
+
+| Route | Purpose |
+|-------|---------|
+| `POST /api/proxy/thread/{wo}/messages` | Relay to orchestrator — allows extension to post without browser CORS block |
+| `GET /api/proxy/thread/{wo}/images/{filename}` | Relay image from orchestrator to extension popup |
+
+---
+
+### Plan Authoring (`services/orchestrator/github_writer.py`)
+
+The WO creation form POSTs to the orchestrator, which calls `github_writer.py`. This module:
+1. Authenticates to GitHub via `GITHUB_TOKEN`.
+2. Creates a feature branch on `sgerhart/clarion` (the PLAN.json repo).
+3. Writes the new WO spec as a markdown file in `docs/factory/work_orders/`.
+4. Updates `docs/factory/PLAN.json` to include the new WO entry.
+5. Opens a PR so the WO gets human review before entering the queue.
+
+---
+
+### Agent Runner (`services/agent-runner/`)
+
+The agent runner (opt-in Docker Compose profile) is an autonomous loop that claims WOs from the orchestrator and executes them using a configurable AI backend.
+
+**Backends** (`services/agent-runner/backends/`):
+
+| Backend | `run()` | `ask()` |
+|---------|---------|---------|
+| `ClaudeBackend` | Claude Code CLI (`claude -p --dangerously-skip-permissions`) | Claude `--print` |
+| `CursorBackend` | Cursor headless CLI (`agent -p --force`) | OpenAI API → Claude CLI fallback |
+| `CodexBackend` | Codex CLI (`codex exec -p`) | OpenAI API directly |
+
+**Critical distinction:** `run()` is agentic file-editing; `ask()` is pure text Q&A. Reviewer roles must use `ask()` — never `run()`. Codex and Cursor have no native text API, so their `ask()` methods use the OpenAI chat completions API instead of calling the CLI.
+
+**Execution flow per WO:**
+
+```
+Claim WO from orchestrator
+    │
+    ▼
+Fetch WO markdown spec from GitHub
+    │
+    ▼
+Build prompt (QUALITY_MANDATE + PROCESS_SECTION + FACTORY_API_SECTION + WO spec)
+    │
+    ▼
+backend.run(prompt, worktree)  ← agentic execution; streams output to thread
+    │
+    ├── thread_monitor runs in parallel (polls every 15 s)
+    │       ├── Q&A questions → backend.ask() (non-blocking)
+    │       └── Directive injections → backend.inject()
+    │
+    ▼ (agent calls POST /api/validate)
+Quality gate (quality_gate.py — runs in parallel):
+    ├── make ci-local
+    ├── bandit (blocking on CRITICAL/HIGH)
+    ├── semgrep (blocking on ERROR only — WARNING is non-blocking)
+    └── JS/TS security scan (eslint-plugin-security or regex fallback)
+    │
+    ▼ (gate passes)
+Peer review chain (review_chain.py):
+    ├── security reviewer  (blocking on CRITICAL/HIGH)
+    ├── architecture reviewer  (blocking on CRITICAL)
+    ├── correctness reviewer  (blocking on CRITICAL/HIGH)
+    └── performance reviewer  (blocking on CRITICAL)
+    │   All 4 run for P0/P1/P2; none for P3
+    │
+    ▼ (all reviewers sign off)
+POST /api/validate (accepted — orchestrator queues for human review)
+    │
+    ▼ (human approves)
+git commit + push + PR open + PR merge + POST /api/complete
+```
+
+**Agent mandate (injected into every prompt):**
+
+```
+MANDATORY QUALITY, SECURITY & OPTIMIZATION REQUIREMENTS
+1. make ci-local — zero errors before /api/validate
+2. SECURITY — no hardcoded secrets, no SQL concat, no missing require_role(),
+               no XSS, no eval()/innerHTML= with dynamic input
+3. PERFORMANCE — no blocking I/O in async, no unbounded queries, no N+1
+4. CODE QUALITY — follow existing patterns, no premature abstractions,
+                  handle all error paths, functions ≤ ~40 lines
+5. Quality gate runs before validate is accepted. No bypass.
+```
+
+---
+
+### Peer Review Chain (`services/agent-runner/review_chain.py`)
+
+Four AI reviewers run sequentially for every non-P3 WO. Each reviewer receives:
+- The WO spec (problem statement + acceptance criteria)
+- The full git diff (`HEAD~1..HEAD`)
+- Findings from previous reviewers (so later reviewers know what was already flagged)
+
+Each reviewer outputs zero or more `FINDING: {...}` JSON blocks. The chain stops early if any finding exceeds the reviewer's blocking severity threshold.
+
+| Reviewer | Backend env var | Blocks on |
+|----------|----------------|-----------|
+| security | `SECURITY_REVIEWER_BACKEND` | CRITICAL, HIGH |
+| architecture | `ARCH_REVIEWER_BACKEND` | CRITICAL |
+| correctness | `CORRECTNESS_REVIEWER_BACKEND` | CRITICAL, HIGH |
+| performance | `PERF_REVIEWER_BACKEND` | CRITICAL |
+
+Default backend for all reviewers is `claude`. Set to `codex` or `cursor` to use GPT-4o via OpenAI API.
+
+---
+
+### Oryntra Chrome Extension (`dentroio/Oryntra`, `feat/factory-thread-integration`)
+
+A Chrome MV3 extension that lets engineers annotate browser screenshots and post them directly to a WO thread.
+
+**Extension components:**
+- `src/content.js` — injects a canvas overlay on the active tab; circle, arrow, text tools; undo; capture button
+- `src/background.js` — service worker; captures tab screenshot via `chrome.tabs.captureVisibleTab()`; composites canvas overlay onto screenshot; POSTs to factory proxy
+- `src/factory.js` — shared factory API client; reads config from `chrome.storage.sync`
+- `popup.html` / `popup.js` — extension popup; shows active WO and quick-post status
+- `options.html` / `options.js` — settings: factory URL, WO number, author name
+
+**Data flow:**
+```
+User draws annotation on page
+    │
+    ▼
+background.js captures screenshot (base64 PNG)
+    │
+    ▼
+POST /api/proxy/thread/{wo}/messages on status site (CORS proxy)
+    │
+    ▼
+Orchestrator stores image → /data/threads/images/{wo}/{ts}.png
+    │
+    ▼
+WO detail thread panel renders inline image with click-to-zoom
+```
+
+**Why a proxy?** Browser extensions cannot POST to a different origin (the orchestrator) without CORS. The status site proxy relays the request server-side, bypassing the browser's origin check.
+
+---
+
+### Quality Gate (`services/agent-runner/quality_gate.py`)
+
+Three checks run in parallel:
+
+1. **`make ci-local`** — project's full CI suite (lint, type check, tests). Exit code 1 = blocking.
+2. **bandit** — Python SAST. Blocking on `CRITICAL` or `HIGH` confidence+severity findings.
+3. **semgrep** — multi-language SAST. Blocking on `ERROR` severity only. `WARNING` is non-blocking (suppressed to prevent false-positive halts on stylistic patterns).
+4. **JS/TS security scan** — tries `npx eslint --plugin security`; falls back to regex if not installed. Regex patterns cover: `eval()`, `innerHTML=`, `document.write()`, `new Function()`, `child_process`, hardcoded credentials. Non-blocking if no JS/TS files exist in the worktree.
+
+`/api/validate` refuses (HTTP 422) unless `security_passed=true` is included in the body and all gate checks pass.
+
+---
+
+## GitHub Actions Layer (original design)
 
 ### Components and Data Flow
 

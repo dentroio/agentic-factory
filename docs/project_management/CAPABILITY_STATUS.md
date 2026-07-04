@@ -1,6 +1,6 @@
 # Dentro AI Factory — Capability Status
 
-_Last updated: 2026-07-03_
+_Last updated: 2026-07-04_
 
 A living registry of what the system can do, at what fidelity, and what's still open.
 
@@ -25,11 +25,16 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | PM View — velocity bar chart, active agents, program roll-up | ✅ | 8-week velocity history | WO-355 |
 | Engineering tab — CI health, run history, pass rate | ✅ | | WO-355 |
 | Plan tab — milestone cards, phase progress, priority queue | ✅ | Phase-filterable queue | WO-358 |
-| WO detail page (`/wo/<n>`) | ✅ | Structured spec view | WO-355 |
+| WO detail page (`/wo/<n>`) | ✅ | Structured spec view + thread panel | WO-355, WO-368 |
 | Velocity projection + milestone on-track/at-risk badges | ✅ | Avg of last 4 weeks | WO-360 |
 | Dark / light mode toggle | ✅ | Persisted in localStorage | WO-355 |
 | Auto-refresh (configurable interval) | ✅ | Default 60 s | WO-355 |
 | Settings UI — multi-repo project management | ✅ | Named Docker volume backed | WO-357 |
+| Tab badge showing pending validation count | ✅ | `(N) AI Factory` in title | WO-368 |
+| Plan Authoring UI (`/settings/plan`) | ✅ | Create WOs, phases, milestones → GitHub PR | WO-373 |
+| WO creation form with auto-numbered WO | ✅ | Dynamic acceptance criteria list | WO-373 |
+| Oryntra annotation image rendering in thread | ✅ | Inline with click-to-zoom, source URL | WO-370 |
+| CORS proxy for browser extension posting | ✅ | `/api/proxy/thread/{wo}/messages` | WO-370 |
 
 ## Dimension 2: PR Watchdog (pr-watchdog)
 
@@ -51,11 +56,39 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Next WO selection (respects pins, status, dependencies) | ✅ | | WO-358 |
 | REST API — `/api/next`, `/api/claim`, `/api/checkin`, `/api/validate` | ✅ | FastAPI + APScheduler | WO-359 |
 | Agent claim / check-in / release lifecycle | ✅ | JSON state on `/data` volume | WO-359 |
-| Human validation queue (`/api/validate`) | ✅ | | WO-359 |
+| Human validation queue (`/api/validate`) with quality gate enforcement | ✅ | Returns 422 if ci_passed=false or security_passed=false | WO-371 |
+| WO thread storage (`/api/thread/{wo}/messages`) | ✅ | Per-WO JSON files on `/data/threads/` | WO-368 |
+| SSE stream endpoint (`/api/thread/{wo}/stream`) | ✅ | 2 s poll + keepalive | WO-368 |
+| Thread summary endpoint (`/api/threads`) | ✅ | | WO-368 |
+| System messages auto-posted on state transitions | ✅ | claim, validate, approve, reject, complete | WO-368 |
+| Image message storage and serving | ✅ | Saves base64 to `/data/threads/images/`; serves via `/api/thread/{wo}/images/{filename}` | WO-370 |
+| Codex GitHub Actions dispatch (`/api/dispatch-codex`) | ✅ | Pre-claim + rollback on 502 | WO-367 |
+| ntfy.sh + Slack Block Kit notifications on validation request | ✅ | Env-configurable; disabled if vars not set | WO-366 |
 | Daily summary posting to GitHub issue | 🟡 | Optional; needs `SUMMARY_ISSUE_NUMBER` env var | WO-356 |
 | Multi-repo orchestration | 🔵 | Currently single-repo per instance | — |
 
-## Dimension 4: CI/CD + Agent Infrastructure
+## Dimension 4: Agent Runner (agent-runner, opt-in profile)
+
+| Capability | Status | Notes | WO |
+|------------|--------|-------|----|
+| Multi-backend autonomous WO execution | ✅ | Claude / Cursor / Codex CLI backends | WO-365 |
+| Claim → checkin → validate → complete lifecycle | ✅ | Polls orchestrator every 60 s | WO-365 |
+| GitHub WO spec fetch for prompt building | ✅ | `fetch_wo_markdown()` reads from GitHub API | WO-365 |
+| Configurable worktree path per WO | ✅ | `WORKTREE_BASE` env var | WO-365 |
+| Quality gate: `make ci-local` + bandit + semgrep | ✅ | Runs in parallel; blocking on failure | WO-371 |
+| Quality gate: JS/TS security scan | ✅ | eslint-plugin-security or regex fallback | fix/factory-quality-alignment |
+| Semgrep threshold: ERROR only (not WARNING) | ✅ | Prevents false-positive blocks | fix/factory-quality-alignment |
+| Multi-agent peer review chain | ✅ | 4 reviewers (security, architecture, correctness, performance) for all non-P3 WOs | WO-372 |
+| Priority-tiered review chain | ✅ | P3=none, P2/P1/P0=all 4 reviewers | WO-372, fix/ |
+| Reviewer backends: OpenAI API for Codex `ask()` | ✅ | No longer calls `codex exec` during review | fix/factory-quality-alignment |
+| Reviewer backends: fallback chain for Cursor `ask()` | ✅ | OpenAI API → Claude CLI; never calls Cursor CLI | fix/factory-quality-alignment |
+| Thread monitor during agent run | ✅ | Polls every 15 s; Q&A non-blocking | WO-369 |
+| Thread Q&A while awaiting approval | ✅ | Questions answered via `backend.ask()` | WO-369 |
+| Mid-task directive injection | ✅ | Directives queued via `backend.inject()` | WO-369 |
+| Agent mandate: PERFORMANCE section | ✅ | No blocking I/O, no unbounded queries, no N+1 | fix/factory-quality-alignment |
+| Agent mandate: CODE QUALITY section | ✅ | Error paths, function focus, pattern adherence | fix/factory-quality-alignment |
+
+## Dimension 5: CI/CD + Agent Infrastructure
 
 | Capability | Status | Notes | WO |
 |------------|--------|-------|----|
@@ -66,21 +99,46 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Self-healing CI (auto-update behind-main branches) | ✅ | | — |
 | `.agents/` entry point for Google Antigravity / Gemini | ✅ | Skills + workflows subdirs | — |
 | Docker Compose single-command deploy | ✅ | `docker compose -f docker-compose.status.yml up -d` | — |
+| Codex workflow dispatch (`.github/workflows/codex-dispatch.yml`) | ✅ | Triggered via `/api/dispatch-codex` | WO-367 |
+
+## Dimension 6: Oryntra Chrome Extension (dentroio/Oryntra)
+
+| Capability | Status | Notes | Branch |
+|------------|--------|--------|--------|
+| Canvas annotation overlay (circle, arrow, text, undo) | ✅ | Injected content script | feat/factory-thread-integration |
+| Tab screenshot capture via service worker | ✅ | `chrome.tabs.captureVisibleTab()` | feat/factory-thread-integration |
+| Annotation composited onto screenshot | ✅ | Canvas overlay drawn over screenshot | feat/factory-thread-integration |
+| POST to factory thread proxy | ✅ | `image_data` + `content` + `source_url` | feat/factory-thread-integration |
+| Extension popup with active WO display | ✅ | Auto-detects from `/api/status` | feat/factory-thread-integration |
+| Settings page (factory URL, WO, author name) | ✅ | `chrome.storage.sync` | feat/factory-thread-integration |
+| Auto-detect active WO from factory | ✅ | Polls `/api/status` dispatch state | feat/factory-thread-integration |
 
 ---
 
 ## Open Gaps
 
-1. Multi-repo orchestration — single orchestrator instance can only track one `GITHUB_REPO`; the settings UI adds read-only dashboards but dispatch is still single-repo. Impact: medium.
-2. Agent authentication — `/api/claim` is unauthenticated; any caller can claim a WO. Suitable for closed networks only. Impact: low for current use, high for SaaS.
-3. Persistent agent history — orchestrator state resets on container restart; no durable audit log of completed WOs. Impact: medium.
+1. **Multi-repo orchestration** — single orchestrator instance can only dispatch to one `GITHUB_REPO`; secondary repos contribute WO specs to the board (read-only). Impact: medium.
+2. **Agent authentication** — `/api/claim` is unauthenticated; any caller can claim a WO. Suitable for closed networks only. Impact: low for current use, high for SaaS.
+3. **Persistent agent history** — orchestrator dispatch state resets on container restart; no durable audit log of completed WOs. Impact: medium.
+4. **Oryntra not yet merged to `main`** — the factory thread integration lives on `feat/factory-thread-integration` in `dentroio/Oryntra`. Impact: low (fully functional on branch; needs PR review).
+5. **JS/TS security scanning limited** — eslint-plugin-security falls back to regex if not installed. Regex covers 6 patterns. Impact: low for Python-heavy projects.
 
 ---
 
 ## Recently Completed
 
-| Date | Capability | WO |
+| Date | Capability | WO / Fix |
 |------|------------|----|
+| 2026-07-04 | Agent quality+security+optimization alignment (semgrep threshold, JS scan, performance mandate, backend ask() fixes) | fix/factory-quality-alignment |
+| 2026-07-04 | Oryntra Chrome extension + orchestrator image storage/serving + status site CORS proxy | WO-370 |
+| 2026-07-04 | Multi-agent peer review chain (4 reviewers, env-configurable backends) | WO-372 |
+| 2026-07-04 | Plan Authoring UI — create WOs/phases/milestones → GitHub PR | WO-373 |
+| 2026-07-04 | Agent thread awareness — mid-task Q&A + directive injection | WO-369 |
+| 2026-07-04 | WO Thread — per-WO conversation, SSE stream, system messages | WO-368 |
+| 2026-07-04 | Codex GitHub Actions dispatch path | WO-367 |
+| 2026-07-04 | ntfy.sh + Slack notifications on human review request | WO-366 |
+| 2026-07-03 | Quality gate — CI + bandit + semgrep; `/api/validate` returns 422 on failure | WO-371 |
+| 2026-06-27 | Agent runner — multi-backend autonomous WO execution | WO-365 |
 | 2026-07-02 | Velocity projection + milestone on-track badges | WO-360 |
 | 2026-07-02 | Orchestrator REST API (claim/checkin/validate) | WO-359 |
 | 2026-07-02 | PLAN.json plan store + priority queue | WO-358 |

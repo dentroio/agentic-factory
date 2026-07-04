@@ -6,22 +6,26 @@ Extracted from an active development project. Still evolving.
 
 ---
 
-## Live Dashboard
+## Live Dashboard + Runtime Stack
 
-The factory ships three Docker services that run alongside your project:
+The factory ships Docker services that run alongside your project:
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| `factory-status` | 8099 | Web dashboard — Overview, PM view, Engineering, Plan |
-| `orchestrator` | — | Polls WO files + PRs every 5 min, posts daily summaries, drives dispatch |
-| `pr-watchdog` | — | Tracks every open PR: CI state, stale detection, merge eligibility |
+| Service | Port | Profile | Purpose |
+|---------|------|---------|---------|
+| `factory-status` | 8099 | default | Web dashboard — Overview, PM view, Engineering, Plan, Thread panel, Plan Authoring |
+| `orchestrator` | 8100 | default | Dispatch REST API, WO lifecycle (claim/validate/complete), thread storage, notifications |
+| `pr-watchdog` | — | default | Tracks every open PR: CI state, stale detection, merge eligibility |
+| `agent-runner` | — | `agent` | Autonomous WO execution via Claude / Cursor / Codex; quality gate + peer review chain |
 
 **Start them:**
 
 ```bash
-cp .env.example .env          # fill in GITHUB_TOKEN, GITHUB_REPO
+cp .env.example .env          # fill in GITHUB_TOKEN, GITHUB_REPO, ANTHROPIC_API_KEY
 docker compose -f docker-compose.status.yml up -d
 open http://localhost:8099
+
+# Optional: autonomous agent runner
+docker compose -f docker-compose.status.yml --profile agent up -d
 ```
 
 **Rebuild after code changes:**
@@ -36,6 +40,7 @@ docker compose -f docker-compose.status.yml up -d <service> --force-recreate
 ```env
 GITHUB_TOKEN=ghp_...          # classic PAT: repo + read:org
 GITHUB_REPO=your-org/your-repo
+ANTHROPIC_API_KEY=sk-ant-...  # required for agent-runner and AI review
 ```
 
 Optional:
@@ -49,6 +54,20 @@ PLAN_PATH=docs/factory/PLAN.json
 POLL_INTERVAL=300             # orchestrator + watchdog poll cadence (seconds)
 MAX_PARALLEL_WOS=2            # max concurrent agent assignments
 POST_COMMENTS=false           # set true to have watchdog post GitHub PR comments
+
+# Notifications (orchestrator fires these when a WO needs human review)
+NTFY_URL=https://ntfy.sh/your-topic
+SLACK_WEBHOOK_URL=https://hooks.slack.com/...
+
+# Reviewer backends (default: claude — or set to codex/cursor to use GPT-4o via OpenAI API)
+SECURITY_REVIEWER_BACKEND=claude
+ARCH_REVIEWER_BACKEND=claude
+CORRECTNESS_REVIEWER_BACKEND=claude
+PERF_REVIEWER_BACKEND=claude
+OPENAI_API_KEY=sk-...         # required if any reviewer backend is set to codex or cursor
+
+# Codex GitHub Actions dispatch
+CODEX_WORKFLOW_ID=codex-dispatch.yml
 ```
 
 ---
@@ -64,10 +83,15 @@ POST_COMMENTS=false           # set true to have watchdog post GitHub PR comment
 | `Makefile.template` | Copy to `Makefile` — fill in `{{FILL IN}}` sections for your stack |
 | `.env.example` | Environment variable reference for the container runtime |
 | **Container Runtime** | |
-| `docker-compose.status.yml` | Brings up all three factory services |
-| `services/factory-status/` | FastAPI + Jinja2 status dashboard |
-| `services/orchestrator/` | WO dispatch loop — reads PLAN.json, assigns WOs, posts summaries |
+| `docker-compose.status.yml` | Brings up all factory services; `agent` profile enables agent-runner |
+| `services/status-site/` | FastAPI + Jinja2 status dashboard (Overview, PM, Engineering, Plan, Threads, Settings) |
+| `services/orchestrator/` | Dispatch REST API — claim/checkin/validate/complete, thread storage, image serving, notifications |
 | `services/pr-watchdog/` | PR lifecycle monitor — CI health, stale PRs, merge eligibility |
+| `services/agent-runner/` | Autonomous WO executor — Claude/Cursor/Codex backends, quality gate, peer review chain |
+| `services/agent-runner/backends/` | Pluggable AI backends: `claude.py`, `cursor.py`, `codex.py` |
+| `services/agent-runner/quality_gate.py` | Parallel CI + bandit + semgrep + JS/TS security scan |
+| `services/agent-runner/review_chain.py` | 4-reviewer AI review chain (security, architecture, correctness, performance) |
+| `services/agent-runner/prompt_builder.py` | Agent mandate injected into every WO prompt (security, performance, quality rules) |
 | **CI / Review** | |
 | `.github/workflows/ai-review.yml` | Blocking AI code review on every PR — exits 1 on "Review required" |
 | `.github/workflows/ci.yml.template` | Copy to `ci.yml` — fill in lint/test/build steps |
