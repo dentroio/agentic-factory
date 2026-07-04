@@ -67,6 +67,15 @@ if ! command -v claude &>/dev/null; then
     fi
 fi
 
+# ── Try Keychain first ────────────────────────────────────────────────────────
+FACTORY_ENV="$REPO_ROOT/scripts/factory-env.sh"
+if [ -f "$FACTORY_ENV" ]; then
+    while IFS='=' read -r key val; do
+        [[ -z "$key" || "$key" == \#* ]] && continue
+        export "$key"="$val"
+    done < <(bash "$FACTORY_ENV" 2>/dev/null)
+fi
+
 # ── Source .env ────────────────────────────────────────────────────────────────
 ENV_FILE="$REPO_ROOT/.env"
 if [ -f "$ENV_FILE" ]; then

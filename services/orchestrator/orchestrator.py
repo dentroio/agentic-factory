@@ -11,7 +11,7 @@ import httpx
 import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -867,6 +867,105 @@ async def poll() -> None:
 
     async with httpx.AsyncClient(timeout=20) as client:
         await _maybe_post_summary(client, _orchestrator_output)
+
+
+# ── Agent config endpoints ────────────────────────────────────────────────────
+
+AGENT_CONFIG_PATH = DATA_DIR / "agent_config.json"
+
+_DEFAULT_AGENT_CONFIG = {
+    "preferred": "claude",
+    "name": "factory-agent",
+    "timeout": 7200,
+    "reviewers": {
+        "security": "claude",
+        "architecture": "claude",
+        "correctness": "claude",
+        "performance": "claude",
+    },
+}
+
+
+def _load_agent_config() -> dict:
+    if not AGENT_CONFIG_PATH.exists():
+        return dict(_DEFAULT_AGENT_CONFIG)
+    try:
+        return {**_DEFAULT_AGENT_CONFIG, **json.loads(AGENT_CONFIG_PATH.read_text())}
+    except Exception:
+        return dict(_DEFAULT_AGENT_CONFIG)
+
+
+@app.get("/api/config")
+async def get_agent_config():
+    return _load_agent_config()
+
+
+@app.put("/api/config")
+async def put_agent_config(request: Request):
+    try:
+        incoming = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    existing = _load_agent_config()
+    if "reviewers" in incoming and isinstance(incoming["reviewers"], dict):
+        existing["reviewers"] = {**existing.get("reviewers", {}), **incoming["reviewers"]}
+        incoming = {k: v for k, v in incoming.items() if k != "reviewers"}
+    merged = {**existing, **incoming}
+    AGENT_CONFIG_PATH.write_text(json.dumps(merged, indent=2))
+    return merged
+
+
+# ── Usage tracking endpoints ──────────────────────────────────────────────────
+
+USAGE_PATH = DATA_DIR / "usage.json"
+
+
+class UsageRecord(BaseModel):
+    ts: str
+    wo: str
+    backend: str
+    duration_s: float
+    success: bool
+    ask_calls: list[dict] = []
+
+
+def _load_usage() -> list[dict]:
+    if not USAGE_PATH.exists():
+        return []
+    try:
+        return json.loads(USAGE_PATH.read_text())
+    except Exception:
+        return []
+
+
+@app.post("/api/usage")
+async def post_usage(record: UsageRecord):
+    records = _load_usage()
+    records.append(record.model_dump())
+    if len(records) > 500:
+        records = records[-500:]
+    USAGE_PATH.write_text(json.dumps(records, indent=2))
+    return {"ok": True}
+
+
+@app.get("/api/usage")
+async def get_usage():
+    records = _load_usage()
+    from datetime import timedelta
+    week_ago = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+    per_backend: dict[str, dict] = {}
+    for r in records:
+        b = r.get("backend", "unknown")
+        if b not in per_backend:
+            per_backend[b] = {"runs": 0, "successes": 0, "total_duration_s": 0.0, "ask_calls": 0, "runs_this_week": 0}
+        per_backend[b]["runs"] += 1
+        if r.get("success"):
+            per_backend[b]["successes"] += 1
+        per_backend[b]["total_duration_s"] += r.get("duration_s", 0.0)
+        per_backend[b]["ask_calls"] += len(r.get("ask_calls", []))
+        if r.get("ts", "") >= week_ago:
+            per_backend[b]["runs_this_week"] += 1
+    return {"records": records[-20:], "summary": {"per_backend": per_backend}}
 
 
 if __name__ == "__main__":

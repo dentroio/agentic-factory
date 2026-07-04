@@ -884,6 +884,103 @@ async def settings_projects_remove(request: Request):
     return RedirectResponse(url="/settings/projects?saved=removed", status_code=303)
 
 
+@app.get("/settings/agents", response_class=HTMLResponse)
+async def settings_agents(request: Request, saved: str = "", error: str = ""):
+    cfg = {}
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/config")
+            if r.status_code == 200:
+                cfg = r.json()
+    except Exception:
+        pass
+    return templates.TemplateResponse(request=request, name="settings_agents.html", context={
+        "site_title": SITE_TITLE,
+        "refresh_seconds": 3600,
+        "github_repo": GITHUB_REPO,
+        "cfg": cfg,
+        "saved": saved,
+        "error": error,
+        "orchestrator_offline": not cfg,
+    })
+
+
+@app.post("/settings/agents", response_class=HTMLResponse)
+async def settings_agents_save(request: Request):
+    from fastapi.responses import RedirectResponse
+    form = await request.form()
+    payload = {
+        "preferred": str(form.get("preferred", "claude")).strip(),
+        "name": str(form.get("name", "factory-agent")).strip(),
+        "timeout": int(form.get("timeout", "7200")),
+        "reviewers": {
+            "security": str(form.get("reviewer_security", "claude")).strip(),
+            "architecture": str(form.get("reviewer_architecture", "claude")).strip(),
+            "correctness": str(form.get("reviewer_correctness", "claude")).strip(),
+            "performance": str(form.get("reviewer_performance", "claude")).strip(),
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.put(f"{ORCHESTRATOR_URL}/api/config", json=payload)
+            if r.status_code != 200:
+                return RedirectResponse(url=f"/settings/agents?error=Save+failed+({r.status_code})", status_code=303)
+    except Exception as e:
+        return RedirectResponse(url=f"/settings/agents?error=Orchestrator+unreachable", status_code=303)
+    return RedirectResponse(url="/settings/agents?saved=1", status_code=303)
+
+
+@app.get("/usage", response_class=HTMLResponse)
+async def usage_page(request: Request):
+    data = {"records": [], "summary": {"per_backend": {}}}
+    orchestrator_offline = False
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/usage")
+            if r.status_code == 200:
+                data = r.json()
+            else:
+                orchestrator_offline = True
+    except Exception:
+        orchestrator_offline = True
+
+    per_backend = data.get("summary", {}).get("per_backend", {})
+
+    def _fmt_duration(secs: float) -> str:
+        if secs < 60:
+            return f"{int(secs)}s"
+        h = int(secs // 3600)
+        m = int((secs % 3600) // 60)
+        if h > 0:
+            return f"{h}h {m}m"
+        return f"{m}m"
+
+    backend_cards = []
+    for backend, stats in per_backend.items():
+        runs = stats.get("runs", 0)
+        successes = stats.get("successes", 0)
+        total_s = stats.get("total_duration_s", 0.0)
+        ac = stats.get("ask_calls", 0)
+        backend_cards.append({
+            "name": backend,
+            "runs_all_time": runs,
+            "runs_this_week": stats.get("runs_this_week", 0),
+            "success_rate": round(successes / runs * 100) if runs else 0,
+            "total_duration": _fmt_duration(total_s),
+            "estimated_requests": runs + ac,
+            "ask_calls": ac,
+        })
+
+    return templates.TemplateResponse(request=request, name="usage.html", context={
+        "site_title": SITE_TITLE,
+        "refresh_seconds": 300,
+        "github_repo": GITHUB_REPO,
+        "backend_cards": backend_cards,
+        "recent_records": data.get("records", []),
+        "orchestrator_offline": orchestrator_offline,
+    })
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "repo": GITHUB_REPO, "token_set": bool(GITHUB_TOKEN)}

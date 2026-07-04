@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block page_title %}Usage — {{ site_title }}{% endblock %}
+{% block content %}
+
+<div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-8">
+  <div>
+    <h1 class="text-xl font-display font-bold text-slate-100">Agent Usage</h1>
+    <p class="text-xs text-slate-400 mt-1">Per-backend run counts, durations, and estimated request consumption.</p>
+  </div>
+  <a href="/settings/agents" class="text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1.5 transition-colors">
+    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+    Agent Settings
+  </a>
+</div>
+
+{% if orchestrator_offline %}
+<div class="mb-6 flex items-center gap-3 px-4 py-3 rounded-xl border bg-amber-500/8 border-amber-500/20 text-amber-300 text-xs">
+  <svg class="w-4 h-4 flex-shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+  Orchestrator is offline — usage data unavailable.
+</div>
+{% endif %}
+
+{% if not backend_cards %}
+<div class="glass-panel p-8 text-center text-slate-500 text-sm mb-6">
+  No usage data yet. Run a WO with the agent runner to see stats here.
+</div>
+{% else %}
+
+{# Backend cards #}
+{% set backend_colors = {
+  'claude':  ('indigo',  'Claude'),
+  'cursor':  ('violet',  'Cursor'),
+  'codex':   ('sky',     'Codex'),
+  'gemini':  ('emerald', 'Gemini'),
+} %}
+
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+  {% for card in backend_cards %}
+  {% set color = backend_colors.get(card.name, ('slate', card.name))[0] %}
+  {% set label = backend_colors.get(card.name, ('slate', card.name))[1] %}
+  <div class="glass-panel p-5">
+    <div class="flex items-center gap-3 mb-4">
+      <div class="w-8 h-8 rounded-lg bg-{{ color }}-500/10 border border-{{ color }}-500/20 flex items-center justify-center flex-shrink-0">
+        <div class="w-2.5 h-2.5 rounded-full bg-{{ color }}-400"></div>
+      </div>
+      <div>
+        <div class="text-sm font-bold text-slate-100">{{ label }}</div>
+        <div class="text-[10px] text-slate-500 font-mono">{{ card.name }}</div>
+      </div>
+    </div>
+
+    <div class="space-y-2.5">
+      <div class="flex items-center justify-between">
+        <span class="text-[10px] text-slate-500 uppercase tracking-wider">Runs this week</span>
+        <span class="text-xs font-bold text-slate-100">{{ card.runs_this_week }}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-[10px] text-slate-500 uppercase tracking-wider">All time</span>
+        <span class="text-xs font-mono text-slate-300">{{ card.runs_all_time }}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-[10px] text-slate-500 uppercase tracking-wider">Success rate</span>
+        <span class="text-xs font-mono {% if card.success_rate >= 80 %}text-emerald-400{% elif card.success_rate >= 50 %}text-amber-400{% else %}text-rose-400{% endif %}">
+          {{ card.success_rate }}%
+        </span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-[10px] text-slate-500 uppercase tracking-wider">Total time</span>
+        <span class="text-xs font-mono text-slate-300">{{ card.total_duration }}</span>
+      </div>
+      <div class="border-t border-slate-800/50 pt-2.5 flex items-center justify-between">
+        <span class="text-[10px] text-slate-500 uppercase tracking-wider">Est. requests</span>
+        <span class="text-xs font-bold text-{{ color }}-400">{{ card.estimated_requests }}</span>
+      </div>
+    </div>
+
+    {% if card.name == 'cursor' %}
+    <div class="mt-3 px-2.5 py-1.5 rounded-lg bg-violet-500/8 border border-violet-500/15 text-[10px] text-violet-400">
+      Cursor Pro limit: 500 fast requests/month
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# Recent runs table #}
+<div class="glass-panel overflow-hidden">
+  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
+    <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Recent Runs (last 20)</span>
+    <span class="text-[10px] text-slate-500">Stored in orchestrator /data/usage.json</span>
+  </div>
+
+  {% if not recent_records %}
+  <div class="px-5 py-8 text-xs text-slate-500 text-center">No runs recorded yet.</div>
+  {% else %}
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs">
+      <thead>
+        <tr class="border-b border-slate-800/60">
+          <th class="px-5 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">WO</th>
+          <th class="px-4 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Backend</th>
+          <th class="px-4 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Duration</th>
+          <th class="px-4 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Result</th>
+          <th class="px-4 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Reviews</th>
+          <th class="px-5 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Timestamp</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800/30">
+        {% for rec in recent_records | reverse %}
+        <tr class="hover:bg-slate-900/30 transition-colors">
+          <td class="px-5 py-2.5">
+            <span class="font-mono font-bold text-slate-100">{{ rec.wo }}</span>
+          </td>
+          <td class="px-4 py-2.5">
+            {% set color = {'claude': 'indigo', 'cursor': 'violet', 'codex': 'sky', 'gemini': 'emerald'}.get(rec.backend, 'slate') %}
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-{{ color }}-500/10 text-{{ color }}-400 border border-{{ color }}-500/20">
+              {{ rec.backend }}
+            </span>
+          </td>
+          <td class="px-4 py-2.5 font-mono text-slate-400">
+            {% set s = rec.duration_s | int %}
+            {% if s < 60 %}{{ s }}s{% elif s < 3600 %}{{ (s // 60) }}m {{ (s % 60) }}s{% else %}{{ (s // 3600) }}h {{ ((s % 3600) // 60) }}m{% endif %}
+          </td>
+          <td class="px-4 py-2.5">
+            {% if rec.success %}
+            <span class="flex items-center gap-1 text-emerald-400"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Pass</span>
+            {% else %}
+            <span class="flex items-center gap-1 text-rose-400"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>Fail</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2.5 font-mono text-slate-500">{{ rec.ask_calls | length }}</td>
+          <td class="px-5 py-2.5 text-slate-500 font-mono text-[10px]">{{ rec.ts[:16] | replace('T', ' ') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

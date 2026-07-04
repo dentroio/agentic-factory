@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block page_title %}Agents — Settings — {{ site_title }}{% endblock %}
+{% block content %}
+
+<div class="flex items-center gap-3 mb-1">
+  <a href="/settings" class="text-xs text-slate-500 hover:text-slate-300 transition-colors">Settings</a>
+  <span class="text-slate-700">/</span>
+  <span class="text-xs text-slate-300">Agents</span>
+</div>
+<div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
+  <div>
+    <h1 class="text-xl font-display font-bold text-slate-100">Agent Configuration</h1>
+    <p class="text-xs text-slate-400 mt-1">Set the execution backend and reviewer assignments. Changes take effect on the next WO the runner picks up.</p>
+  </div>
+</div>
+
+{% if orchestrator_offline %}
+<div class="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border bg-amber-500/8 border-amber-500/20 text-amber-300 text-xs">
+  <svg class="w-4 h-4 flex-shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+  Orchestrator is offline — showing defaults. Settings cannot be saved right now.
+</div>
+{% endif %}
+
+{% if saved %}
+<div class="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border bg-emerald-500/8 border-emerald-500/20 text-emerald-300 text-xs">
+  <svg class="w-4 h-4 flex-shrink-0 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+  Agent configuration saved. The runner will use these settings on its next WO.
+</div>
+{% endif %}
+
+{% if error %}
+<div class="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border bg-red-500/8 border-red-500/20 text-red-300 text-xs">
+  <svg class="w-4 h-4 flex-shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+  {{ error }}
+</div>
+{% endif %}
+
+<form method="post" action="/settings/agents">
+
+  {# Execution Backend #}
+  <div class="glass-panel overflow-hidden mb-4">
+    <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
+      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Execution Agent</span>
+    </div>
+    <div class="px-5 py-5 space-y-4">
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Backend</label>
+          <select name="preferred"
+                  class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100
+                         focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+            {% set backends = [
+              ('claude', 'Claude (Pro/Max) — claude code --dangerously-skip-permissions'),
+              ('cursor', 'Cursor — agent --headless'),
+              ('codex', 'Codex (OpenAI) — codex --approval-mode full-auto'),
+              ('gemini', 'Gemini — gemini --yolo'),
+            ] %}
+            {% for val, label in backends %}
+            <option value="{{ val }}" {% if cfg.get('preferred', 'claude') == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-[10px] text-slate-600 mt-1">Which AI executes work orders end-to-end</p>
+        </div>
+
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Agent Name</label>
+          <input type="text" name="name" value="{{ cfg.get('name', 'factory-agent') }}"
+                 class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+                        focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+          <p class="text-[10px] text-slate-600 mt-1">Display name shown in the factory dashboard</p>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Timeout (seconds)</label>
+        <input type="number" name="timeout" value="{{ cfg.get('timeout', 7200) }}" min="300" max="86400"
+               class="w-48 bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+                      focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+        <p class="text-[10px] text-slate-600 mt-1">Max seconds before a WO run is forcibly stopped (7200 = 2 hours)</p>
+      </div>
+
+    </div>
+  </div>
+
+  {# Reviewer Assignments #}
+  <div class="glass-panel overflow-hidden mb-4">
+    <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
+      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Reviewer Assignments</span>
+    </div>
+    <div class="px-5 py-5">
+      <p class="text-xs text-slate-400 mb-4">Each dimension runs a separate AI review pass before human validation is requested. Assign a backend to each reviewer role.</p>
+
+      {% set reviewer_cfg = cfg.get('reviewers', {}) %}
+      {% set reviewer_roles = [
+        ('security', 'Security', 'Checks for OWASP top 10, secrets exposure, injection risks, auth bypasses'),
+        ('architecture', 'Architecture', 'Validates service boundaries, coupling, scalability, and design patterns'),
+        ('correctness', 'Correctness', 'Verifies the implementation matches the WO spec and acceptance criteria'),
+        ('performance', 'Performance', 'Flags N+1 queries, missing indexes, blocking calls, and memory issues'),
+      ] %}
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {% for role_key, role_label, role_desc in reviewer_roles %}
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">{{ role_label }} Reviewer</label>
+          <select name="reviewer_{{ role_key }}"
+                  class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100
+                         focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+            {% for val, label in [('claude','Claude'), ('cursor','Cursor'), ('codex','Codex'), ('gemini','Gemini')] %}
+            <option value="{{ val }}" {% if reviewer_cfg.get(role_key, 'claude') == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-[10px] text-slate-600 mt-1">{{ role_desc }}</p>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {# Save #}
+  <div class="flex items-center gap-4">
+    <button type="submit" {% if orchestrator_offline %}disabled{% endif %}
+            class="px-5 py-2 text-xs font-bold bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors border border-violet-500/50">
+      Save Configuration
+    </button>
+    <a href="/usage" class="text-xs text-slate-400 hover:text-slate-200 transition-colors">
+      View usage stats →
+    </a>
+  </div>
+
+</form>
+
+{% endblock %}

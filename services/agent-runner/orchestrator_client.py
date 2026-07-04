@@ -109,3 +109,15 @@ async def get_dispatch_status(wo_id: str) -> str:
             return state.get(wo_id, {}).get("status", "unknown")
     except Exception:
         return "unknown"
+
+
+async def get_agent_config() -> dict:
+    """Fetch agent config from the orchestrator (preferred backend, reviewers, etc.)."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/config")
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        print(f"[runner] get_agent_config failed: {e}")
+        return {}

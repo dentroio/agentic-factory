@@ -4,6 +4,7 @@ LABEL := com.dentroio.factory-agent
 LOG_DIR := $(HOME)/Library/Logs/factory-agent
 
 .PHONY: help \
+        agent-setup \
         up down logs restart \
         agent-install agent-remove agent-start agent-stop agent-logs agent-status agent-once \
         oryntra-open
@@ -12,10 +13,19 @@ help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 	  awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
+agent-setup:  ## First-time setup — stores secrets in macOS Keychain
+	@bash scripts/agent-setup.sh
+
 # ── Docker Compose (dashboard + orchestrator + watchdog) ─────────────────────
 
-up:  ## Start factory services (status site + orchestrator + watchdog)
-	docker compose -f docker-compose.status.yml up -d
+up:  ## Start factory services (reads secrets from macOS Keychain if available)
+	@bash scripts/factory-env.sh > .env.runtime 2>/dev/null || true
+	@if [ -s .env.runtime ]; then \
+		docker compose -f docker-compose.status.yml --env-file .env.runtime up -d; \
+	else \
+		docker compose -f docker-compose.status.yml up -d; \
+	fi
+	@rm -f .env.runtime
 	@echo "Dashboard: http://localhost:8099   Orchestrator: http://localhost:8100"
 
 down:  ## Stop all factory services

@@ -1,14 +1,17 @@
 """Agent runner — polls the orchestrator, claims WOs, and runs the configured agent backend."""
 import asyncio
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
+import usage_tracker
 from backends import get_backend
 from config import (
     AGENT_NAME,
     AGENT_TIMEOUT,
     GITHUB_REPO,
     HOSTNAME,
+    ORCHESTRATOR_URL,
     POLL_INTERVAL,
     PREFERRED_AGENT,
     WORKTREE_BASE,
@@ -18,6 +21,7 @@ from orchestrator_client import (
     checkin,
     claim,
     complete,
+    get_agent_config,
     get_dispatch_status,
     get_next,
     post_thread_message,
@@ -95,11 +99,13 @@ async def _poll_approval(
     return "timeout"
 
 
-async def run_wo(wo_spec: dict) -> None:
+async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     wo_number = wo_spec.get("wo", wo_spec.get("number", "?"))
     wo_id = f"WO-{wo_number}" if not str(wo_number).startswith("WO-") else str(wo_number)
     title = wo_spec.get("title", "Unknown")
     slug = slug_from_title(title, wo_number)
+    start_time = datetime.now(UTC)
+    ask_calls: list[dict] = []
 
     _log(f"Claiming {wo_id}: {title}")
     if not await claim(wo_id, slug):
@@ -115,9 +121,9 @@ async def run_wo(wo_spec: dict) -> None:
     )
 
     prompt = build_prompt(wo_spec, wo_markdown, worktree_path, AGENT_NAME)
-    backend = get_backend(PREFERRED_AGENT)
+    backend = get_backend(preferred_agent)
 
-    _log(f"Starting {PREFERRED_AGENT} backend for {wo_id}")
+    _log(f"Starting {preferred_agent} backend for {wo_id}")
     await checkin(wo_id, "starting agent")
     await post_thread_message(wo_id, f"Starting implementation of **{wo_id}**: {title}")
 
@@ -185,6 +191,12 @@ async def run_wo(wo_spec: dict) -> None:
         wo_spec, diff, monitor, security_findings
     )
 
+    # Collect ask_calls from review chain findings
+    ask_calls = [
+        {"reviewer": f.get("reviewer", "unknown"), "backend": f.get("backend", "unknown")}
+        for f in all_findings if "reviewer" in f
+    ]
+
     if not review_passed:
         blocking = [
             f for f in all_findings
@@ -231,20 +243,31 @@ async def run_wo(wo_spec: dict) -> None:
         _log(f"{wo_id} approved — agent should commit and push (handled in agent subprocess)")
         await complete(wo_id)
         _log(f"{wo_id} complete")
+        await usage_tracker.record_run(ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, True, ask_calls)
     elif decision == "rejected":
         _log(f"{wo_id} rejected — check the factory dashboard for guidance")
+        await usage_tracker.record_run(ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, False, ask_calls)
     else:
         _log(f"{wo_id} approval timed out — leaving in awaiting_human state")
+        await usage_tracker.record_run(ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, False, ask_calls)
 
 
 async def main() -> None:
     _log(f"Agent runner starting — backend={PREFERRED_AGENT}, agent={AGENT_NAME}@{HOSTNAME}")
     _log(f"Polling orchestrator every {POLL_INTERVAL}s")
 
+    # Fetch agent config from orchestrator — Settings UI changes take effect without restart
+    agent_cfg = await get_agent_config()
+    active_backend = agent_cfg.get("preferred", PREFERRED_AGENT) if agent_cfg else PREFERRED_AGENT
+    if active_backend != PREFERRED_AGENT:
+        _log(f"Orchestrator config overrides PREFERRED_AGENT: {PREFERRED_AGENT} → {active_backend}")
+    else:
+        active_backend = PREFERRED_AGENT
+
     while True:
         next_wo = await get_next()
         if next_wo and next_wo.get("wo"):
-            await run_wo(next_wo)
+            await run_wo(next_wo, preferred_agent=active_backend)
         else:
             _log("No WO available — sleeping")
         await asyncio.sleep(POLL_INTERVAL)
