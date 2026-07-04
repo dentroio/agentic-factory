@@ -4,25 +4,37 @@ from config import ORCHESTRATOR_URL, GITHUB_REPO
 
 
 QUALITY_MANDATE = """
-## MANDATORY QUALITY & SECURITY REQUIREMENTS
+## MANDATORY QUALITY, SECURITY & OPTIMIZATION REQUIREMENTS
 
 Before calling POST {orchestrator_url}/api/validate you MUST:
 
 1. Run `make ci-local` — zero lint errors, zero type errors, all tests pass.
    CI failure is BLOCKING. Fix all errors before calling /api/validate.
 
-2. Your implementation MUST NOT contain:
+2. SECURITY — your implementation MUST NOT contain:
    - Hardcoded secrets, API keys, or passwords in code
    - SQL string concatenation (always use parameterized queries)
    - Missing require_role() on new API endpoints
    - Unvalidated user input passed to shell commands, SQL, or file paths
    - XSS vectors (unsanitized user content rendered as HTML)
+   - eval(), innerHTML=, or document.write() with dynamic input (JS/TS)
 
-3. Follow existing codebase patterns exactly. Do not introduce new
-   abstractions unless the WO spec explicitly requires them.
+3. PERFORMANCE — your implementation MUST NOT contain:
+   - Blocking I/O inside async handlers (no time.sleep(), no synchronous
+     file reads, no requests.get() — use asyncio/httpx equivalents)
+   - Unbounded database queries (always apply LIMIT or pagination)
+   - Loading entire large datasets into memory when streaming is possible
+   - N+1 query patterns (batch with IN clauses or joins)
 
-4. The quality gate (CI + security scanner) runs before your validate
-   request is accepted. Fix all issues and re-run if it rejects you.
+4. CODE QUALITY — your implementation MUST:
+   - Follow existing codebase patterns exactly — naming, file layout,
+     error handling style, abstraction level
+   - Not introduce new abstractions unless the WO spec explicitly requires them
+   - Handle all error paths (network failures, missing data, bad input)
+   - Keep functions focused — if a function exceeds ~40 lines, split it
+
+5. The quality gate (CI + security + JS scanner + peer review chain) runs
+   before your validate request is accepted. Fix all issues if rejected.
 
 These requirements are enforced at the platform level. There is no bypass.
 """.strip()
