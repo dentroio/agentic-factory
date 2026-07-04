@@ -8,21 +8,32 @@ from backends.base import AgentBackend
 
 class CursorBackend(AgentBackend):
     """
-    Agentic execution: Cursor headless CLI (`agent -p --force <prompt>`).
-    Text Q&A / review (ask): Cursor has no public text API.
+    Agentic execution: Cursor agent CLI (`agent --print <prompt>`).
+    Text Q&A / review (ask): `agent --print --mode ask <question>` — read-only, no file edits.
 
-    For ask(), we fall back in order:
-      1. OpenAI chat completions (if OPENAI_API_KEY is set)
-      2. Claude CLI `--print` mode (if claude is in PATH)
-      3. Error string (review is skipped with a warning)
+    Install: curl https://cursor.com/install -fsS | bash
+    Auth:    Uses CURSOR_API_KEY env var or your logged-in Cursor account (subscription).
 
-    This ensures that setting ARCH_REVIEWER_BACKEND=cursor doesn't silently
-    corrupt the worktree by triggering an agentic file-editing session.
+    The `agent` binary is installed to ~/.local/bin/agent. Ensure ~/.local/bin is in PATH.
+
+    --print makes the agent non-interactive (outputs to stdout, no TUI).
+    --mode ask restricts to read-only Q&A — the agent cannot edit files in this mode.
     """
 
     def __init__(self, api_key: str = "") -> None:
-        self._api_key = api_key
+        self._api_key = api_key or os.getenv("CURSOR_API_KEY", "")
         self._pending_messages: list[str] = []
+
+    def _find_bin(self) -> str | None:
+        # The Cursor headless install puts 'agent' in ~/.local/bin
+        for candidate in [
+            shutil.which("agent"),
+            os.path.expanduser("~/.local/bin/agent"),
+            os.path.expanduser("~/.local/bin/cursor-agent"),
+        ]:
+            if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+        return None
 
     def _env(self) -> dict:
         env = dict(os.environ)
@@ -31,9 +42,11 @@ class CursorBackend(AgentBackend):
         return env
 
     async def run(self, prompt: str, worktree: str) -> AsyncIterator[str]:
-        agent_bin = shutil.which("agent")
+        agent_bin = self._find_bin()
         if not agent_bin:
-            raise RuntimeError("Cursor 'agent' CLI not found in PATH")
+            raise RuntimeError(
+                "Cursor agent CLI not found — install: curl https://cursor.com/install -fsS | bash"
+            )
 
         full_prompt = prompt
         if self._pending_messages:
@@ -41,7 +54,7 @@ class CursorBackend(AgentBackend):
             self._pending_messages.clear()
 
         proc = await asyncio.create_subprocess_exec(
-            agent_bin, "-p", "--force", full_prompt,
+            agent_bin, "--print", full_prompt,
             cwd=worktree,
             env=self._env(),
             stdout=asyncio.subprocess.PIPE,
@@ -53,34 +66,40 @@ class CursorBackend(AgentBackend):
             if not line:
                 break
             yield line.decode("utf-8", errors="replace").rstrip()
+
         await proc.wait()
+        if proc.returncode and proc.returncode != 0:
+            yield f"[cursor-agent] exited with code {proc.returncode}"
 
     async def inject(self, message: str) -> None:
         self._pending_messages.append(message)
 
     async def ask(self, question: str) -> str:
         """
-        Pure text Q&A — does NOT invoke the Cursor CLI (which would edit files).
+        Pure read-only Q&A via `agent --print --mode ask`.
 
-        Falls back to OpenAI API, then Claude CLI.
+        --mode ask restricts Cursor to explanations and answers only — no file edits,
+        no shell commands. Safe to call during peer review without touching the worktree.
+        Falls back to Claude CLI if the agent binary is not installed.
         """
-        # 1. OpenAI API
-        openai_key = os.getenv("OPENAI_API_KEY", "")
-        if openai_key:
+        agent_bin = self._find_bin()
+        if agent_bin:
             try:
-                from openai import AsyncOpenAI
-                client = AsyncOpenAI(api_key=openai_key)
-                response = await client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[{"role": "user", "content": question}],
-                    max_tokens=2048,
-                    temperature=0.2,
+                proc = await asyncio.create_subprocess_exec(
+                    agent_bin, "--print", "--mode", "ask", question,
+                    env=self._env(),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
                 )
-                return response.choices[0].message.content or ""
-            except Exception as e:
-                pass  # fall through to Claude
+                assert proc.stdout is not None
+                out, _ = await proc.communicate()
+                text = out.decode("utf-8", errors="replace").strip()
+                if text:
+                    return text
+            except Exception:
+                pass
 
-        # 2. Claude CLI --print (non-agentic, pure text output)
+        # Fall back to Claude CLI (subscription-based)
         claude_bin = shutil.which("claude")
         if claude_bin:
             try:
@@ -96,6 +115,6 @@ class CursorBackend(AgentBackend):
                 pass
 
         return (
-            "[cursor reviewer: no text API available — set OPENAI_API_KEY "
-            "or ensure claude CLI is in PATH to use Cursor as a reviewer]"
+            "[cursor reviewer: agent CLI not found and claude not available — "
+            "install via curl https://cursor.com/install -fsS | bash]"
         )

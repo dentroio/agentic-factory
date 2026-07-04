@@ -5,43 +5,43 @@ from typing import AsyncIterator
 from backends.base import AgentBackend
 
 
-class CodexBackend(AgentBackend):
+class GeminiBackend(AgentBackend):
     """
-    Agentic execution: OpenAI Codex CLI (`codex exec <prompt>`).
-    Text Q&A / review (ask): `codex review <instructions>` — non-interactive code review.
+    Agentic execution: Gemini CLI (`gemini --yolo -p <prompt>`).
+    Text Q&A / review (ask): `gemini -p <question>` — headless, no file edits.
 
-    Install: npm install -g @openai/codex
-    Auth:    codex login   (OAuth to your OpenAI account — uses ChatGPT/OpenAI subscription)
+    Install: npm install -g @google/gemini-cli
+    Auth:    gemini   (first run prompts Google OAuth — uses your Google/Gemini subscription)
 
-    No API key required. All calls go through your subscription, not pay-per-use API billing.
+    --yolo auto-approves all tool uses (file edits, shell commands). Without it,
+    Gemini prompts for confirmation on every action, blocking the unattended runner.
     """
 
     def __init__(self) -> None:
-        pass
+        self._pending_messages: list[str] = []
 
     def _find_bin(self) -> str | None:
-        return shutil.which("codex")
+        return shutil.which("gemini")
 
     async def run(self, prompt: str, worktree: str) -> AsyncIterator[str]:
-        codex_bin = self._find_bin()
-        if not codex_bin:
+        gemini_bin = self._find_bin()
+        if not gemini_bin:
             raise RuntimeError(
-                "codex CLI not found in PATH — install: npm install -g @openai/codex"
+                "gemini CLI not found in PATH — install: npm install -g @google/gemini-cli"
             )
 
-        # Pass prompt via stdin ("-") to handle prompts that exceed shell arg limits
+        full_prompt = prompt
+        if self._pending_messages:
+            full_prompt += "\n\n[Additional context]\n" + "\n".join(self._pending_messages)
+            self._pending_messages.clear()
+
         proc = await asyncio.create_subprocess_exec(
-            codex_bin, "exec", "-",
+            gemini_bin, "--yolo", "-p", full_prompt,
             cwd=worktree,
-            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
         assert proc.stdout is not None
-        if proc.stdin:
-            proc.stdin.write(prompt.encode())
-            proc.stdin.close()
-
         while True:
             line = await proc.stdout.readline()
             if not line:
@@ -50,25 +50,18 @@ class CodexBackend(AgentBackend):
 
         await proc.wait()
         if proc.returncode and proc.returncode != 0:
-            yield f"[codex] exited with code {proc.returncode}"
+            yield f"[gemini] exited with code {proc.returncode}"
 
     async def inject(self, message: str) -> None:
-        # Codex exec is non-interactive; messages are queued but there is no running
-        # process to receive them. They will be visible in the next run() call prompt.
-        pass
+        self._pending_messages.append(message)
 
     async def ask(self, question: str) -> str:
-        """
-        Use `codex review` for code review questions — subscription-based, no API key.
-
-        `codex review` is designed for non-interactive code review and captures
-        structured output. Falls back to Claude CLI if codex is not installed.
-        """
-        codex_bin = self._find_bin()
-        if codex_bin:
+        """Headless text Q&A via `gemini -p` — no file mutations."""
+        gemini_bin = self._find_bin()
+        if gemini_bin:
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    codex_bin, "review", question,
+                    gemini_bin, "-p", question,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
@@ -95,4 +88,4 @@ class CodexBackend(AgentBackend):
             except Exception:
                 pass
 
-        return "[codex reviewer: codex not found and claude not available as fallback]"
+        return "[gemini reviewer: gemini not found and claude not available as fallback]"
