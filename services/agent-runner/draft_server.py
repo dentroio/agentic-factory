@@ -51,10 +51,29 @@ def _probe_backends() -> dict[str, bool]:
                 return True
         return False
 
+    # Claude Code installs its CLI inside a versioned app bundle — scan for it
+    claude_bundle = None
+    claude_code_dir = os.path.expanduser(
+        "~/Library/Application Support/Claude/claude-code"
+    )
+    if os.path.isdir(claude_code_dir):
+        try:
+            for version_dir in sorted(os.listdir(claude_code_dir), reverse=True):
+                candidate = os.path.join(
+                    claude_code_dir, version_dir,
+                    "claude.app", "Contents", "MacOS", "claude",
+                )
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    claude_bundle = candidate
+                    break
+        except OSError:
+            pass
+
     return {
         "claude": _exe(
             shutil.which("claude"),
             os.path.expanduser("~/.local/bin/claude"),
+            claude_bundle,
         ),
         "cursor": _exe(
             shutil.which("agent"),
