@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# agent-install.sh — install the factory agent runner as a macOS launchd daemon.
+#
+# Run once after cloning the repo and filling in .env.
+# After install, the agent starts automatically at login and restarts on crash.
+#
+# Usage:
+#   ./scripts/agent-install.sh           # install and start
+#   ./scripts/agent-install.sh --uninstall  # stop and remove
+
+set -euo pipefail
+
+LABEL="com.dentroio.factory-agent"
+PLIST_DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+AGENT_RUNNER="$REPO_ROOT/services/agent-runner"
+LOG_DIR="$HOME/Library/Logs/factory-agent"
+
+# ── Uninstall ─────────────────────────────────────────────────────────────────
+if [[ "${1:-}" == "--uninstall" ]]; then
+    echo "Stopping and unloading $LABEL..."
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    rm -f "$PLIST_DEST"
+    echo "Done. Plist removed from $PLIST_DEST"
+    echo "Log files remain at $LOG_DIR — remove manually if desired."
+    exit 0
+fi
+
+# ── Pre-flight checks ─────────────────────────────────────────────────────────
+if [ ! -f "$REPO_ROOT/.env" ]; then
+    echo "ERROR: $REPO_ROOT/.env not found."
+    echo "Copy .env.example to .env and fill in GITHUB_TOKEN, GITHUB_REPO, ANTHROPIC_API_KEY."
+    exit 1
+fi
+
+# Check GITHUB_TOKEN and GITHUB_REPO are set
+# shellcheck disable=SC1090
+source "$REPO_ROOT/.env" 2>/dev/null || true
+if [ -z "${GITHUB_TOKEN:-}" ] || [ -z "${GITHUB_REPO:-}" ]; then
+    echo "ERROR: GITHUB_TOKEN and GITHUB_REPO must be set in .env"
+    exit 1
+fi
+
+# Check Python 3 is available
+if ! command -v python3 &>/dev/null; then
+    echo "ERROR: python3 not found in PATH. Install Python 3 (brew install python)."
+    exit 1
+fi
+
+# Install Python dependencies into a local venv if not already there
+VENV="$AGENT_RUNNER/.venv"
+if [ ! -d "$VENV" ]; then
+    echo "Creating Python venv at $VENV..."
+    python3 -m venv "$VENV"
+    "$VENV/bin/pip" install --quiet -r "$AGENT_RUNNER/requirements.txt"
+    echo "Dependencies installed."
+else
+    echo "Venv already exists — skipping pip install (run 'pip install -r requirements.txt' to update)."
+fi
+
+# ── Create log directory ──────────────────────────────────────────────────────
+mkdir -p "$LOG_DIR"
+echo "Logs will go to $LOG_DIR"
+
+# ── Write plist ───────────────────────────────────────────────────────────────
+mkdir -p "$(dirname "$PLIST_DEST")"
+
+sed \
+    -e "s|AGENT_RUNNER_PATH|$AGENT_RUNNER|g" \
+    -e "s|LOG_PATH|$LOG_DIR|g" \
+    "$SCRIPT_DIR/com.dentroio.factory-agent.plist" \
+    > "$PLIST_DEST"
+
+echo "Plist written to $PLIST_DEST"
+
+# ── Load (or reload) ──────────────────────────────────────────────────────────
+# Unload first in case it was previously installed
+launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$PLIST_DEST"
+
+echo ""
+echo "Factory agent installed and started."
+echo ""
+echo "Commands:"
+echo "  make agent-logs    # tail live logs"
+echo "  make agent-status  # show launchd status"
+echo "  make agent-stop    # stop (will restart at next login)"
+echo "  make agent-start   # restart now"
+echo "  make agent-remove  # uninstall completely"

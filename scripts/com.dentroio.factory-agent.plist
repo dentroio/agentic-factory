@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <key>Label</key>
+    <string>com.dentroio.factory-agent</string>
+
+    <!-- Full path to run-local.sh — set by agent-install.sh -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>AGENT_RUNNER_PATH/run-local.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>AGENT_RUNNER_PATH</string>
+
+    <!-- Restart automatically if the process exits for any reason -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Start when the plist is loaded (login or launchctl load) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Wait 30s before restarting after a crash (prevents tight crash loops) -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>LOG_PATH/out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>LOG_PATH/err.log</string>
+
+    <!-- Run at normal user priority -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+</dict>
+</plist>
