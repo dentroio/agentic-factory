@@ -1,70 +1,63 @@
+import asyncio
+import os
+import shutil
 from typing import AsyncIterator
 
 from backends.base import AgentBackend
 
 
 class CodexBackend(AgentBackend):
-    """Runs OpenAI Codex via the TypeScript/Python SDK.
+    """
+    Agentic execution: OpenAI Codex CLI (`codex exec -p <prompt>`).
+    Text Q&A / review (ask): OpenAI chat completions API directly.
 
-    Requires: npm install -g @openai/codex or pip install openai-codex (when available).
-    Falls back to a subprocess call if the SDK is not importable.
+    The CLI is an agentic file editor — calling it for a review question would
+    mutate worktree files instead of returning analysis text. For ask(), we go
+    directly to the OpenAI API so reviewers receive clean text output.
     """
 
     def __init__(self, api_key: str = "") -> None:
-        self._api_key = api_key
-        self._thread = None
+        self._api_key = api_key or os.getenv("OPENAI_API_KEY", "")
+
+    def _env(self) -> dict:
+        env = dict(os.environ)
+        if self._api_key:
+            env["OPENAI_API_KEY"] = self._api_key
+        return env
 
     async def run(self, prompt: str, worktree: str) -> AsyncIterator[str]:
-        try:
-            import subprocess
-            import shutil
-            codex_bin = shutil.which("codex")
-            if not codex_bin:
-                raise RuntimeError("codex CLI not found in PATH")
+        codex_bin = shutil.which("codex")
+        if not codex_bin:
+            raise RuntimeError("codex CLI not found in PATH")
 
-            import asyncio
-            import os
-            env = dict(os.environ)
-            if self._api_key:
-                env["OPENAI_API_KEY"] = self._api_key
-
-            proc = await asyncio.create_subprocess_exec(
-                codex_bin, "exec", "-p", prompt,
-                cwd=worktree,
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            assert proc.stdout is not None
-            while True:
-                line = await proc.stdout.readline()
-                if not line:
-                    break
-                yield line.decode("utf-8", errors="replace").rstrip()
-            await proc.wait()
-
-        except Exception as e:
-            yield f"[codex] error: {e}"
+        proc = await asyncio.create_subprocess_exec(
+            codex_bin, "exec", "-p", prompt,
+            cwd=worktree,
+            env=self._env(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        assert proc.stdout is not None
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            yield line.decode("utf-8", errors="replace").rstrip()
+        await proc.wait()
 
     async def ask(self, question: str) -> str:
+        """Use OpenAI chat completions API — pure text, no file mutations."""
+        if not self._api_key:
+            return "[codex reviewer: OPENAI_API_KEY not set — skipped]"
         try:
-            import asyncio
-            import os
-            import shutil
-            codex_bin = shutil.which("codex")
-            if not codex_bin:
-                return "[codex not available]"
-            env = dict(os.environ)
-            if self._api_key:
-                env["OPENAI_API_KEY"] = self._api_key
-            proc = await asyncio.create_subprocess_exec(
-                codex_bin, "exec", "-p", question,
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=self._api_key)
+            response = await client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": question}],
+                max_tokens=2048,
+                temperature=0.2,
             )
-            assert proc.stdout is not None
-            out, _ = await proc.communicate()
-            return out.decode("utf-8", errors="replace").strip()
+            return response.choices[0].message.content or ""
         except Exception as e:
-            return f"[codex error: {e}]"
+            return f"[codex reviewer error: {e}]"

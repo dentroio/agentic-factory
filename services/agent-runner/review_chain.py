@@ -13,8 +13,8 @@ from thread_monitor import ThreadMonitor
 
 REVIEW_CHAIN: dict[str, list[str]] = {
     "P3": [],
-    "P2": ["security", "correctness"],
-    "P1": ["security", "architecture", "correctness"],
+    "P2": ["security", "architecture", "correctness", "performance"],
+    "P1": ["security", "architecture", "correctness", "performance"],
     "P0": ["security", "architecture", "correctness", "performance"],
 }
 
