@@ -23,6 +23,7 @@ from orchestrator_client import (
     request_validate,
 )
 from prompt_builder import build_prompt, slug_from_title
+from quality_gate import run_quality_gate
 
 
 def _log(msg: str) -> None:
@@ -88,15 +89,31 @@ async def run_wo(wo_spec: dict) -> None:
     finally:
         checkin_task.cancel()
 
-    _log(f"{wo_id} agent run complete — requesting validation")
+    _log(f"{wo_id} agent run complete — running quality gate")
+    await checkin(wo_id, "quality gate: running CI + security scan")
 
-    # Request human validation
+    gate = await run_quality_gate(worktree_path)
+    _log(f"{wo_id} gate: ci={'✅' if gate['ci_passed'] else '❌'} "
+         f"security={'✅' if gate['security_passed'] else '❌'} "
+         f"findings={gate['finding_count']}")
+
+    if not gate["ci_passed"] or not gate["security_passed"]:
+        failures = []
+        if not gate["ci_passed"]:
+            failures.append("CI failed")
+        if not gate["security_passed"]:
+            failures.append(f"{gate['finding_count']} CRITICAL/HIGH security findings")
+        _log(f"{wo_id} quality gate FAILED: {', '.join(failures)} — not submitting for validation")
+        await checkin(wo_id, f"quality gate failed: {', '.join(failures)}")
+        return
+
+    # Request human validation (gate passed)
     validated = await request_validate(
         wo_id,
         verify_url=f"http://localhost:8099/wo/{str(wo_number).replace('WO-', '')}",
         steps=["Review the implementation", "Check outputs match WO spec"],
-        ci_passed=True,   # agent is responsible for ensuring CI passed
-        security_passed=True,
+        ci_passed=gate["ci_passed"],
+        security_passed=gate["security_passed"],
         thread_summary=f"Implemented {wo_id}: {title}",
     )
     if not validated:
