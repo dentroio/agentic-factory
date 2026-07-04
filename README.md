@@ -12,38 +12,43 @@ The factory ships Docker services that run alongside your project:
 
 | Service | Port | Profile | Purpose |
 |---------|------|---------|---------|
-| `factory-status` | 8099 | default | Web dashboard — Overview, PM view, Engineering, Plan, Thread panel, Plan Authoring |
-| `orchestrator` | 8100 | default | Dispatch REST API, WO lifecycle (claim/validate/complete), thread storage, notifications |
+| `factory-status` | 8099 | default | Web dashboard — Overview, PM, Engineering, Plan Authoring, Threads, Settings |
+| `orchestrator` | 8100 | default | Dispatch REST API, WO lifecycle, thread storage, secrets vault, hold/unhold queue |
 | `pr-watchdog` | — | default | Tracks every open PR: CI state, stale detection, merge eligibility |
-| `agent-runner` | — | `agent` | Autonomous WO execution via Claude / Cursor / Codex; quality gate + peer review chain |
+| `agent-runner` | host | optional | Autonomous WO executor — subscription CLI backends (Claude, Cursor, Codex, Gemini); draft server on port 8101 |
 
-**Start them:**
+**Start them (macOS — uses Keychain for secrets):**
 
 ```bash
-cp .env.example .env          # fill in GITHUB_TOKEN, GITHUB_REPO, ANTHROPIC_API_KEY
-docker compose -f docker-compose.status.yml up -d
+make agent-setup              # one-time: stores GitHub token + repo in macOS Keychain
+make up                       # reads Keychain → .env.runtime → starts Docker services
 open http://localhost:8099
+```
 
-# Optional: autonomous agent runner
-docker compose -f docker-compose.status.yml --profile agent up -d
+**First time on a new machine:**
+
+```bash
+make agent-setup              # prompts for GitHub token, repo, Slack webhook, Anthropic key
+make up
+# Then open Settings → Authentication to verify credentials are live
 ```
 
 **Rebuild after code changes:**
 
 ```bash
-docker compose -f docker-compose.status.yml build <service>
-docker compose -f docker-compose.status.yml up -d <service> --force-recreate
+make restart                  # rebuild all images and recreate containers
 ```
 
-`.env` required variables:
+**Environment variables** (set via `make agent-setup` or `Settings → Authentication`):
 
 ```env
-GITHUB_TOKEN=ghp_...          # classic PAT: repo + read:org
-GITHUB_REPO=your-org/your-repo
-ANTHROPIC_API_KEY=sk-ant-...  # required for agent-runner and AI review
+GITHUB_TOKEN=ghp_...          # classic PAT: repo + read:org  (required)
+GITHUB_REPO=your-org/your-repo                                 (required)
+ANTHROPIC_API_KEY=sk-ant-...  # optional — only needed for claude-api draft backend
+SLACK_WEBHOOK_URL=https://hooks.slack.com/...  # optional notifications
 ```
 
-Optional:
+Optional tuning (`.env` file or docker-compose override):
 
 ```env
 SITE_TITLE=My Factory         # dashboard title
@@ -54,21 +59,22 @@ PLAN_PATH=docs/factory/PLAN.json
 POLL_INTERVAL=300             # orchestrator + watchdog poll cadence (seconds)
 MAX_PARALLEL_WOS=2            # max concurrent agent assignments
 POST_COMMENTS=false           # set true to have watchdog post GitHub PR comments
-
-# Notifications (orchestrator fires these when a WO needs human review)
-NTFY_URL=https://ntfy.sh/your-topic
-SLACK_WEBHOOK_URL=https://hooks.slack.com/...
-
-# Reviewer backends (default: claude — or set to codex/cursor to use GPT-4o via OpenAI API)
-SECURITY_REVIEWER_BACKEND=claude
-ARCH_REVIEWER_BACKEND=claude
-CORRECTNESS_REVIEWER_BACKEND=claude
-PERF_REVIEWER_BACKEND=claude
-OPENAI_API_KEY=sk-...         # required if any reviewer backend is set to codex or cursor
-
-# Codex GitHub Actions dispatch
-CODEX_WORKFLOW_ID=codex-dispatch.yml
+NTFY_URL=https://ntfy.sh/your-topic  # push notifications alternative to Slack
 ```
+
+### Agent backends
+
+The agent-runner supports four AI backends, all subscription-based — no per-token billing:
+
+| Backend | How it runs | Requires |
+|---------|-------------|---------|
+| `claude` | `claude --print` CLI | Claude subscription + CLI logged in |
+| `cursor` | `cursor --print` CLI | Cursor subscription + CLI logged in |
+| `codex` | `codex exec -` CLI | OpenAI Codex subscription |
+| `gemini` | `gemini -p` CLI | Google Gemini subscription |
+| `claude-api` | Anthropic SDK (Docker) | `ANTHROPIC_API_KEY` in secrets |
+
+The agent-runner starts a local HTTP server (`draft_server.py`) on port **8101**. The orchestrator proxies WO draft requests to this server when using subscription backends — so the Docker container never needs your CLI session credentials.
 
 ---
 
@@ -87,8 +93,9 @@ CODEX_WORKFLOW_ID=codex-dispatch.yml
 | `services/status-site/` | FastAPI + Jinja2 status dashboard (Overview, PM, Engineering, Plan, Threads, Settings) |
 | `services/orchestrator/` | Dispatch REST API — claim/checkin/validate/complete, thread storage, image serving, notifications |
 | `services/pr-watchdog/` | PR lifecycle monitor — CI health, stale PRs, merge eligibility |
-| `services/agent-runner/` | Autonomous WO executor — Claude/Cursor/Codex backends, quality gate, peer review chain |
-| `services/agent-runner/backends/` | Pluggable AI backends: `claude.py`, `cursor.py`, `codex.py` |
+| `services/agent-runner/` | Autonomous WO executor — subscription CLI backends, quality gate, peer review chain |
+| `services/agent-runner/backends/` | Pluggable AI backends: `claude.py`, `cursor.py`, `codex.py`, `gemini.py` |
+| `services/agent-runner/draft_server.py` | Local HTTP daemon (port 8101) — probes installed CLIs, serves `POST /api/draft` to orchestrator |
 | `services/agent-runner/quality_gate.py` | Parallel CI + bandit + semgrep + JS/TS security scan |
 | `services/agent-runner/review_chain.py` | 4-reviewer AI review chain (security, architecture, correctness, performance) |
 | `services/agent-runner/prompt_builder.py` | Agent mandate injected into every WO prompt (security, performance, quality rules) |
@@ -155,11 +162,12 @@ cp Makefile.template Makefile
 ### 4. Configure the container runtime
 
 ```bash
-cp .env.example .env
-# Set GITHUB_TOKEN and GITHUB_REPO — all other variables have defaults
-docker compose -f docker-compose.status.yml up -d
+make agent-setup              # stores secrets in macOS Keychain — prompts for each value
+make up                       # reads Keychain → starts Docker services
 open http://localhost:8099
 ```
+
+Open **Settings → Authentication** to verify credentials are live, or update them without restarting.
 
 ### 5. Set up CI
 
@@ -168,12 +176,16 @@ cp .github/workflows/ci.yml.template .github/workflows/ci.yml
 # Edit ci.yml — fill in {{...}} sections for your stack
 ```
 
-### 6. Add your ANTHROPIC_API_KEY secret
+### 6. Add your ANTHROPIC_API_KEY secret (optional)
+
+Only required if you want the **claude-api** draft backend (direct Anthropic API calls from Docker). Subscription-based backends (Claude, Cursor, Codex, Gemini CLIs) don't need it.
 
 In your GitHub repo: **Settings → Secrets and variables → Actions → New repository secret**
 
 - Name: `ANTHROPIC_API_KEY`
 - Value: your key from [console.anthropic.com](https://console.anthropic.com)
+
+You can also set it at runtime via **Settings → Authentication** in the factory dashboard.
 
 ### 7. Configure GitHub Ruleset (required status checks)
 
@@ -326,6 +338,28 @@ Production anomaly / new requirement
                                                                              │
                                                              orchestrator dispatches next WO ◄┘
 ```
+
+---
+
+## Creating and managing work orders
+
+### From the UI (recommended)
+
+1. Open **Settings → Plan → Create WO**
+2. Describe what you want to build in plain language — one paragraph
+3. Choose which AI generates the structured spec (Claude, Cursor, Codex, Gemini, or Anthropic API)
+4. Review and edit the generated fields (title, priority, effort, problem, acceptance criteria)
+5. Click **Open PR** — the factory creates the spec file and adds the WO to PLAN.json in one PR
+
+### Editing existing WOs
+
+Each open WO row in **Settings → Plan** has an ✎ button that opens the raw markdown spec in an editor. Saving opens a PR against main — the agent won't pick up the WO until it's merged.
+
+### Queue management
+
+- **⏸ Hold** — prevents the orchestrator from claiming a WO (useful when a dependency isn't merged yet)
+- **▶ Resume** — re-enables a held WO
+- Hold state persists across factory restarts (`/data/held_wos.json` in the orchestrator volume)
 
 ---
 
