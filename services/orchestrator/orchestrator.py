@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from github_dispatch import trigger_codex_workflow
 from notifications import notify_validation_needed
 from plan_engine import next_wo, sorted_queue
 
@@ -108,6 +109,13 @@ class ValidateRequest(BaseModel):
     ci_passed: bool = True
     security_passed: bool = True
     thread_summary: str = ""
+
+
+class CodexDispatchRequest(BaseModel):
+    wo: str
+    repo: str = ""
+    ref: str = "main"
+    slug: str = ""
 
 
 class ValidationDecision(BaseModel):
@@ -313,6 +321,47 @@ async def complete_wo(req: CompleteRequest):
     _save_validations()
     print(f"[orchestrator] {wo_id} marked complete by {req.agent}")
     return {"ok": True}
+
+
+@app.post("/api/dispatch-codex")
+async def dispatch_codex(req: CodexDispatchRequest):
+    """Trigger a cloud Codex run for a WO via GitHub Actions workflow_dispatch.
+
+    Best for P3/docs WOs that don't need a local Docker build.
+    The workflow creates a branch, runs Codex, and opens a PR — the orchestrator
+    poll loop then detects the branch/PR automatically.
+    """
+    wo_id = req.wo
+    repo = req.repo or GITHUB_REPO
+    slug = req.slug or wo_id.lower().replace("wo-", "codex")
+
+    existing = _dispatch_state.get(wo_id, {})
+    active_statuses = {"claimed", "in_progress", "awaiting_human", "awaiting_commit"}
+    if existing.get("status") in active_statuses:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{wo_id} already claimed by {existing.get('agent')} on {existing.get('workstation', '?')}",
+        )
+
+    # Pre-claim so no other agent races in
+    _dispatch_state[wo_id] = {
+        "wo": wo_id,
+        "slug": slug,
+        "agent": "codex-gh-actions",
+        "workstation": "github-actions",
+        "claimed_at": _utcnow(),
+        "status": "claimed",
+    }
+    _save_dispatch()
+
+    ok = await trigger_codex_workflow(repo, wo_id, slug, req.ref)
+    if not ok:
+        del _dispatch_state[wo_id]
+        _save_dispatch()
+        raise HTTPException(status_code=502, detail=f"workflow_dispatch failed for {wo_id} on {repo}")
+
+    print(f"[orchestrator] {wo_id} dispatched to GitHub Actions Codex on {repo}")
+    return {"ok": True, "wo": wo_id, "repo": repo, "agent": "codex-gh-actions"}
 
 
 @app.get("/api/dispatch")
