@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import github_client as gh
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from status_reader import format_duration, get_agent_status
@@ -1042,3 +1042,38 @@ async def api_next_wo_number():
         return {"next": next_num}
     except Exception:
         return {"next": 374}
+
+
+# ── Oryntra CORS proxy ────────────────────────────────────────────────────────
+# The Oryntra Chrome extension runs in the browser (different origin from the
+# status site). Browsers block cross-origin requests, so Oryntra posts to this
+# proxy instead of the orchestrator directly.
+
+@app.post("/api/proxy/thread/{wo}/messages")
+async def proxy_thread_post(wo: str, request: Request):
+    """CORS-friendly proxy: forward Oryntra annotation to orchestrator thread."""
+    body = await request.json()
+    if not body.get("author"):
+        body["author"] = "human"
+    if not body.get("role"):
+        body["role"] = "human"
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{ORCHESTRATOR_URL}/api/thread/{wo}/messages",
+            json=body,
+        )
+    return JSONResponse(content=resp.json(), status_code=resp.status_code)
+
+
+@app.get("/api/proxy/thread/{wo}/images/{filename}")
+async def proxy_thread_image(wo: str, filename: str):
+    """Proxy image served by orchestrator so the browser can load it same-origin."""
+    url = f"{ORCHESTRATOR_URL}/api/thread/{wo}/images/{filename}"
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(url)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="Image not found")
+    return StreamingResponse(
+        iter([resp.content]),
+        media_type=resp.headers.get("content-type", "image/png"),
+    )
