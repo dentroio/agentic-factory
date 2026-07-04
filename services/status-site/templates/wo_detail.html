@@ -93,5 +93,134 @@
     <pre class="whitespace-pre-wrap text-xs text-slate-300 font-mono bg-slate-950/70 p-5 overflow-auto max-h-[500px] leading-relaxed select-all">{{ spec.raw }}</pre>
   </details>
 
+  {# ── Thread panel ─────────────────────────────────────────────────── #}
+  <div class="glass-panel overflow-hidden mb-4" id="thread-panel">
+    <div class="px-5 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between">
+      <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">{{ wo_id }} Thread</span>
+      <span id="thread-count" class="text-[10px] text-slate-500">{{ thread_messages | length }} message{{ 's' if thread_messages | length != 1 }}</span>
+    </div>
+
+    <div id="thread-messages" class="divide-y divide-slate-800/30 max-h-[500px] overflow-y-auto">
+      {% if not thread_messages %}
+      <div id="thread-empty" class="px-5 py-6 text-center text-xs text-slate-600">No messages yet — thread begins when agent claims this WO.</div>
+      {% endif %}
+      {% for msg in thread_messages %}
+      <div class="thread-msg px-5 py-3 {% if msg.role == 'system' %}bg-slate-950/30{% elif msg.role == 'human' %}bg-indigo-950/10{% endif %}"
+           data-id="{{ msg.id }}" data-role="{{ msg.role }}" data-type="{{ msg.type }}">
+        <div class="flex items-start gap-3">
+          <div class="flex-shrink-0 w-20 pt-0.5">
+            <span class="text-[9px] font-mono font-semibold uppercase tracking-wide
+              {% if msg.role == 'system' %}text-slate-500
+              {% elif msg.role == 'human' %}text-indigo-400
+              {% elif msg.role == 'reviewer' %}text-amber-400
+              {% else %}text-cyan-400{% endif %}">{{ msg.author or msg.role }}</span>
+          </div>
+          <div class="flex-1 min-w-0">
+            {% if msg.type == 'ci_result' %}
+            <div class="text-xs {% if msg.metadata.ci_passed %}text-emerald-400{% else %}text-rose-400{% endif %} font-mono leading-relaxed whitespace-pre-wrap">{{ msg.content }}</div>
+            {% elif msg.type == 'security_finding' %}
+            <div class="text-xs text-amber-300 font-mono leading-relaxed whitespace-pre-wrap border-l-2 border-amber-500/50 pl-3">{{ msg.content }}</div>
+            {% else %}
+            <div class="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{{ msg.content }}</div>
+            {% endif %}
+            {% if msg.image_url %}
+            <img src="{{ msg.image_url }}" class="mt-2 max-w-full rounded border border-slate-700" alt="Screenshot">
+            {% endif %}
+          </div>
+          <div class="flex-shrink-0 text-[9px] text-slate-600 font-mono pt-0.5">{{ msg.timestamp[:16].replace('T',' ') if msg.timestamp else '' }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="px-5 py-4 border-t border-slate-800/40 bg-slate-950/20">
+      <div class="flex gap-3">
+        <textarea id="thread-compose"
+          class="flex-1 bg-slate-900 border border-slate-700/60 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-600 resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500/50"
+          rows="2" placeholder="Ask a question or leave guidance... (Ctrl+Enter to send)"></textarea>
+        <button onclick="sendThreadMessage()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-colors self-end">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    const WO_ID = {{ wo_id | tojson }};
+    const messagesEl = document.getElementById('thread-messages');
+    const countEl = document.getElementById('thread-count');
+    let lastId = '';
+
+    const rendered = messagesEl.querySelectorAll('[data-id]');
+    if (rendered.length) lastId = rendered[rendered.length - 1].dataset.id;
+
+    function roleClass(role) {
+      if (role === 'system') return 'bg-slate-950/30';
+      if (role === 'human') return 'bg-indigo-950/10';
+      return '';
+    }
+    function authorClass(role) {
+      if (role === 'system') return 'text-slate-500';
+      if (role === 'human') return 'text-indigo-400';
+      if (role === 'reviewer') return 'text-amber-400';
+      return 'text-cyan-400';
+    }
+    function contentClass(type, meta) {
+      if (type === 'ci_result') return (meta && meta.ci_passed) ? 'text-emerald-400 font-mono whitespace-pre-wrap' : 'text-rose-400 font-mono whitespace-pre-wrap';
+      if (type === 'security_finding') return 'text-amber-300 font-mono whitespace-pre-wrap border-l-2 border-amber-500/50 pl-3';
+      return 'text-slate-300 whitespace-pre-wrap';
+    }
+    function renderMsg(msg) {
+      const ts = (msg.timestamp || '').slice(0, 16).replace('T', ' ');
+      const imgHtml = msg.image_url ? `<img src="${msg.image_url}" class="mt-2 max-w-full rounded border border-slate-700">` : '';
+      return `<div class="thread-msg px-5 py-3 ${roleClass(msg.role)}" data-id="${msg.id}" data-role="${msg.role}" data-type="${msg.type}">
+        <div class="flex items-start gap-3">
+          <div class="flex-shrink-0 w-20 pt-0.5"><span class="text-[9px] font-mono font-semibold uppercase tracking-wide ${authorClass(msg.role)}">${msg.author || msg.role}</span></div>
+          <div class="flex-1 min-w-0"><div class="text-xs ${contentClass(msg.type, msg.metadata)} leading-relaxed">${msg.content || ''}</div>${imgHtml}</div>
+          <div class="flex-shrink-0 text-[9px] text-slate-600 font-mono pt-0.5">${ts}</div>
+        </div>
+      </div>`;
+    }
+
+    async function poll() {
+      try {
+        const params = lastId ? `?since=${encodeURIComponent(lastId)}` : '';
+        const resp = await fetch(`/api/thread/${WO_ID}/messages${params}`);
+        if (!resp.ok) return;
+        const msgs = await resp.json();
+        if (msgs && msgs.length) {
+          const emptyEl = document.getElementById('thread-empty');
+          if (emptyEl) emptyEl.remove();
+          msgs.forEach(m => { messagesEl.insertAdjacentHTML('beforeend', renderMsg(m)); lastId = m.id; });
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+          const total = messagesEl.querySelectorAll('.thread-msg').length;
+          countEl.textContent = `${total} message${total !== 1 ? 's' : ''}`;
+        }
+      } catch (e) {}
+    }
+
+    setInterval(poll, 3000);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    window.sendThreadMessage = async function() {
+      const el = document.getElementById('thread-compose');
+      const content = el.value.trim();
+      if (!content) return;
+      el.value = '';
+      try {
+        await fetch(`/api/thread/${WO_ID}/messages`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({author: 'human', role: 'human', type: 'text', content}),
+        });
+        await poll();
+      } catch (e) { el.value = content; }
+    };
+
+    document.getElementById('thread-compose').addEventListener('keydown', function(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); window.sendThreadMessage(); }
+    });
+  })();
+  </script>
+
 </div>
 {% endblock %}

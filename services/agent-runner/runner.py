@@ -20,6 +20,7 @@ from orchestrator_client import (
     complete,
     get_dispatch_status,
     get_next,
+    post_thread_message,
     request_validate,
 )
 from prompt_builder import build_prompt, slug_from_title
@@ -75,6 +76,7 @@ async def run_wo(wo_spec: dict) -> None:
 
     _log(f"Starting {PREFERRED_AGENT} backend for {wo_id}")
     await checkin(wo_id, "starting agent")
+    await post_thread_message(wo_id, f"Starting implementation of **{wo_id}**: {title}")
 
     # Run the agent with a timeout
     checkin_task = asyncio.create_task(_checkin_loop(wo_id))
@@ -91,6 +93,7 @@ async def run_wo(wo_spec: dict) -> None:
 
     _log(f"{wo_id} agent run complete — running quality gate")
     await checkin(wo_id, "quality gate: running CI + security scan")
+    await post_thread_message(wo_id, "Agent run complete. Running quality gate (CI + security scan)...")
 
     gate = await run_quality_gate(worktree_path)
     _log(f"{wo_id} gate: ci={'✅' if gate['ci_passed'] else '❌'} "
@@ -103,9 +106,25 @@ async def run_wo(wo_spec: dict) -> None:
             failures.append("CI failed")
         if not gate["security_passed"]:
             failures.append(f"{gate['finding_count']} CRITICAL/HIGH security findings")
-        _log(f"{wo_id} quality gate FAILED: {', '.join(failures)} — not submitting for validation")
-        await checkin(wo_id, f"quality gate failed: {', '.join(failures)}")
+        failure_str = ", ".join(failures)
+        _log(f"{wo_id} quality gate FAILED: {failure_str} — not submitting for validation")
+        await checkin(wo_id, f"quality gate failed: {failure_str}")
+        await post_thread_message(
+            wo_id,
+            f"❌ Quality gate failed: {failure_str}\n\n"
+            + (f"CI output:\n```\n{gate['ci_output'][-1000:]}\n```" if not gate["ci_passed"] else ""),
+            msg_type="ci_result",
+            metadata={"ci_passed": gate["ci_passed"], "security_passed": gate["security_passed"],
+                      "findings": gate["bandit_findings"][:5]},
+        )
         return
+
+    await post_thread_message(
+        wo_id,
+        "✅ Quality gate passed — CI and security checks clear. Requesting human review.",
+        msg_type="ci_result",
+        metadata={"ci_passed": True, "security_passed": True},
+    )
 
     # Request human validation (gate passed)
     validated = await request_validate(

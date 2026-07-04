@@ -79,6 +79,26 @@ async def complete(wo_id: str) -> None:
         print(f"[runner] complete {wo_id} failed: {e}")
 
 
+async def post_thread_message(
+    wo_id: str,
+    content: str,
+    msg_type: str = "text",
+    metadata: dict | None = None,
+) -> None:
+    """Post a message to the WO thread (non-blocking — errors are swallowed)."""
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.post(f"{ORCHESTRATOR_URL}/api/thread/{wo_id}/messages", json={
+                "author": AGENT_NAME,
+                "role": "agent",
+                "type": msg_type,
+                "content": content,
+                "metadata": metadata or {},
+            })
+    except Exception:
+        pass  # thread messages are best-effort
+
+
 async def get_dispatch_status(wo_id: str) -> str:
     """Return the current dispatch status for a WO ('approved', 'rejected', etc.)."""
     try:
