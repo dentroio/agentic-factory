@@ -25,6 +25,7 @@ from orchestrator_client import (
 )
 from prompt_builder import build_prompt, slug_from_title
 from quality_gate import run_quality_gate
+from review_chain import get_worktree_diff, run_review_chain
 from thread_monitor import ThreadMonitor, _is_question
 
 
@@ -167,12 +168,49 @@ async def run_wo(wo_spec: dict) -> None:
 
     await post_thread_message(
         wo_id,
-        "✅ Quality gate passed — CI and security checks clear. Requesting human review.",
+        "✅ Quality gate passed — CI and security checks clear. Running peer review chain...",
         msg_type="ci_result",
         metadata={"ci_passed": True, "security_passed": True},
     )
 
-    # Request human validation (gate passed)
+    # Run multi-agent peer review chain
+    await checkin(wo_id, "peer review chain: running")
+    diff = await get_worktree_diff(worktree_path)
+    security_findings = [
+        {"severity": "HIGH", "file": "bandit", "line": 0,
+         "issue": f["issue_text"], "fix": ""}
+        for f in gate.get("bandit_findings", [])
+    ]
+    review_passed, all_findings = await run_review_chain(
+        wo_spec, diff, monitor, security_findings
+    )
+
+    if not review_passed:
+        blocking = [
+            f for f in all_findings
+            if f.get("severity") in ("CRITICAL", "HIGH")
+        ]
+        _log(f"{wo_id} review chain FAILED — {len(blocking)} blocking issues — injecting into agent")
+        await checkin(wo_id, f"review chain failed: {len(blocking)} blocking issues")
+        await backend.inject(
+            f"Peer review chain found {len(blocking)} blocking issue(s) that must be fixed:\n\n"
+            + "\n".join(
+                f"- [{f.get('severity')}] {f.get('file', '?')}:{f.get('line', '?')}: "
+                f"{f.get('issue', '?')}"
+                + (f"\n  Fix: {f['fix']}" if f.get("fix") else "")
+                for f in blocking
+            )
+            + "\n\nFix all blocking issues and re-run CI. The review chain will run again."
+        )
+        return
+
+    reviewer_count = len(set(f.get("reviewer") for f in all_findings if "reviewer" in f) or {"peers"})
+    await monitor.post(
+        f"✅ All reviewers signed off — peer review chain complete. Requesting human validation.",
+        msg_type="text",
+    )
+
+    # Request human validation (gate + review chain both passed)
     validated = await request_validate(
         wo_id,
         verify_url=f"http://localhost:8099/wo/{str(wo_number).replace('WO-', '')}",
