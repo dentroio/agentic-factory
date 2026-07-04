@@ -120,6 +120,9 @@
             <div class="text-xs {% if msg.metadata.ci_passed %}text-emerald-400{% else %}text-rose-400{% endif %} font-mono leading-relaxed whitespace-pre-wrap">{{ msg.content }}</div>
             {% elif msg.type == 'security_finding' %}
             <div class="text-xs text-amber-300 font-mono leading-relaxed whitespace-pre-wrap border-l-2 border-amber-500/50 pl-3">{{ msg.content }}</div>
+            {% elif msg.type == 'review' %}
+            <div class="text-xs leading-relaxed whitespace-pre-wrap border-l-2 pl-3
+              {% if msg.metadata.passed %}text-emerald-300 border-emerald-500/50{% else %}text-rose-300 border-rose-500/50{% endif %}">{{ msg.content }}</div>
             {% else %}
             <div class="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{{ msg.content }}</div>
             {% endif %}
@@ -167,6 +170,7 @@
     function contentClass(type, meta) {
       if (type === 'ci_result') return (meta && meta.ci_passed) ? 'text-emerald-400 font-mono whitespace-pre-wrap' : 'text-rose-400 font-mono whitespace-pre-wrap';
       if (type === 'security_finding') return 'text-amber-300 font-mono whitespace-pre-wrap border-l-2 border-amber-500/50 pl-3';
+      if (type === 'review') return (meta && meta.passed) ? 'text-emerald-300 whitespace-pre-wrap border-l-2 border-emerald-500/50 pl-3' : 'text-rose-300 whitespace-pre-wrap border-l-2 border-rose-500/50 pl-3';
       return 'text-slate-300 whitespace-pre-wrap';
     }
     function renderMsg(msg) {

@@ -53,6 +53,10 @@ services:
       - POLL_INTERVAL=${POLL_INTERVAL:-60}
       - WORKTREE_BASE=/workspace
       - AGENT_TIMEOUT=${AGENT_TIMEOUT:-7200}
+      - SECURITY_REVIEWER_BACKEND=${SECURITY_REVIEWER_BACKEND:-claude}
+      - ARCH_REVIEWER_BACKEND=${ARCH_REVIEWER_BACKEND:-claude}
+      - CORRECTNESS_REVIEWER_BACKEND=${CORRECTNESS_REVIEWER_BACKEND:-claude}
+      - PERF_REVIEWER_BACKEND=${PERF_REVIEWER_BACKEND:-claude}
     volumes:
       - workspace:/workspace
     restart: unless-stopped
