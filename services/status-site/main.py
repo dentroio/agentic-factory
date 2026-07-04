@@ -887,3 +887,158 @@ async def settings_projects_remove(request: Request):
 @app.get("/health")
 async def health():
     return {"status": "ok", "repo": GITHUB_REPO, "token_set": bool(GITHUB_TOKEN)}
+
+
+# ── Plan Authoring UI (WO-373) ────────────────────────────────────────────────
+
+import github_writer as gw
+
+
+def _plan_context_base() -> dict:
+    plan_data = _load_plan_from_orchestrator() or {}
+    return {
+        "site_title": SITE_TITLE,
+        "github_repo": GITHUB_REPO,
+        "refresh_seconds": 3600,
+        "phases": plan_data.get("phases", []),
+        "milestones": plan_data.get("milestones", []),
+        "queue": plan_data.get("queue", []),
+    }
+
+
+@app.get("/settings/plan", response_class=HTMLResponse)
+async def settings_plan(request: Request, pr_url: str = "", error: str = ""):
+    ctx = _plan_context_base()
+    ctx.update({"pr_url": pr_url, "error": error, "pending_validations": []})
+    return templates.TemplateResponse(request=request, name="settings_plan.html", context=ctx)
+
+
+@app.get("/settings/plan/wos/new", response_class=HTMLResponse)
+async def settings_plan_new_wo(request: Request, error: str = ""):
+    plan_data = _load_plan_from_orchestrator() or {}
+    phases = plan_data.get("phases", [])
+    milestones = plan_data.get("milestones", [])
+    queue = plan_data.get("queue", [])
+
+    # Auto-compute next WO number
+    next_num = 374
+    if GITHUB_TOKEN and GITHUB_REPO:
+        try:
+            next_num = await gw.next_wo_number(GITHUB_REPO, WO_PATH, GITHUB_TOKEN)
+        except Exception:
+            pass
+
+    return templates.TemplateResponse(request=request, name="settings_plan_new_wo.html", context={
+        "site_title": SITE_TITLE,
+        "github_repo": GITHUB_REPO,
+        "refresh_seconds": 3600,
+        "phases": phases,
+        "milestones": milestones,
+        "existing_wos": [q["wo"] for q in queue if q.get("status") != "done"],
+        "next_wo_number": next_num,
+        "error": error,
+        "pending_validations": [],
+    })
+
+
+@app.post("/settings/plan/wos", response_class=HTMLResponse)
+async def settings_plan_create_wo(request: Request):
+    from fastapi.responses import RedirectResponse
+    form = await request.form()
+
+    title = str(form.get("title", "")).strip()
+    if not title:
+        return RedirectResponse(url="/settings/plan/wos/new?error=Title+is+required", status_code=303)
+
+    problem = str(form.get("problem", "")).strip()
+    what_to_build = str(form.get("what_to_build", "")).strip()
+    if not problem or not what_to_build:
+        return RedirectResponse(url="/settings/plan/wos/new?error=Problem+and+What+to+Build+are+required", status_code=303)
+
+    number = int(form.get("wo_number", "374"))
+    criteria_raw = str(form.get("acceptance_criteria", "")).strip()
+    criteria = [c.strip() for c in criteria_raw.split("\n") if c.strip()]
+
+    depends_raw = str(form.get("depends_on", "")).strip()
+    depends_on = [d.strip() for d in depends_raw.split(",") if d.strip()]
+
+    blocks_raw = str(form.get("blocks_milestones", "")).strip()
+    blocks = [b.strip() for b in blocks_raw.split(",") if b.strip()]
+
+    wo_data = {
+        "number": number,
+        "title": title,
+        "phase": str(form.get("phase", "p2")),
+        "priority": str(form.get("priority", "P2")),
+        "effort": str(form.get("effort", "M")),
+        "services": str(form.get("services", "none")).strip() or "none",
+        "depends_on": depends_on,
+        "blocks_milestones": blocks,
+        "problem": problem,
+        "what_to_build": what_to_build,
+        "acceptance_criteria": criteria,
+        "notes": str(form.get("notes", "")).strip(),
+    }
+
+    try:
+        result = await gw.create_wo(wo_data, GITHUB_TOKEN, GITHUB_REPO, WO_PATH, PLAN_PATH)
+        pr_url = result.get("pr_url", "")
+        return RedirectResponse(url=f"/settings/plan?pr_url={pr_url}", status_code=303)
+    except Exception as e:
+        return RedirectResponse(url=f"/settings/plan/wos/new?error={str(e)[:120]}", status_code=303)
+
+
+@app.post("/settings/plan/phases", response_class=HTMLResponse)
+async def settings_plan_create_phase(request: Request):
+    from fastapi.responses import RedirectResponse
+    form = await request.form()
+    phase_data = {
+        "id": str(form.get("id", "")).strip(),
+        "label": str(form.get("label", "")).strip(),
+        "target_date": str(form.get("target_date", "")).strip(),
+        "milestone": str(form.get("milestone", "")).strip() or None,
+        "description": str(form.get("description", "")).strip(),
+        "parallel": bool(form.get("parallel")),
+    }
+    if not phase_data["id"]:
+        return RedirectResponse(url="/settings/plan?error=Phase+ID+is+required", status_code=303)
+    try:
+        result = await gw.add_phase(phase_data, GITHUB_TOKEN, GITHUB_REPO, PLAN_PATH)
+        if "error" in result:
+            return RedirectResponse(url=f"/settings/plan?error={result['error']}", status_code=303)
+        return RedirectResponse(url=f"/settings/plan?pr_url={result['pr_url']}", status_code=303)
+    except Exception as e:
+        return RedirectResponse(url=f"/settings/plan?error={str(e)[:120]}", status_code=303)
+
+
+@app.post("/settings/plan/milestones", response_class=HTMLResponse)
+async def settings_plan_create_milestone(request: Request):
+    from fastapi.responses import RedirectResponse
+    form = await request.form()
+    milestone_data = {
+        "id": str(form.get("id", "")).strip(),
+        "label": str(form.get("label", "")).strip(),
+        "target_date": str(form.get("target_date", "")).strip(),
+        "description": str(form.get("description", "")).strip(),
+    }
+    if not milestone_data["id"]:
+        return RedirectResponse(url="/settings/plan?error=Milestone+ID+is+required", status_code=303)
+    try:
+        result = await gw.add_milestone(milestone_data, GITHUB_TOKEN, GITHUB_REPO, PLAN_PATH)
+        if "error" in result:
+            return RedirectResponse(url=f"/settings/plan?error={result['error']}", status_code=303)
+        return RedirectResponse(url=f"/settings/plan?pr_url={result['pr_url']}", status_code=303)
+    except Exception as e:
+        return RedirectResponse(url=f"/settings/plan?error={str(e)[:120]}", status_code=303)
+
+
+@app.get("/api/plan/next-wo-number")
+async def api_next_wo_number():
+    """Return the next available WO number."""
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return {"next": 374}
+    try:
+        next_num = await gw.next_wo_number(GITHUB_REPO, WO_PATH, GITHUB_TOKEN)
+        return {"next": next_num}
+    except Exception:
+        return {"next": 374}
