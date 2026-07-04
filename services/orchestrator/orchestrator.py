@@ -13,7 +13,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 import thread as thread_store
@@ -125,7 +125,8 @@ class ThreadMessage(BaseModel):
     role: str              # "agent" | "human" | "reviewer" | "system"
     type: str = "text"     # "text" | "ci_result" | "security_finding" | "review" | "image"
     content: str
-    image_url: str = ""
+    image_data: str = ""   # base64-encoded PNG/JPEG from Oryntra; saved to disk on receipt
+    image_url: str = ""    # served URL, set by server after saving image_data
     metadata: dict = {}
 
 
@@ -370,15 +371,38 @@ async def complete_wo(req: CompleteRequest):
 @app.post("/api/thread/{wo}/messages")
 async def post_thread_message(wo: str, msg: ThreadMessage):
     """Post a message to a WO's thread (agent or human)."""
+    image_url = msg.image_url
+
+    if msg.image_data:
+        images_dir = DATA_DIR / "threads" / "images" / wo
+        images_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
+        filename = f"{ts}.png"
+        try:
+            raw = base64.b64decode(msg.image_data)
+            (images_dir / filename).write_bytes(raw)
+            image_url = f"/api/thread/{wo}/images/{filename}"
+        except Exception as e:
+            print(f"[orchestrator] failed to save image for {wo}: {e}")
+
     stored = thread_store.append_message(wo, thread_store.make_message(
         author=msg.author,
         role=msg.role,
         msg_type=msg.type,
         content=msg.content,
-        image_url=msg.image_url,
+        image_url=image_url,
         metadata=dict(msg.metadata),
     ))
     return stored
+
+
+@app.get("/api/thread/{wo}/images/{filename}")
+async def get_thread_image(wo: str, filename: str):
+    """Serve a screenshot image stored by the thread message handler."""
+    path = DATA_DIR / "threads" / "images" / wo / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(str(path), media_type="image/png")
 
 
 @app.get("/api/thread/{wo}/messages")

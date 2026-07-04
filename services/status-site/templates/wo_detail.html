@@ -123,10 +123,23 @@
             {% elif msg.type == 'review' %}
             <div class="text-xs leading-relaxed whitespace-pre-wrap border-l-2 pl-3
               {% if msg.metadata.passed %}text-emerald-300 border-emerald-500/50{% else %}text-rose-300 border-rose-500/50{% endif %}">{{ msg.content }}</div>
+            {% elif msg.type == 'image' %}
+            <div class="text-xs text-slate-300 leading-relaxed">
+              {% if msg.content %}<p class="italic mb-2">{{ msg.content }}</p>{% endif %}
+              {% if msg.image_url %}
+              <img src="/api/proxy/thread/{{ wo_id }}/images/{{ msg.image_url.split('/')[-1] }}"
+                   class="rounded-lg border border-slate-700 max-w-full cursor-zoom-in"
+                   onclick="this.classList.toggle('max-w-full'); this.classList.toggle('w-full')"
+                   alt="Annotation screenshot">
+              {% endif %}
+              {% if msg.metadata.source_url %}
+              <span class="text-[9px] text-slate-600 font-mono block mt-1">via Oryntra · {{ msg.metadata.source_url[:80] }}</span>
+              {% endif %}
+            </div>
             {% else %}
             <div class="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{{ msg.content }}</div>
             {% endif %}
-            {% if msg.image_url %}
+            {% if msg.image_url and msg.type != 'image' %}
             <img src="{{ msg.image_url }}" class="mt-2 max-w-full rounded border border-slate-700" alt="Screenshot">
             {% endif %}
           </div>
@@ -175,7 +188,16 @@
     }
     function renderMsg(msg) {
       const ts = (msg.timestamp || '').slice(0, 16).replace('T', ' ');
-      const imgHtml = msg.image_url ? `<img src="${msg.image_url}" class="mt-2 max-w-full rounded border border-slate-700">` : '';
+      let imgHtml = '';
+      if (msg.type === 'image' && msg.image_url) {
+        const filename = msg.image_url.split('/').pop();
+        const proxyUrl = `/api/proxy/thread/{{ wo_id }}/images/${filename}`;
+        const note = msg.content ? `<p class="italic mb-2 text-xs text-slate-300">${msg.content}</p>` : '';
+        const sourceNote = (msg.metadata && msg.metadata.source_url) ? `<span class="text-[9px] text-slate-600 font-mono block mt-1">via Oryntra · ${msg.metadata.source_url.slice(0, 80)}</span>` : '';
+        imgHtml = `<div class="text-xs text-slate-300">${note}<img src="${proxyUrl}" class="rounded-lg border border-slate-700 max-w-full cursor-zoom-in" alt="Annotation screenshot" onclick="this.classList.toggle('max-w-full'); this.classList.toggle('w-full')">${sourceNote}</div>`;
+      } else if (msg.image_url) {
+        imgHtml = `<img src="${msg.image_url}" class="mt-2 max-w-full rounded border border-slate-700">`;
+      }
       return `<div class="thread-msg px-5 py-3 ${roleClass(msg.role)}" data-id="${msg.id}" data-role="${msg.role}" data-type="${msg.type}">
         <div class="flex items-start gap-3">
           <div class="flex-shrink-0 w-20 pt-0.5"><span class="text-[9px] font-mono font-semibold uppercase tracking-wide ${authorClass(msg.role)}">${msg.author || msg.role}</span></div>
