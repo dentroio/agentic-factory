@@ -77,6 +77,9 @@ services:
       - DAILY_SUMMARY_HOUR=${DAILY_SUMMARY_HOUR:-}
       - SUMMARY_ISSUE_NUMBER=${SUMMARY_ISSUE_NUMBER:-}
       - SECONDARY_REPOS=${SECONDARY_REPOS:-}
+      - NTFY_TOPIC=${NTFY_TOPIC:-}
+      - NTFY_SERVER=${NTFY_SERVER:-https://ntfy.sh}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
       - API_PORT=8100
     volumes:
       - orchestrator-data:/data

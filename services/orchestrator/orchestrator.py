@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from notifications import notify_validation_needed
 from plan_engine import next_wo, sorted_queue
 
 load_dotenv()
@@ -245,6 +246,15 @@ async def request_validation(req: ValidateRequest):
     })
     _save_validations()
     print(f"[orchestrator] {req.wo} awaiting human validation from {req.agent}")
+
+    # Fire-and-forget push notifications (ntfy + Slack)
+    asyncio.create_task(notify_validation_needed(
+        wo_id=req.wo,
+        agent=req.agent,
+        verify_url=req.verify_url,
+        thread_summary=req.thread_summary,
+    ))
+
     return {"ok": True}
 
 

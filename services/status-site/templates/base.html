@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="refresh" content="{{ refresh_seconds }}">
-  <title>{% block page_title %}{{ site_title }}{% endblock %}</title>
+  <title>{% if pending_validations is defined and pending_validations %}({{ pending_validations | length }}) {% endif %}{% block page_title %}{{ site_title }}{% endblock %}</title>
   <meta name="description" content="Dentro AI Factory live status dashboard. Real-time insights into work orders, active branches, PR progress, and CI/CD health.">
   <!-- Tailwind CSS via CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
