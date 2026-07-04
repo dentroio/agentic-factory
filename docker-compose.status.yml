@@ -39,6 +39,28 @@ services:
       - watchdog-data:/data
     restart: unless-stopped
 
+  agent-runner:
+    build:
+      context: ./services/agent-runner
+    environment:
+      - ORCHESTRATOR_URL=http://orchestrator:8100
+      - PREFERRED_AGENT=${PREFERRED_AGENT:-claude}
+      - AGENT_NAME=${AGENT_NAME:-claude-runner}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_REPO=${GITHUB_REPO}
+      - CURSOR_API_KEY=${CURSOR_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - POLL_INTERVAL=${POLL_INTERVAL:-60}
+      - WORKTREE_BASE=/workspace
+      - AGENT_TIMEOUT=${AGENT_TIMEOUT:-7200}
+    volumes:
+      - workspace:/workspace
+    restart: unless-stopped
+    depends_on:
+      - orchestrator
+    profiles:
+      - agent   # opt-in: `docker compose --profile agent up -d`
+
   orchestrator:
     build:
       context: ./services/orchestrator
@@ -65,3 +87,4 @@ volumes:
   watchdog-data:
   orchestrator-data:
   factory-config:
+  workspace:
