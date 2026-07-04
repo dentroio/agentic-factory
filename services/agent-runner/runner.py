@@ -6,11 +6,14 @@ from pathlib import Path
 
 import usage_tracker
 from backends import get_backend
+import re
+
 from config import (
     AGENT_NAME,
     AGENT_TIMEOUT,
     GITHUB_REPO,
     HOSTNAME,
+    LOCAL_REPO_PATH,
     ORCHESTRATOR_URL,
     POLL_INTERVAL,
     PREFERRED_AGENT,
@@ -99,6 +102,40 @@ async def _poll_approval(
     return "timeout"
 
 
+async def _setup_worktree(wo_number: str | int, title: str) -> str:
+    """Create and return the worktree path for this WO.
+
+    If LOCAL_REPO_PATH is configured, runs wo_start.sh inside the local clone
+    so the agent gets a fully-initialised git worktree with the right branch.
+    Otherwise falls back to a plain directory under WORKTREE_BASE.
+    """
+    num = re.sub(r"^WO-0*", "", str(wo_number)) or str(wo_number)
+    title_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:40].rstrip("-")
+
+    if LOCAL_REPO_PATH:
+        worktree_dir = str(Path(LOCAL_REPO_PATH) / ".worktrees" / f"wo-{num}-{title_slug}")
+        if Path(worktree_dir).exists():
+            _log(f"Worktree already exists at {worktree_dir} — resuming")
+            return worktree_dir
+        _log(f"Creating worktree via wo_start.sh: wo-{num}-{title_slug}")
+        proc = await asyncio.create_subprocess_exec(
+            "bash", "scripts/wo_start.sh", num, title_slug,
+            cwd=LOCAL_REPO_PATH,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out, _ = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"wo_start.sh failed:\n{out.decode(errors='replace')[:600]}")
+        _log(f"Worktree ready: {worktree_dir}")
+        return worktree_dir
+
+    # Fallback: plain directory (Docker / non-git mode)
+    worktree_dir = str(Path(WORKTREE_BASE) / f"wo-{num}-{title_slug}")
+    Path(worktree_dir).mkdir(parents=True, exist_ok=True)
+    return worktree_dir
+
+
 async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     wo_number = wo_spec.get("wo", wo_spec.get("number", "?"))
     wo_id = f"WO-{wo_number}" if not str(wo_number).startswith("WO-") else str(wo_number)
@@ -112,7 +149,7 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         _log(f"{wo_id} already claimed — skipping")
         return
 
-    worktree_path = str(Path(WORKTREE_BASE) / f"wo-{slug}")
+    worktree_path = await _setup_worktree(wo_number, title)
 
     # Fetch the full WO markdown for the prompt
     wo_markdown = await fetch_wo_markdown(

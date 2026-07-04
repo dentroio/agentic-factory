@@ -93,6 +93,11 @@ export ORCHESTRATOR_URL="${ORCHESTRATOR_URL:-http://localhost:8100}"
 export WORKTREE_BASE="${WORKTREE_BASE:-$HOME/workspace/factory-worktrees}"
 mkdir -p "$WORKTREE_BASE"
 
+# LOCAL_REPO_PATH: path to the local project clone. When set, the runner creates
+# git worktrees via wo_start.sh instead of empty WORKTREE_BASE directories.
+# Loaded from prefs via factory-env.sh above; can also be set as an env var.
+export LOCAL_REPO_PATH="${LOCAL_REPO_PATH:-}"
+
 # ── Verify chosen backend is available ────────────────────────────────────────
 AGENT="${PREFERRED_AGENT:-claude}"
 case "$AGENT" in

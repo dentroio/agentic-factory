@@ -28,17 +28,26 @@ if [[ "${1:-}" == "--uninstall" ]]; then
 fi
 
 # ── Pre-flight checks ─────────────────────────────────────────────────────────
-if [ ! -f "$REPO_ROOT/.env" ]; then
-    echo "ERROR: $REPO_ROOT/.env not found."
-    echo "Copy .env.example to .env and fill in GITHUB_TOKEN, GITHUB_REPO, ANTHROPIC_API_KEY."
-    exit 1
+
+# Load credentials: Keychain first, then .env fallback
+FACTORY_ENV_SH="$REPO_ROOT/scripts/factory-env.sh"
+if [ -f "$FACTORY_ENV_SH" ]; then
+    while IFS='=' read -r key val; do
+        [[ -z "$key" || "$key" == \#* ]] && continue
+        export "$key"="$val"
+    done < <(bash "$FACTORY_ENV_SH" 2>/dev/null)
 fi
 
-# Check GITHUB_TOKEN and GITHUB_REPO are set
-# shellcheck disable=SC1090
-source "$REPO_ROOT/.env" 2>/dev/null || true
+# Fall back to .env if Keychain didn't supply what we need
+if [ -f "$REPO_ROOT/.env" ] && { [ -z "${GITHUB_TOKEN:-}" ] || [ -z "${GITHUB_REPO:-}" ]; }; then
+    # shellcheck disable=SC1090
+    set -o allexport; source "$REPO_ROOT/.env"; set +o allexport
+fi
+
+# Check GITHUB_TOKEN and GITHUB_REPO are set (from either source)
 if [ -z "${GITHUB_TOKEN:-}" ] || [ -z "${GITHUB_REPO:-}" ]; then
-    echo "ERROR: GITHUB_TOKEN and GITHUB_REPO must be set in .env"
+    echo "ERROR: GITHUB_TOKEN and GITHUB_REPO not found."
+    echo "Run 'make agent-setup' to store credentials in macOS Keychain, or create a .env file."
     exit 1
 fi
 

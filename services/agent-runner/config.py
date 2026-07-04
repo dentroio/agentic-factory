@@ -2,6 +2,7 @@ import os
 import socket
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
+LOCAL_REPO_PATH = os.getenv("LOCAL_REPO_PATH", "")  # absolute path to local project clone on host
 PREFERRED_AGENT = os.getenv("PREFERRED_AGENT", "claude")   # claude | cursor | codex | gemini
 AGENT_NAME = os.getenv("AGENT_NAME", "claude-runner")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "60"))
