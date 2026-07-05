@@ -54,7 +54,7 @@ class CursorBackend(AgentBackend):
             self._pending_messages.clear()
 
         proc = await asyncio.create_subprocess_exec(
-            agent_bin, "--print", full_prompt,
+            agent_bin, "--print", "--trust", full_prompt,
             cwd=worktree,
             env=self._env(),
             stdout=asyncio.subprocess.PIPE,

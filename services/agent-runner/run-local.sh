@@ -46,20 +46,42 @@ if command -v npm &>/dev/null; then
     esac
 fi
 
+# Add nvm-managed node bin (codex/gemini install here via npm -g under nvm)
+NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [ -d "$NVM_DIR/versions/node" ]; then
+    # Pick the most-recently-modified version (matches `nvm current` in most setups)
+    NVM_VER=$(ls -t "$NVM_DIR/versions/node" 2>/dev/null | head -1)
+    if [ -n "$NVM_VER" ]; then
+        NVM_BIN="$NVM_DIR/versions/node/$NVM_VER/bin"
+        case ":$PATH:" in
+            *":$NVM_BIN:"*) ;;
+            *) export PATH="$NVM_BIN:$PATH" ;;
+        esac
+    fi
+fi
+
 # ── Find Claude CLI (inside app bundle — version number changes with updates) ─
+# NOTE: Use bash array glob (not ls -t) — ls with unquoted globs splits on spaces
+# in path components like "Application Support", which kills the script under set -e.
 if ! command -v claude &>/dev/null; then
     CLAUDE_BIN=""
-    for pattern in \
+    _find_claude() {
+        local candidates
+        # Each pattern is expanded by bash before the function is called; we iterate
+        # via an array so paths with spaces are handled correctly.
+        for candidate in "$@"; do
+            if [ -x "$candidate" ]; then
+                echo "$candidate"
+                return 0
+            fi
+        done
+        return 1
+    }
+    CLAUDE_BIN=$(_find_claude \
         "$HOME/Library/Application Support/Claude/claude-code/"*/claude.app/Contents/MacOS/claude \
         "$HOME/Library/Application Support/Claude/claude-code-vm/"*/claude \
-        "$HOME/.cursor/extensions/"anthropic.claude-code-*/resources/native-binary/claude; do
-        # shellcheck disable=SC2086
-        LATEST=$(ls -t $pattern 2>/dev/null | head -1)
-        if [ -x "$LATEST" ]; then
-            CLAUDE_BIN="$LATEST"
-            break
-        fi
-    done
+        "$HOME/.cursor/extensions/"anthropic.claude-code-*/resources/native-binary/claude \
+    ) || true
     if [ -n "$CLAUDE_BIN" ]; then
         CLAUDE_DIR="$(dirname "$CLAUDE_BIN")"
         export PATH="$CLAUDE_DIR:$PATH"
