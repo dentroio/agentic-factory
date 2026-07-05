@@ -1458,6 +1458,22 @@ async def api_factory_dispatch():
     return {}
 
 
+@app.delete("/api/factory/dispatch/{wo_id}")
+async def api_factory_release_wo(wo_id: str):
+    """Release a single WO from dispatch state so it can be re-queued."""
+    async with httpx.AsyncClient(timeout=4) as client:
+        r = await client.delete(f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}")
+    return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
+@app.delete("/api/factory/dispatch")
+async def api_factory_release_all():
+    """Clear entire dispatch state."""
+    async with httpx.AsyncClient(timeout=4) as client:
+        r = await client.delete(f"{ORCHESTRATOR_URL}/api/dispatch")
+    return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
 @app.get("/factory", response_class=HTMLResponse)
 async def factory_floor(request: Request):
     backends = {

@@ -72,19 +72,22 @@
         <div id="active-wo-list" class="divide-y divide-slate-800/30">
           {% if active_wos %}
           {% for wo in active_wos %}
-          <a href="/wo/{{ wo.wo | replace('WO-', '') }}" class="block px-4 py-3 hover:bg-slate-800/20 transition-colors group">
+          <div class="px-4 py-3 hover:bg-slate-800/20 transition-colors group">
             <div class="flex items-center gap-2 mb-1.5">
-              <span class="text-[10px] font-mono font-bold text-indigo-400">{{ wo.wo }}</span>
+              <a href="/wo/{{ wo.wo | replace('WO-', '') }}" class="text-[10px] font-mono font-bold text-indigo-400 hover:underline">{{ wo.wo }}</a>
               <span class="text-[9px] px-1.5 py-0.5 rounded font-mono
                 {% if wo.status == 'in_progress' %}bg-indigo-500/15 text-indigo-400
                 {% elif wo.status == 'awaiting_human' %}bg-amber-500/15 text-amber-400
                 {% else %}bg-slate-800 text-slate-500{% endif %}">
                 {{ wo.status | replace('_', ' ') }}
               </span>
+              <button onclick="releaseWO('{{ wo.wo }}')"
+                class="ml-auto text-[9px] text-slate-700 hover:text-rose-400 font-mono transition-colors opacity-0 group-hover:opacity-100"
+                title="Release from dispatch">✕</button>
             </div>
-            <div class="text-xs text-slate-300 leading-snug truncate group-hover:text-white transition-colors">
+            <a href="/wo/{{ wo.wo | replace('WO-', '') }}" class="block text-xs text-slate-300 leading-snug truncate group-hover:text-white transition-colors">
               {{ wo.slug | replace(wo.wo + '-', '') | replace('-', ' ') | title if wo.slug else '—' }}
-            </div>
+            </a>
             {% if wo.step %}
             <div class="flex items-center gap-1.5 mt-1.5">
               <span class="inline-block w-1 h-1 rounded-full bg-indigo-500 flex-shrink-0"></span>
@@ -96,7 +99,7 @@
               {{ wo.last_seen[:16].replace('T', ' ') }} UTC
             </div>
             {% endif %}
-          </a>
+          </div>
           {% endfor %}
           {% else %}
           <div class="px-4 py-10 text-center">
@@ -109,6 +112,11 @@
       </div>
 
       {# claude-api badge #}
+      <div class="glass-panel px-4 py-3 flex items-center justify-between">
+        <span class="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Dispatch</span>
+        <button onclick="releaseAll()" class="text-[10px] font-mono text-slate-600 hover:text-rose-400 transition-colors">clear all ✕</button>
+      </div>
+
       <div class="glass-panel px-4 py-3 flex items-center justify-between">
         <span class="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Claude API Key</span>
         {% if backends.get('claude-api') %}
@@ -234,18 +242,36 @@
         const statusLabel = (wo.status || '').replace(/_/g, ' ');
         const step = wo.step ? `<div class="flex items-center gap-1.5 mt-1.5"><span class="inline-block w-1 h-1 rounded-full bg-indigo-500 flex-shrink-0"></span><span class="text-[10px] text-slate-500 font-mono truncate">${esc(wo.step.slice(0, 70))}</span></div>` : '';
         const ts = wo.last_seen ? `<div class="text-[9px] text-slate-700 font-mono mt-1">${wo.last_seen.slice(0, 16).replace('T', ' ')} UTC</div>` : '';
-        return `<a href="/wo/${woNum}" class="block px-4 py-3 hover:bg-slate-800/20 transition-colors group">
+        return `<div class="px-4 py-3 hover:bg-slate-800/20 transition-colors group">
           <div class="flex items-center gap-2 mb-1.5">
-            <span class="text-[10px] font-mono font-bold text-indigo-400">${esc(wo.wo)}</span>
+            <a href="/wo/${woNum}" class="text-[10px] font-mono font-bold text-indigo-400 hover:underline">${esc(wo.wo)}</a>
             <span class="text-[9px] px-1.5 py-0.5 rounded font-mono ${statusClass}">${esc(statusLabel)}</span>
+            <button onclick="releaseWO('${esc(wo.wo)}')" class="ml-auto text-[9px] text-slate-700 hover:text-rose-400 font-mono transition-colors opacity-0 group-hover:opacity-100" title="Release from dispatch">✕</button>
           </div>
-          <div class="text-xs text-slate-300 leading-snug truncate group-hover:text-white transition-colors">${esc(slug)}</div>
-          ${step}${ts}</a>`;
+          <a href="/wo/${woNum}" class="block text-xs text-slate-300 leading-snug truncate group-hover:text-white transition-colors">${esc(slug)}</a>
+          ${step}${ts}</div>`;
       }).join('');
     } catch (_) {}
   }
 
   setInterval(refreshDispatch, 10000);
+
+  window.releaseWO = async function(woId) {
+    if (!confirm(`Release ${woId} from dispatch? It will be re-queued on the next poll.`)) return;
+    const r = await fetch(`/api/factory/dispatch/${encodeURIComponent(woId)}`, { method: 'DELETE' });
+    if (r.ok) await refreshDispatch();
+    else alert('Failed: ' + await r.text());
+  };
+
+  window.releaseAll = async function() {
+    const countEl = document.getElementById('active-wo-count');
+    const count = parseInt(countEl.textContent || '0');
+    if (count === 0) return;
+    if (!confirm(`Clear all ${count} dispatch entries? All WOs will be re-queued.`)) return;
+    const r = await fetch('/api/factory/dispatch', { method: 'DELETE' });
+    if (r.ok) await refreshDispatch();
+    else alert('Failed: ' + await r.text());
+  };
 })();
 </script>
 {% endblock %}

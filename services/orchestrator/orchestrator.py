@@ -379,6 +379,28 @@ async def reject_validation(wo: str, decision: ValidationDecision):
     raise HTTPException(status_code=404, detail=f"No pending validation for {wo}")
 
 
+@app.delete("/api/dispatch/{wo_id}")
+async def release_dispatch(wo_id: str):
+    """Remove a WO from dispatch state — use when a run failed and needs to be re-queued."""
+    wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
+    if wo_id not in _dispatch_state:
+        raise HTTPException(status_code=404, detail=f"{wo_id} not in dispatch state")
+    del _dispatch_state[wo_id]
+    _save_dispatch()
+    print(f"[orchestrator] {wo_id} released from dispatch (manual reset)")
+    return {"ok": True, "released": wo_id}
+
+
+@app.delete("/api/dispatch")
+async def release_all_dispatch():
+    """Clear entire dispatch state — use to reset after a crash or bad run."""
+    count = len(_dispatch_state)
+    _dispatch_state.clear()
+    _save_dispatch()
+    print(f"[orchestrator] dispatch state cleared ({count} entries removed)")
+    return {"ok": True, "released": count}
+
+
 @app.post("/api/complete")
 async def complete_wo(req: CompleteRequest):
     """Agent signals WO is merged and done."""
