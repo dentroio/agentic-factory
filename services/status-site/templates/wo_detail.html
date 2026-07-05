@@ -93,6 +93,92 @@
     <pre class="whitespace-pre-wrap text-xs text-slate-300 font-mono bg-slate-950/70 p-5 overflow-auto max-h-[500px] leading-relaxed select-all">{{ spec.raw }}</pre>
   </details>
 
+  {# ── Agent Console ────────────────────────────────────────────────── #}
+  <div class="glass-panel overflow-hidden mb-4" id="console-panel">
+    <div class="px-5 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="relative flex h-2 w-2" id="console-dot-wrap">
+          <span class="inline-flex rounded-full h-2 w-2 bg-slate-700"></span>
+        </span>
+        <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Agent Console</span>
+        <span id="console-line-count" class="text-[10px] font-mono text-slate-700">—</span>
+      </div>
+      <div class="flex items-center gap-4">
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" id="console-autoscroll" checked class="w-3 h-3 accent-indigo-500">
+          <span class="text-[10px] text-slate-500">Auto-scroll</span>
+        </label>
+        <a href="/factory" class="text-[10px] text-slate-600 hover:text-slate-400 font-mono transition-colors">factory floor →</a>
+        <button onclick="clearConsole()" class="text-[10px] text-slate-600 hover:text-slate-400 font-mono transition-colors">clear</button>
+      </div>
+    </div>
+    <div id="console-output"
+         class="font-mono text-[11px] leading-relaxed bg-slate-950/90 p-4 overflow-y-auto max-h-[360px] min-h-[120px]">
+      <div class="text-slate-700 italic">Connecting to runner…</div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    const WO_NUM = "{{ spec.number }}";
+    const output = document.getElementById('console-output');
+    const dotWrap = document.getElementById('console-dot-wrap');
+    const lineCountEl = document.getElementById('console-line-count');
+    const autoscroll = document.getElementById('console-autoscroll');
+    let lineCount = 0;
+    let connected = false;
+
+    function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    function colorize(text) {
+      if (/(?:error|failed|FAILED|ERROR|exited with code [^0])/i.test(text))
+        return `<span class="text-rose-400">${esc(text)}</span>`;
+      if (/(?:✅|complete|passed|Worktree ready)/i.test(text))
+        return `<span class="text-emerald-400">${esc(text)}</span>`;
+      if (/(?:⚠|WARNING|warn)/i.test(text))
+        return `<span class="text-amber-400">${esc(text)}</span>`;
+      if (/Claiming WO|quality gate|peer review/i.test(text))
+        return `<span class="text-violet-300">${esc(text)}</span>`;
+      if (text.startsWith('[factory-agent]'))
+        return `<span class="text-sky-400">${esc(text)}</span>`;
+      if (text.startsWith('[runner]'))
+        return `<span class="text-indigo-300">${esc(text)}</span>`;
+      if (text.startsWith('[draft-server]'))
+        return `<span class="text-slate-600">${esc(text)}</span>`;
+      if (/\[WO-\d+\]/.test(text))
+        return `<span class="text-cyan-300">${esc(text)}</span>`;
+      return `<span class="text-slate-400">${esc(text)}</span>`;
+    }
+
+    function append(text) {
+      if (!text.trim()) return;
+      if (!connected) {
+        output.innerHTML = '';
+        connected = true;
+        dotWrap.innerHTML = '<span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>';
+      }
+      lineCount++;
+      const div = document.createElement('div');
+      div.innerHTML = colorize(text);
+      output.appendChild(div);
+      if (autoscroll.checked) output.scrollTop = output.scrollHeight;
+      if (lineCount > 1000) { output.removeChild(output.firstChild); lineCount--; }
+      lineCountEl.textContent = lineCount + ' lines';
+    }
+
+    const es = new EventSource(`/api/runner/log/stream?wo=${encodeURIComponent(WO_NUM)}`);
+    es.onmessage = function (e) {
+      try { append(JSON.parse(e.data)); } catch (_) {}
+    };
+    es.onerror = function () {
+      dotWrap.innerHTML = '<span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>';
+      connected = false;
+    };
+
+    window.clearConsole = function () { output.innerHTML = ''; lineCount = 0; lineCountEl.textContent = '—'; };
+  })();
+  </script>
+
   {# ── Thread panel ─────────────────────────────────────────────────── #}
   <div class="glass-panel overflow-hidden mb-4" id="thread-panel">
     <div class="px-5 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between">

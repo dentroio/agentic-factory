@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block page_title %}Factory Floor — {{ site_title }}{% endblock %}
+{% block content %}
+<div class="max-w-screen-xl mx-auto">
+
+  {# ── Header ──────────────────────────────────────────────────────────── #}
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-lg font-display font-bold text-slate-100">Factory Floor</h1>
+      <p class="text-xs text-slate-500 mt-0.5">Live agent activity · auto-refreshing</p>
+    </div>
+    <div class="flex items-center gap-3">
+      {% if backends.agent_runner_online %}
+      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+        <span class="relative flex h-2 w-2">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+        </span>
+        <span class="text-[11px] font-mono font-semibold text-emerald-400 uppercase tracking-widest">Runner Online</span>
+      </div>
+      {% else %}
+      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/20">
+        <span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+        <span class="text-[11px] font-mono font-semibold text-rose-400 uppercase tracking-widest">Runner Offline</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── Agent Stations ──────────────────────────────────────────────────── #}
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+    {% for name, label, icon in [
+      ('claude',  'Claude',  '◆'),
+      ('cursor',  'Cursor',  '▲'),
+      ('codex',   'Codex',   '●'),
+      ('gemini',  'Gemini',  '◉'),
+    ] %}
+    {% set online = backends.get(name, False) %}
+    <div class="glass-panel p-4 flex flex-col gap-3 relative overflow-hidden
+      {% if online %}border-t-2 border-t-indigo-500/40{% else %}opacity-50{% endif %}">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-base {% if online %}text-indigo-300{% else %}text-slate-700{% endif %}">{{ icon }}</span>
+          <span class="text-xs font-mono font-bold {% if online %}text-slate-200{% else %}text-slate-600{% endif %}">{{ label }}</span>
+        </div>
+        {% if online %}
+        <span class="relative flex h-2 w-2">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+        </span>
+        {% else %}
+        <span class="inline-flex rounded-full h-2 w-2 bg-slate-800"></span>
+        {% endif %}
+      </div>
+      <div class="text-[10px] font-mono {% if online %}text-emerald-400{% else %}text-slate-700{% endif %}">
+        {% if online %}● authenticated &amp; ready{% else %}○ not available{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# ── Active WOs + Live Feed side by side ─────────────────────────────── #}
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+    {# Active Work Orders #}
+    <div class="lg:col-span-1 flex flex-col gap-4">
+      <div class="glass-panel overflow-hidden flex-1">
+        <div class="px-4 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between">
+          <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Active Jobs</span>
+          <span id="active-wo-count" class="text-[10px] font-mono text-slate-600">{{ active_wos | length }}</span>
+        </div>
+        <div id="active-wo-list" class="divide-y divide-slate-800/30">
+          {% if active_wos %}
+          {% for wo in active_wos %}
+          <a href="/wo/{{ wo.wo | replace('WO-', '') }}" class="block px-4 py-3 hover:bg-slate-800/20 transition-colors group">
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="text-[10px] font-mono font-bold text-indigo-400">{{ wo.wo }}</span>
+              <span class="text-[9px] px-1.5 py-0.5 rounded font-mono
+                {% if wo.status == 'in_progress' %}bg-indigo-500/15 text-indigo-400
+                {% elif wo.status == 'awaiting_human' %}bg-amber-500/15 text-amber-400
+                {% else %}bg-slate-800 text-slate-500{% endif %}">
+                {{ wo.status | replace('_', ' ') }}
+              </span>
+            </div>
+            <div class="text-xs text-slate-300 leading-snug truncate group-hover:text-white transition-colors">
+              {{ wo.slug | replace(wo.wo + '-', '') | replace('-', ' ') | title if wo.slug else '—' }}
+            </div>
+            {% if wo.step %}
+            <div class="flex items-center gap-1.5 mt-1.5">
+              <span class="inline-block w-1 h-1 rounded-full bg-indigo-500 flex-shrink-0"></span>
+              <span class="text-[10px] text-slate-500 font-mono truncate">{{ wo.step[:70] }}</span>
+            </div>
+            {% endif %}
+            {% if wo.last_seen %}
+            <div class="text-[9px] text-slate-700 font-mono mt-1">
+              {{ wo.last_seen[:16].replace('T', ' ') }} UTC
+            </div>
+            {% endif %}
+          </a>
+          {% endfor %}
+          {% else %}
+          <div class="px-4 py-10 text-center">
+            <div class="text-slate-700 text-2xl mb-2">⬜</div>
+            <div class="text-xs text-slate-600 font-mono">No active jobs</div>
+            <div class="text-[10px] text-slate-700 mt-1">Runner is idle</div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      {# claude-api badge #}
+      <div class="glass-panel px-4 py-3 flex items-center justify-between">
+        <span class="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Claude API Key</span>
+        {% if backends.get('claude-api') %}
+        <span class="text-[10px] font-mono text-emerald-400">● configured</span>
+        {% else %}
+        <span class="text-[10px] font-mono text-slate-600">○ not set</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Live Log Feed #}
+    <div class="lg:col-span-2">
+      <div class="glass-panel overflow-hidden h-full flex flex-col">
+        <div class="px-4 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between flex-shrink-0">
+          <div class="flex items-center gap-2">
+            <span class="relative flex h-2 w-2" id="feed-dot-wrap">
+              <span class="inline-flex rounded-full h-2 w-2 bg-slate-600"></span>
+            </span>
+            <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Live Feed</span>
+            <span id="feed-line-count" class="text-[10px] font-mono text-slate-700">0 lines</span>
+          </div>
+          <div class="flex items-center gap-4">
+            <label class="flex items-center gap-1.5 cursor-pointer select-none">
+              <input type="checkbox" id="feed-autoscroll" checked class="w-3 h-3 accent-indigo-500">
+              <span class="text-[10px] text-slate-500">Auto-scroll</span>
+            </label>
+            <button onclick="clearFeed()" class="text-[10px] text-slate-600 hover:text-slate-300 font-mono transition-colors">clear</button>
+          </div>
+        </div>
+        <div id="factory-feed"
+             class="font-mono text-[11px] leading-relaxed bg-slate-950/90 p-4 overflow-y-auto flex-1 min-h-[520px]">
+          <div class="text-slate-700 italic">Connecting to runner…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  const feed = document.getElementById('factory-feed');
+  const dotWrap = document.getElementById('feed-dot-wrap');
+  const lineCountEl = document.getElementById('feed-line-count');
+  const autoscroll = document.getElementById('feed-autoscroll');
+  let lineCount = 0;
+  let connected = false;
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function colorize(text) {
+    if (/(?:error|failed|FAILED|ERROR|exited with code [^0])/i.test(text))
+      return `<span class="text-rose-400">${esc(text)}</span>`;
+    if (/(?:✅|complete|passed|Worktree ready|done)/i.test(text))
+      return `<span class="text-emerald-400">${esc(text)}</span>`;
+    if (/(?:⚠|WARNING|warn)/i.test(text))
+      return `<span class="text-amber-400">${esc(text)}</span>`;
+    if (/Claiming WO|quality gate|peer review|validation/i.test(text))
+      return `<span class="text-violet-300">${esc(text)}</span>`;
+    if (text.startsWith('[factory-agent]'))
+      return `<span class="text-sky-400">${esc(text)}</span>`;
+    if (text.startsWith('[runner]'))
+      return `<span class="text-indigo-300">${esc(text)}</span>`;
+    if (text.startsWith('[draft-server]'))
+      return `<span class="text-slate-600">${esc(text)}</span>`;
+    if (/\[WO-\d+\]/.test(text))
+      return `<span class="text-cyan-300">${esc(text)}</span>`;
+    return `<span class="text-slate-400">${esc(text)}</span>`;
+  }
+
+  function append(text) {
+    if (!text.trim()) return;
+    if (!connected) {
+      feed.innerHTML = '';
+      connected = true;
+      dotWrap.innerHTML = '<span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>';
+    }
+    lineCount++;
+    const div = document.createElement('div');
+    div.innerHTML = colorize(text);
+    feed.appendChild(div);
+    if (autoscroll.checked) feed.scrollTop = feed.scrollHeight;
+    if (lineCount > 2000) { feed.removeChild(feed.firstChild); lineCount--; }
+    lineCountEl.textContent = lineCount + ' lines';
+  }
+
+  const es = new EventSource('/api/runner/log/stream');
+  es.onmessage = function (e) {
+    try { append(JSON.parse(e.data)); } catch (_) {}
+  };
+  es.onerror = function () {
+    dotWrap.innerHTML = '<span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>';
+    connected = false;
+  };
+
+  window.clearFeed = function () { feed.innerHTML = ''; lineCount = 0; lineCountEl.textContent = '0 lines'; };
+
+  // Poll dispatch every 10s and refresh active WO list
+  async function refreshDispatch() {
+    try {
+      const r = await fetch('/api/factory/dispatch');
+      if (!r.ok) return;
+      const data = await r.json();
+      const wos = Object.values(data).sort((a, b) => (b.claimed_at || '').localeCompare(a.claimed_at || ''));
+      const list = document.getElementById('active-wo-list');
+      const countEl = document.getElementById('active-wo-count');
+      countEl.textContent = wos.length;
+      if (wos.length === 0) {
+        list.innerHTML = `<div class="px-4 py-10 text-center">
+          <div class="text-slate-700 text-2xl mb-2">⬜</div>
+          <div class="text-xs text-slate-600 font-mono">No active jobs</div>
+          <div class="text-[10px] text-slate-700 mt-1">Runner is idle</div></div>`;
+        return;
+      }
+      list.innerHTML = wos.map(wo => {
+        const woNum = (wo.wo || '').replace('WO-', '');
+        const slug = (wo.slug || '').replace(wo.wo + '-', '').replace(/-/g, ' ');
+        const statusClass = wo.status === 'awaiting_human'
+          ? 'bg-amber-500/15 text-amber-400'
+          : 'bg-indigo-500/15 text-indigo-400';
+        const statusLabel = (wo.status || '').replace(/_/g, ' ');
+        const step = wo.step ? `<div class="flex items-center gap-1.5 mt-1.5"><span class="inline-block w-1 h-1 rounded-full bg-indigo-500 flex-shrink-0"></span><span class="text-[10px] text-slate-500 font-mono truncate">${esc(wo.step.slice(0, 70))}</span></div>` : '';
+        const ts = wo.last_seen ? `<div class="text-[9px] text-slate-700 font-mono mt-1">${wo.last_seen.slice(0, 16).replace('T', ' ')} UTC</div>` : '';
+        return `<a href="/wo/${woNum}" class="block px-4 py-3 hover:bg-slate-800/20 transition-colors group">
+          <div class="flex items-center gap-2 mb-1.5">
+            <span class="text-[10px] font-mono font-bold text-indigo-400">${esc(wo.wo)}</span>
+            <span class="text-[9px] px-1.5 py-0.5 rounded font-mono ${statusClass}">${esc(statusLabel)}</span>
+          </div>
+          <div class="text-xs text-slate-300 leading-snug truncate group-hover:text-white transition-colors">${esc(slug)}</div>
+          ${step}${ts}</a>`;
+      }).join('');
+    } catch (_) {}
+  }
+
+  setInterval(refreshDispatch, 10000);
+})();
+</script>
+{% endblock %}

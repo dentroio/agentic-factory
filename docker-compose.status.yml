@@ -13,10 +13,12 @@ services:
       - RUNS_PATH=${RUNS_PATH:-docs/factory/runs}
       - PLAN_PATH=${PLAN_PATH:-docs/factory/PLAN.json}
       - ORCHESTRATOR_URL=http://orchestrator:8100
+      - LOG_PATH=/var/log/factory-agent/out.log
     volumes:
       - watchdog-data:/watchdog:ro
       - orchestrator-data:/orchestrator:ro
       - factory-config:/config
+      - ${HOME}/Library/Logs/factory-agent:/var/log/factory-agent:ro
     restart: unless-stopped
     depends_on:
       - pr-watchdog

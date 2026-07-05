@@ -33,6 +33,7 @@ ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
 VALIDATIONS_PATH = Path("/orchestrator/pending_validations.json")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
+LOG_PATH = os.getenv("LOG_PATH", "/var/log/factory-agent/out.log")
 FACTORY_CONFIG_PATH = Path(os.getenv("FACTORY_CONFIG_PATH", "/config/factory-config.json"))
 
 
@@ -1388,3 +1389,103 @@ async def proxy_thread_image(wo: str, filename: str):
         iter([resp.content]),
         media_type=resp.headers.get("content-type", "image/png"),
     )
+
+
+# ── Factory Floor ─────────────────────────────────────────────────────────────
+
+def _log_line_matches_wo(line: str, wo_number: str) -> bool:
+    """True if a log line is relevant to a specific WO, or a general runner line."""
+    if not wo_number:
+        return True
+    if f"WO-{wo_number}" in line:
+        return True
+    # Include general runner/agent lines that don't mention any specific WO
+    if "WO-" not in line and ("[factory-agent]" in line or "[runner]" in line or "[draft-server]" in line):
+        return True
+    return False
+
+
+@app.get("/api/runner/log/stream")
+async def stream_runner_log(request: Request, wo: str = "", tail: int = 150):
+    """SSE: tail the agent runner log, optionally filtered to a single WO number."""
+    async def event_gen():
+        try:
+            with open(LOG_PATH, "r", errors="replace") as f:
+                all_lines = f.read().splitlines()
+            for line in all_lines[-tail:]:
+                if _log_line_matches_wo(line, wo):
+                    yield f"data: {json.dumps(line)}\n\n"
+        except FileNotFoundError:
+            yield f"data: {json.dumps('[runner log not found — agent may not have started yet]')}\n\n"
+            return
+        except Exception as e:
+            yield f"data: {json.dumps(f'[log read error: {e}]')}\n\n"
+            return
+
+        try:
+            with open(LOG_PATH, "r", errors="replace") as f:
+                f.seek(0, 2)
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    line = f.readline()
+                    if line:
+                        stripped = line.rstrip()
+                        if stripped and _log_line_matches_wo(stripped, wo):
+                            yield f"data: {json.dumps(stripped)}\n\n"
+                    else:
+                        await asyncio.sleep(0.3)
+        except Exception as e:
+            yield f"data: {json.dumps(f'[stream error: {e}]')}\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/factory/dispatch")
+async def api_factory_dispatch():
+    """Live dispatch state — which WOs are claimed and what each agent is doing."""
+    try:
+        async with httpx.AsyncClient(timeout=4) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch")
+            if r.status_code == 200:
+                return r.json()
+    except Exception:
+        pass
+    return {}
+
+
+@app.get("/factory", response_class=HTMLResponse)
+async def factory_floor(request: Request):
+    backends = {
+        "claude-api": False, "agent_runner_online": False,
+        "claude": False, "cursor": False, "codex": False, "gemini": False,
+    }
+    dispatch: dict = {}
+    try:
+        async with httpx.AsyncClient(timeout=4) as client:
+            b_r, d_r = await asyncio.gather(
+                client.get(f"{ORCHESTRATOR_URL}/api/backends"),
+                client.get(f"{ORCHESTRATOR_URL}/api/dispatch"),
+                return_exceptions=True,
+            )
+            if not isinstance(b_r, Exception) and b_r.status_code == 200:
+                backends.update(b_r.json())
+            if not isinstance(d_r, Exception) and d_r.status_code == 200:
+                dispatch = d_r.json()
+    except Exception:
+        pass
+
+    active_wos = sorted(dispatch.values(), key=lambda w: w.get("claimed_at", ""), reverse=True)
+
+    return templates.TemplateResponse(request=request, name="factory.html", context={
+        "site_title": SITE_TITLE,
+        "github_repo": GITHUB_REPO,
+        "backends": backends,
+        "active_wos": active_wos,
+        "refresh_seconds": 9999,
+        "pending_validations": [],
+    })
