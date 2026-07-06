@@ -279,10 +279,11 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
 
     monitor = ThreadMonitor(wo_id)
 
-    # Fallback order: if primary fails, try other non-claude backends first.
-    # Claude is intentionally last — it consumes subscription quota and should
-    # only be used if everything else is unavailable.
-    _FALLBACK_ORDER = ["cursor", "codex", "gemini", "claude"]
+    # Fallback order: only include backends that are actually installed.
+    # Claude is last — it consumes subscription quota.
+    from draft_server import _probe_backends as _probe
+    _available = _probe()
+    _FALLBACK_ORDER = [b for b in ["cursor", "codex", "gemini", "claude"] if _available.get(b)]
 
     async def _run_one(b, name):
         async with asyncio.timeout(AGENT_TIMEOUT):

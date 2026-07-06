@@ -70,9 +70,19 @@
   </div>
 
   {# ── Backend Stations ─────────────────────────────────────────────────────── #}
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3" id="agent-cards">
-    {% set exhausted = backends.get('exhausted_backends', []) %}
-    {% for name, label, icon in [('claude','Claude','◆'),('cursor','Cursor','▲'),('codex','Codex','●'),('gemini','Gemini','◉')] %}
+  {# Only show backends that are online or quota-exhausted — skip unconfigured ones #}
+  {% set exhausted = backends.get('exhausted_backends', []) %}
+  {% set visible_backends = [] %}
+  {% for name, label, icon in [('claude','Claude','◆'),('cursor','Cursor','▲'),('codex','Codex','●'),('gemini','Gemini','◉')] %}
+    {% if backends.get(name, False) or name in exhausted %}{% set _ = visible_backends.append((name, label, icon)) %}{% endif %}
+  {% endfor %}
+  {% set n_visible = visible_backends | length %}
+  <div class="grid gap-3
+    {% if n_visible == 1 %}grid-cols-1 max-w-xs
+    {% elif n_visible == 2 %}grid-cols-2 max-w-md
+    {% elif n_visible == 3 %}grid-cols-3
+    {% else %}grid-cols-2 sm:grid-cols-4{% endif %}" id="agent-cards">
+    {% for name, label, icon in visible_backends %}
     {% set online = backends.get(name, False) %}
     {% set my_wos = backend_wos.get(name, []) %}
     {% set working = my_wos | length > 0 %}
@@ -207,14 +217,12 @@
             <div class="flex items-center gap-1" id="feed-filters">
               <button onclick="selectAgent(null)" id="filter-all"
                 class="feed-filter-btn active px-2 py-0.5 text-[10px] font-mono rounded transition-all">All</button>
-              <button onclick="selectAgent('claude')" id="filter-claude"
-                class="feed-filter-btn px-2 py-0.5 text-[10px] font-mono rounded transition-all">Claude</button>
-              <button onclick="selectAgent('cursor')" id="filter-cursor"
-                class="feed-filter-btn px-2 py-0.5 text-[10px] font-mono rounded transition-all">Cursor</button>
-              <button onclick="selectAgent('codex')" id="filter-codex"
-                class="feed-filter-btn px-2 py-0.5 text-[10px] font-mono rounded transition-all">Codex</button>
-              <button onclick="selectAgent('gemini')" id="filter-gemini"
-                class="feed-filter-btn px-2 py-0.5 text-[10px] font-mono rounded transition-all">Gemini</button>
+              {% for name, label, icon in [('claude','Claude','◆'),('cursor','Cursor','▲'),('codex','Codex','●'),('gemini','Gemini','◉')] %}
+              {% if backends.get(name, False) or name in exhausted %}
+              <button onclick="selectAgent('{{ name }}')" id="filter-{{ name }}"
+                class="feed-filter-btn px-2 py-0.5 text-[10px] font-mono rounded transition-all">{{ label }}</button>
+              {% endif %}
+              {% endfor %}
             </div>
             <div class="w-px h-4 bg-slate-800"></div>
             <label class="flex items-center gap-1.5 cursor-pointer select-none">
