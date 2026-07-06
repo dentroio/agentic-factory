@@ -1555,8 +1555,14 @@ async def pm_chat(req: PMChatRequest):
                 text = _amsg.content[0].text.strip()
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
+        elif req.images:
+            # Images require the API — CLI backends cannot accept binary image data
+            raise HTTPException(
+                status_code=422,
+                detail="Image input requires an Anthropic API key. Add one in Settings → Agents, or send a text-only message.",
+            )
         else:
-            # Fall through to CLI backend
+            # Text-only: fall through to CLI backend
             req = PMChatRequest(message=req.message, history=req.history, backend="cursor")
 
     if not text:

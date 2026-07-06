@@ -403,6 +403,15 @@
       const data = await r.json();
       typing.remove();
 
+      if (!r.ok) {
+        const errMsg = data.detail || `Error ${r.status}`;
+        const isImageErr = r.status === 422 && sentImages.length > 0;
+        appendMsg('assistant', isImageErr
+          ? `⚠️ ${errMsg}`
+          : `Error: ${errMsg}`);
+        return;
+      }
+
       if (data.type === 'wo_draft' && data.wo_draft) {
         showWODraft(data.wo_draft);
       } else {
@@ -464,12 +473,18 @@
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
 
+  const claudeApiAvailable = {{ 'true' if backends.get('claude-api') else 'false' }};
+
   inputEl.addEventListener('paste', function(e) {
     const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
     if (!items) return;
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         e.preventDefault();
+        if (!claudeApiAvailable) {
+          appendMsg('assistant', '⚠️ Image input requires an Anthropic API key — add one in Settings → Agents. Text-only messages work without a key.');
+          return;
+        }
         addPendingImage(item.getAsFile());
       }
     }
