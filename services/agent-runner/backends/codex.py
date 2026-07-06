@@ -1,8 +1,19 @@
 import asyncio
+import re
 import shutil
 from typing import AsyncIterator
 
-from backends.base import AgentBackend
+from backends.base import AgentBackend, BackendHangError, QuotaExceededError
+
+_FIRST_OUTPUT_TIMEOUT = 45  # seconds before we declare the backend hung
+
+# OpenAI surfaces quota/rate-limit errors as text in CLI output
+_QUOTA_RE = re.compile(
+    r"rate limit exceeded|insufficient.quota|you exceeded your.*quota|"
+    r"429|quota.*exceeded|exceeded.*quota|billing.*limit|"
+    r"exceeded your current quota",
+    re.I,
+)
 
 
 class CodexBackend(AgentBackend):
@@ -42,11 +53,27 @@ class CodexBackend(AgentBackend):
             proc.stdin.write(prompt.encode())
             proc.stdin.close()
 
+        got_first_line = False
         while True:
-            line = await proc.stdout.readline()
+            try:
+                timeout = _FIRST_OUTPUT_TIMEOUT if not got_first_line else None
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise BackendHangError(
+                    f"codex produced no output in {_FIRST_OUTPUT_TIMEOUT}s — "
+                    "likely needs `codex login` or OPENAI_API_KEY"
+                )
             if not line:
                 break
-            yield line.decode("utf-8", errors="replace").rstrip()
+            got_first_line = True
+            text = line.decode("utf-8", errors="replace").rstrip()
+            yield text
+            if _QUOTA_RE.search(text):
+                proc.kill()
+                await proc.wait()
+                raise QuotaExceededError(f"codex quota exhausted: {text.strip()}")
 
         await proc.wait()
         if proc.returncode and proc.returncode != 0:
@@ -58,41 +85,17 @@ class CodexBackend(AgentBackend):
         pass
 
     async def ask(self, question: str) -> str:
-        """
-        Use `codex review` for code review questions — subscription-based, no API key.
-
-        `codex review` is designed for non-interactive code review and captures
-        structured output. Falls back to Claude CLI if codex is not installed.
-        """
         codex_bin = self._find_bin()
-        if codex_bin:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    codex_bin, "review", question,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                assert proc.stdout is not None
-                out, _ = await proc.communicate()
-                text = out.decode("utf-8", errors="replace").strip()
-                if text:
-                    return text
-            except Exception:
-                pass
-
-        # Fall back to Claude CLI (subscription-based)
-        claude_bin = shutil.which("claude")
-        if claude_bin:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    claude_bin, "--print", "-p", question,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                assert proc.stdout is not None
-                out, _ = await proc.communicate()
-                return out.decode("utf-8", errors="replace").strip()
-            except Exception:
-                pass
-
-        return "[codex reviewer: codex not found and claude not available as fallback]"
+        if not codex_bin:
+            return "[codex not available]"
+        proc = await asyncio.create_subprocess_exec(
+            codex_bin, "review", question,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        assert proc.stdout is not None
+        out, _ = await proc.communicate()
+        text = out.decode("utf-8", errors="replace").strip()
+        if _QUOTA_RE.search(text):
+            raise QuotaExceededError(f"codex quota exhausted: {text[:120]}")
+        return text

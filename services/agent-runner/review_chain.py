@@ -111,22 +111,22 @@ VERDICT: LGTM — no performance issues found.
 
 REVIEWER_CONFIG: dict[str, dict] = {
     "security": {
-        "backend": os.getenv("SECURITY_REVIEWER_BACKEND", "claude"),
+        "backend": os.getenv("SECURITY_REVIEWER_BACKEND", "cursor"),
         "prompt_template": SECURITY_REVIEWER_PROMPT,
         "blocking_severities": {"CRITICAL", "HIGH"},
     },
     "architecture": {
-        "backend": os.getenv("ARCH_REVIEWER_BACKEND", "claude"),
+        "backend": os.getenv("ARCH_REVIEWER_BACKEND", "cursor"),
         "prompt_template": ARCH_REVIEWER_PROMPT,
         "blocking_severities": {"CRITICAL"},
     },
     "correctness": {
-        "backend": os.getenv("CORRECTNESS_REVIEWER_BACKEND", "claude"),
+        "backend": os.getenv("CORRECTNESS_REVIEWER_BACKEND", "cursor"),
         "prompt_template": CORRECTNESS_REVIEWER_PROMPT,
         "blocking_severities": {"CRITICAL", "HIGH"},
     },
     "performance": {
-        "backend": os.getenv("PERF_REVIEWER_BACKEND", "claude"),
+        "backend": os.getenv("PERF_REVIEWER_BACKEND", "cursor"),
         "prompt_template": PERF_REVIEWER_PROMPT,
         "blocking_severities": {"CRITICAL"},
     },

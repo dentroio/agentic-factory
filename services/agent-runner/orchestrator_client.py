@@ -22,12 +22,13 @@ async def get_next() -> dict | None:
         return None
 
 
-async def claim(wo_id: str, slug: str = "") -> bool:
+async def claim(wo_id: str, slug: str = "", backend: str = "") -> bool:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(f"{ORCHESTRATOR_URL}/api/claim", json={
                 "wo": wo_id,
                 "agent": AGENT_NAME,
+                "backend": backend,
                 "workstation": HOSTNAME,
                 "slug": slug,
             })

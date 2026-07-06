@@ -1,49 +1,99 @@
 {% extends "base.html" %}
 {% block page_title %}Factory Floor — {{ site_title }}{% endblock %}
 {% block content %}
-<div class="max-w-screen-xl mx-auto">
+<div class="max-w-screen-xl mx-auto space-y-5">
 
-  {# ── Header ──────────────────────────────────────────────────────────── #}
-  <div class="flex items-center justify-between mb-6">
-    <div>
-      <h1 class="text-lg font-display font-bold text-slate-100">Factory Floor</h1>
-      <p class="text-xs text-slate-500 mt-0.5">Live agent activity · auto-refreshing</p>
+  {# ── API Usage Banner ────────────────────────────────────────────────────── #}
+  <div id="usage-banner" class="hidden flex items-center justify-between gap-4 px-4 py-2.5 rounded-xl border border-slate-800/60 bg-slate-900/40 text-[11px] font-mono">
+    <div class="flex items-center gap-4 flex-wrap">
+      <span class="text-slate-500 uppercase tracking-wider text-[9px]">Anthropic API · today</span>
+      <span id="usage-calls" class="text-slate-300"></span>
+      <span id="usage-tokens" class="text-slate-400"></span>
+      <span id="usage-cost" class="text-slate-400"></span>
     </div>
-    <div class="flex items-center gap-3">
-      {% if backends.agent_runner_online %}
-      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-        <span class="relative flex h-2 w-2">
-          <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span>
-          <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-        </span>
-        <span class="text-[11px] font-mono font-semibold text-emerald-400 uppercase tracking-widest">Runner Online</span>
+    <a href="/usage" class="text-slate-600 hover:text-slate-400 transition-colors text-[9px] uppercase tracking-wider">full usage →</a>
+  </div>
+
+  {# ── PM Chat ─────────────────────────────────────────────────────────────── #}
+  <div class="glass-panel overflow-hidden" id="pm-panel">
+    <div class="px-5 py-3 bg-slate-900/60 border-b border-slate-800/40 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-7 h-7 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-sm">◆</div>
+        <div>
+          <span class="text-sm font-semibold text-slate-200">PM Assistant</span>
+          <span class="text-[10px] text-slate-600 font-mono ml-2">ask questions · create work orders</span>
+        </div>
       </div>
-      {% else %}
-      <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/20">
-        <span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
-        <span class="text-[11px] font-mono font-semibold text-rose-400 uppercase tracking-widest">Runner Offline</span>
+      <button onclick="clearChat()" class="text-[10px] text-slate-700 hover:text-slate-400 font-mono transition-colors">clear</button>
+    </div>
+
+    {# Message history #}
+    <div id="pm-messages" class="px-5 py-4 space-y-4 min-h-[80px] max-h-[400px] overflow-y-auto">
+      <div class="flex gap-3" id="pm-welcome">
+        <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+        <div class="text-sm text-slate-300 leading-relaxed">
+          I'm your Factory PM. Ask me what's running, what's next, or describe a feature and I'll draft a work order for you.
+        </div>
       </div>
-      {% endif %}
+    </div>
+
+    {# Quick actions #}
+    <div class="px-5 pb-3 flex flex-wrap gap-2" id="pm-chips">
+      <button onclick="sendChip('What are the agents working on right now?')"
+        class="chip">What's running?</button>
+      <button onclick="sendChip('What should we work on next?')"
+        class="chip">What's next?</button>
+      <button onclick="sendChip('Give me a status summary of the factory.')"
+        class="chip">Status report</button>
+      <button onclick="focusInput()"
+        class="chip chip-accent">＋ Create a WO...</button>
+    </div>
+
+    {# Input #}
+    <div class="px-5 pb-4 pt-2 border-t border-slate-800/30">
+      <div class="flex gap-3">
+        <textarea id="pm-input" rows="2"
+          class="flex-1 bg-slate-900/80 border border-slate-700/60 rounded-xl px-4 py-2.5 text-sm text-slate-200 placeholder-slate-600 resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500/60 transition-all"
+          placeholder="Ask anything, or describe a feature to create a work order… (Enter to send, Shift+Enter for new line)"></textarea>
+        <button onclick="sendMessage()" id="pm-send"
+          class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-all self-end flex items-center gap-2">
+          <span id="pm-send-label">Send</span>
+          <svg id="pm-spinner" class="hidden w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+          </svg>
+        </button>
+      </div>
     </div>
   </div>
 
-  {# ── Agent Stations ──────────────────────────────────────────────────── #}
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-    {% for name, label, icon in [
-      ('claude',  'Claude',  '◆'),
-      ('cursor',  'Cursor',  '▲'),
-      ('codex',   'Codex',   '●'),
-      ('gemini',  'Gemini',  '◉'),
-    ] %}
+  {# ── Backend Stations ─────────────────────────────────────────────────────── #}
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3" id="agent-cards">
+    {% set exhausted = backends.get('exhausted_backends', []) %}
+    {% for name, label, icon in [('claude','Claude','◆'),('cursor','Cursor','▲'),('codex','Codex','●'),('gemini','Gemini','◉')] %}
     {% set online = backends.get(name, False) %}
-    <div class="glass-panel p-4 flex flex-col gap-3 relative overflow-hidden
-      {% if online %}border-t-2 border-t-indigo-500/40{% else %}opacity-50{% endif %}">
+    {% set my_wos = backend_wos.get(name, []) %}
+    {% set working = my_wos | length > 0 %}
+    {% set quota_hit = name in exhausted %}
+    <button data-agent="{{ name }}" onclick="selectAgent('{{ name }}')"
+      class="agent-card glass-panel p-4 flex flex-col gap-2 text-left transition-all
+        {% if quota_hit %}border-t-2 border-t-rose-500/60 opacity-70
+        {% elif online %}border-t-2 {% if working %}border-t-indigo-400/70{% else %}border-t-indigo-500/40{% endif %} hover:border-indigo-400/60 hover:shadow-lg hover:shadow-indigo-900/20
+        {% else %}opacity-40 cursor-not-allowed{% endif %}"
+      {% if not online and not quota_hit %}disabled{% endif %}>
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <span class="text-base {% if online %}text-indigo-300{% else %}text-slate-700{% endif %}">{{ icon }}</span>
-          <span class="text-xs font-mono font-bold {% if online %}text-slate-200{% else %}text-slate-600{% endif %}">{{ label }}</span>
+          <span class="{% if quota_hit %}text-rose-400{% elif online %}text-indigo-300{% else %}text-slate-700{% endif %}">{{ icon }}</span>
+          <span class="text-xs font-mono font-bold {% if quota_hit %}text-rose-300{% elif online %}text-slate-200{% else %}text-slate-600{% endif %}">{{ label }}</span>
         </div>
-        {% if online %}
+        {% if quota_hit %}
+        <span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+        {% elif working %}
+        <span class="relative flex h-2 w-2">
+          <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-indigo-400"></span>
+          <span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+        </span>
+        {% elif online %}
         <span class="relative flex h-2 w-2">
           <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span>
           <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
@@ -52,93 +102,119 @@
         <span class="inline-flex rounded-full h-2 w-2 bg-slate-800"></span>
         {% endif %}
       </div>
-      <div class="text-[10px] font-mono {% if online %}text-emerald-400{% else %}text-slate-700{% endif %}">
-        {% if online %}● authenticated &amp; ready{% else %}○ not available{% endif %}
+      {% if quota_hit %}
+      <div class="text-[10px] font-mono text-rose-400">⊘ quota exhausted</div>
+      <div class="text-[9px] text-slate-600 font-mono">skipped until daemon restart</div>
+      {% elif working %}
+      <div class="text-[10px] font-mono text-indigo-400">
+        ● working · {{ my_wos | length }} WO{% if my_wos | length > 1 %}s{% endif %}
       </div>
-    </div>
+      {% for wo in my_wos %}
+      <div class="text-[9px] font-mono text-slate-400 truncate">{{ wo.wo }} — {{ (wo.step or '') | truncate(32, True, '…') }}</div>
+      {% endfor %}
+      {% elif online %}
+      <div class="text-[10px] font-mono text-emerald-400">● ready</div>
+      {% else %}
+      <div class="text-[10px] font-mono text-slate-700">○ offline</div>
+      {% endif %}
+      <div class="agent-filter-badge hidden mt-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 w-fit">
+        ▶ filtered
+      </div>
+    </button>
     {% endfor %}
   </div>
 
-  {# ── Active WOs + Live Feed side by side ─────────────────────────────── #}
+  {# ── Active Jobs + Live Feed ──────────────────────────────────────────────── #}
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
     {# Active Work Orders #}
-    <div class="lg:col-span-1 flex flex-col gap-4">
+    <div class="lg:col-span-1 flex flex-col gap-3">
       <div class="glass-panel overflow-hidden flex-1">
         <div class="px-4 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between">
           <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Active Jobs</span>
-          <span id="active-wo-count" class="text-[10px] font-mono text-slate-600">{{ active_wos | length }}</span>
+          <div class="flex items-center gap-2">
+            <span id="active-wo-count" class="text-[10px] font-mono text-slate-600">{{ active_wos | length }}</span>
+            <button id="pause-btn" onclick="togglePause()" title="Pause/resume factory — finish current WO then stop claiming new ones"
+              class="text-[9px] font-mono px-2 py-0.5 rounded border transition-all
+                bg-slate-800/60 text-slate-400 border-slate-700/50 hover:text-amber-300 hover:border-amber-500/40">
+              ⏸ pause
+            </button>
+          </div>
         </div>
         <div id="active-wo-list" class="divide-y divide-slate-800/30">
-          {% if active_wos %}
-          {% for wo in active_wos %}
+          {% if active_wos %}{% for wo in active_wos %}
           <div class="px-4 py-3 hover:bg-slate-800/20 transition-colors group">
             <div class="flex items-center gap-2 mb-1.5">
               <a href="/wo/{{ wo.wo | replace('WO-', '') }}" class="text-[10px] font-mono font-bold text-indigo-400 hover:underline">{{ wo.wo }}</a>
               <span class="text-[9px] px-1.5 py-0.5 rounded font-mono
                 {% if wo.status == 'in_progress' %}bg-indigo-500/15 text-indigo-400
                 {% elif wo.status == 'awaiting_human' %}bg-amber-500/15 text-amber-400
-                {% else %}bg-slate-800 text-slate-500{% endif %}">
-                {{ wo.status | replace('_', ' ') }}
-              </span>
+                {% else %}bg-slate-800 text-slate-500{% endif %}">{{ wo.status | replace('_', ' ') }}</span>
               <button onclick="releaseWO('{{ wo.wo }}')"
-                class="ml-auto text-[9px] text-slate-700 hover:text-rose-400 font-mono transition-colors opacity-0 group-hover:opacity-100"
-                title="Release from dispatch">✕</button>
+                class="ml-auto text-[9px] text-slate-700 hover:text-rose-400 font-mono opacity-0 group-hover:opacity-100 transition-all" title="Release">✕</button>
             </div>
-            <a href="/wo/{{ wo.wo | replace('WO-', '') }}" class="block text-xs text-slate-300 leading-snug truncate group-hover:text-white transition-colors">
-              {{ wo.slug | replace(wo.wo + '-', '') | replace('-', ' ') | title if wo.slug else '—' }}
-            </a>
+            <a href="/wo/{{ wo.wo | replace('WO-', '') }}" class="block text-xs text-slate-300 truncate hover:text-white transition-colors">
+              {{ wo.slug | replace(wo.wo + '-', '') | replace('-', ' ') | title if wo.slug else '—' }}</a>
             {% if wo.step %}
             <div class="flex items-center gap-1.5 mt-1.5">
-              <span class="inline-block w-1 h-1 rounded-full bg-indigo-500 flex-shrink-0"></span>
+              <span class="w-1 h-1 rounded-full bg-indigo-500 flex-shrink-0"></span>
               <span class="text-[10px] text-slate-500 font-mono truncate">{{ wo.step[:70] }}</span>
-            </div>
-            {% endif %}
-            {% if wo.last_seen %}
-            <div class="text-[9px] text-slate-700 font-mono mt-1">
-              {{ wo.last_seen[:16].replace('T', ' ') }} UTC
-            </div>
-            {% endif %}
+            </div>{% endif %}
+            {% if wo.last_seen %}<div class="text-[9px] text-slate-700 font-mono mt-1">{{ wo.last_seen[:16].replace('T',' ') }} UTC</div>{% endif %}
           </div>
-          {% endfor %}
-          {% else %}
+          {% endfor %}{% else %}
           <div class="px-4 py-10 text-center">
             <div class="text-slate-700 text-2xl mb-2">⬜</div>
             <div class="text-xs text-slate-600 font-mono">No active jobs</div>
-            <div class="text-[10px] text-slate-700 mt-1">Runner is idle</div>
-          </div>
-          {% endif %}
+          </div>{% endif %}
         </div>
       </div>
-
-      {# claude-api badge #}
       <div class="glass-panel px-4 py-3 flex items-center justify-between">
         <span class="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Dispatch</span>
         <button onclick="releaseAll()" class="text-[10px] font-mono text-slate-600 hover:text-rose-400 transition-colors">clear all ✕</button>
       </div>
-
       <div class="glass-panel px-4 py-3 flex items-center justify-between">
-        <span class="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Claude API Key</span>
-        {% if backends.get('claude-api') %}
-        <span class="text-[10px] font-mono text-emerald-400">● configured</span>
-        {% else %}
-        <span class="text-[10px] font-mono text-slate-600">○ not set</span>
-        {% endif %}
+        <span class="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Claude API</span>
+        <span class="text-[10px] font-mono {% if backends.get('claude-api') %}text-emerald-400{% else %}text-slate-600{% endif %}">
+          {% if backends.get('claude-api') %}● configured{% else %}○ not set{% endif %}</span>
       </div>
+      {% if backends.agent_runner_online %}
+      <div class="glass-panel px-4 py-3 flex items-center gap-2">
+        <span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span></span>
+        <span class="text-[10px] font-mono text-emerald-400">Runner Online</span>
+      </div>{% else %}
+      <div class="glass-panel px-4 py-3 flex items-center gap-2">
+        <span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+        <span class="text-[10px] font-mono text-rose-400">Runner Offline</span>
+      </div>{% endif %}
     </div>
 
     {# Live Log Feed #}
     <div class="lg:col-span-2">
       <div class="glass-panel overflow-hidden h-full flex flex-col">
         <div class="px-4 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between flex-shrink-0">
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-3">
             <span class="relative flex h-2 w-2" id="feed-dot-wrap">
               <span class="inline-flex rounded-full h-2 w-2 bg-slate-600"></span>
             </span>
             <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Live Feed</span>
             <span id="feed-line-count" class="text-[10px] font-mono text-slate-700">0 lines</span>
           </div>
-          <div class="flex items-center gap-4">
+          <div class="flex items-center gap-3">
+            {# Agent filter tabs #}
+            <div class="flex items-center gap-1" id="feed-filters">
+              <button onclick="selectAgent(null)" id="filter-all"
+                class="feed-filter-btn active px-2 py-0.5 text-[10px] font-mono rounded transition-all">All</button>
+              <button onclick="selectAgent('claude')" id="filter-claude"
+                class="feed-filter-btn px-2 py-0.5 text-[10px] font-mono rounded transition-all">Claude</button>
+              <button onclick="selectAgent('cursor')" id="filter-cursor"
+                class="feed-filter-btn px-2 py-0.5 text-[10px] font-mono rounded transition-all">Cursor</button>
+              <button onclick="selectAgent('codex')" id="filter-codex"
+                class="feed-filter-btn px-2 py-0.5 text-[10px] font-mono rounded transition-all">Codex</button>
+              <button onclick="selectAgent('gemini')" id="filter-gemini"
+                class="feed-filter-btn px-2 py-0.5 text-[10px] font-mono rounded transition-all">Gemini</button>
+            </div>
+            <div class="w-px h-4 bg-slate-800"></div>
             <label class="flex items-center gap-1.5 cursor-pointer select-none">
               <input type="checkbox" id="feed-autoscroll" checked class="w-3 h-3 accent-indigo-500">
               <span class="text-[10px] text-slate-500">Auto-scroll</span>
@@ -146,8 +222,7 @@
             <button onclick="clearFeed()" class="text-[10px] text-slate-600 hover:text-slate-300 font-mono transition-colors">clear</button>
           </div>
         </div>
-        <div id="factory-feed"
-             class="font-mono text-[11px] leading-relaxed bg-slate-950/90 p-4 overflow-y-auto flex-1 min-h-[520px]">
+        <div id="factory-feed" class="font-mono text-[11px] leading-relaxed bg-slate-950/90 p-4 overflow-y-auto flex-1 min-h-[440px]">
           <div class="text-slate-700 italic">Connecting to runner…</div>
         </div>
       </div>
@@ -156,121 +231,381 @@
 
 </div>
 
+<style>
+.chip {
+  @apply px-3 py-1 text-[11px] font-mono text-slate-400 bg-slate-900 border border-slate-800 rounded-full hover:border-indigo-500/50 hover:text-indigo-300 transition-all cursor-pointer;
+}
+.chip-accent {
+  @apply text-indigo-400 border-indigo-500/30 bg-indigo-500/5;
+}
+.pm-msg-user { @apply flex gap-3 justify-end; }
+.pm-msg-assistant { @apply flex gap-3; }
+.pm-bubble-user { @apply bg-indigo-600/20 border border-indigo-500/20 rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm text-slate-200 max-w-[80%]; }
+.pm-bubble-assistant { @apply bg-slate-900/60 border border-slate-800/60 rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm text-slate-300 max-w-[85%]; }
+.feed-filter-btn { @apply text-slate-600 hover:text-slate-300 border border-transparent hover:border-slate-700 transition-all; }
+.feed-filter-btn.active { @apply text-indigo-300 bg-indigo-500/10 border-indigo-500/30; }
+</style>
+
 <script>
 (function () {
+  /* ── PM Chat ───────────────────────────────────────────────────── */
+  const messagesEl = document.getElementById('pm-messages');
+  const inputEl = document.getElementById('pm-input');
+  const sendBtn = document.getElementById('pm-send');
+  const sendLabel = document.getElementById('pm-send-label');
+  const spinner = document.getElementById('pm-spinner');
+  let history = [];
+  let busy = false;
+
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function appendMsg(role, content) {
+    const welcome = document.getElementById('pm-welcome');
+    if (welcome) welcome.remove();
+    const wrap = document.createElement('div');
+    if (role === 'user') {
+      wrap.className = 'pm-msg-user';
+      wrap.innerHTML = `<div class="pm-bubble-user">${esc(content)}</div>`;
+    } else {
+      wrap.className = 'pm-msg-assistant flex gap-3';
+      wrap.innerHTML = `<div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+        <div class="pm-bubble-assistant">${esc(content)}</div>`;
+    }
+    messagesEl.appendChild(wrap);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return wrap;
+  }
+
+  function showWODraft(draft) {
+    const welcome = document.getElementById('pm-welcome');
+    if (welcome) welcome.remove();
+    const ac = (draft.acceptance_criteria || []).map(c => `<li class="text-slate-400">${esc(c)}</li>`).join('');
+    const card = document.createElement('div');
+    card.className = 'pm-msg-assistant flex gap-3';
+    card.innerHTML = `
+      <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+      <div class="flex-1 max-w-[90%]">
+        <div class="bg-slate-900 border border-indigo-500/30 rounded-2xl rounded-tl-sm overflow-hidden">
+          <div class="px-4 py-3 bg-indigo-500/10 border-b border-indigo-500/20 flex items-center justify-between">
+            <span class="text-[10px] font-mono text-indigo-400 uppercase tracking-widest">Work Order Draft</span>
+            <div class="flex items-center gap-2">
+              <span class="text-[9px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300">${esc(draft.priority||'P2')}</span>
+              <span class="text-[9px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400">${esc(draft.effort||'M')}</span>
+            </div>
+          </div>
+          <div class="px-4 py-3 space-y-2">
+            <div class="text-sm font-semibold text-slate-100">${esc(draft.title||'')}</div>
+            <div class="text-xs text-slate-400">${esc(draft.problem||'')}</div>
+            ${draft.acceptance_criteria?.length ? `<ul class="text-xs list-disc list-inside space-y-0.5 mt-2">${ac}</ul>` : ''}
+            <div class="text-[10px] font-mono text-slate-600">Services: ${esc(draft.services||'—')}</div>
+          </div>
+          <div class="px-4 py-3 border-t border-slate-800/60 flex gap-2">
+            <button onclick="publishWO(this, ${JSON.stringify(draft).replace(/"/g,'&quot;')})"
+              class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-all">
+              Publish WO to GitHub
+            </button>
+            <button onclick="this.closest('.pm-msg-assistant').remove()"
+              class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition-all">
+              Discard
+            </button>
+          </div>
+        </div>
+      </div>`;
+    messagesEl.appendChild(card);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  async function sendMessage() {
+    const text = inputEl.value.trim();
+    if (!text || busy) return;
+    busy = true;
+    sendBtn.disabled = true;
+    sendLabel.textContent = 'Thinking…';
+    spinner.classList.remove('hidden');
+    inputEl.value = '';
+
+    appendMsg('user', text);
+    history.push({ role: 'user', content: text });
+
+    // Typing indicator
+    const typing = document.createElement('div');
+    typing.className = 'pm-msg-assistant flex gap-3';
+    typing.innerHTML = `<div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+      <div class="pm-bubble-assistant text-slate-600 italic text-xs">Thinking…</div>`;
+    messagesEl.appendChild(typing);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    try {
+      const r = await fetch('/api/factory/pm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, history: history.slice(0, -1) }),
+      });
+      const data = await r.json();
+      typing.remove();
+
+      if (data.type === 'wo_draft' && data.wo_draft) {
+        showWODraft(data.wo_draft);
+      } else {
+        const reply = data.reply || data.detail || 'No response.';
+        appendMsg('assistant', reply);
+        history.push({ role: 'assistant', content: reply });
+      }
+    } catch (e) {
+      typing.remove();
+      appendMsg('assistant', 'Could not reach PM backend. Is the orchestrator running?');
+    }
+
+    busy = false;
+    sendBtn.disabled = false;
+    sendLabel.textContent = 'Send';
+    spinner.classList.add('hidden');
+    inputEl.focus();
+  }
+
+  window.publishWO = async function(btn, draft) {
+    btn.textContent = 'Publishing…';
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/factory/wos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(draft),
+      });
+      const data = await r.json();
+      if (data.pr_url || data.url) {
+        btn.closest('.pm-msg-assistant').querySelector('.pm-bubble-assistant, div[class*="bg-slate-900"]')
+        btn.closest('.overflow-hidden').innerHTML = `<div class="px-4 py-4 flex items-center gap-3">
+          <span class="text-emerald-400 text-lg">✅</span>
+          <div>
+            <div class="text-sm font-semibold text-slate-200">Work order published</div>
+            <a href="${data.pr_url || data.url}" target="_blank" class="text-xs text-indigo-400 hover:underline">Open PR →</a>
+          </div></div>`;
+      } else if (data.error) {
+        btn.textContent = 'Failed: ' + data.error.slice(0, 60);
+        btn.disabled = false;
+      }
+    } catch(e) {
+      btn.textContent = 'Error — try again';
+      btn.disabled = false;
+    }
+  };
+
+  window.sendChip = function(msg) { inputEl.value = msg; sendMessage(); };
+  window.focusInput = function() { inputEl.focus(); inputEl.placeholder = 'Describe the feature you want to build…'; };
+  window.clearChat = function() {
+    messagesEl.innerHTML = `<div class="flex gap-3" id="pm-welcome">
+      <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+      <div class="text-sm text-slate-300 leading-relaxed">I'm your Factory PM. Ask me what's running, what's next, or describe a feature and I'll draft a work order for you.</div>
+    </div>`;
+    history = [];
+  };
+
+  inputEl.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+
+  /* ── Live Feed ─────────────────────────────────────────────────── */
   const feed = document.getElementById('factory-feed');
   const dotWrap = document.getElementById('feed-dot-wrap');
   const lineCountEl = document.getElementById('feed-line-count');
   const autoscroll = document.getElementById('feed-autoscroll');
-  let lineCount = 0;
-  let connected = false;
-
-  function esc(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
+  let lineCount = 0, feedConnected = false;
+  let activeAgent = null;
+  let currentES = null;
 
   function colorize(text) {
-    if (/(?:error|failed|FAILED|ERROR|exited with code [^0])/i.test(text))
-      return `<span class="text-rose-400">${esc(text)}</span>`;
-    if (/(?:✅|complete|passed|Worktree ready|done)/i.test(text))
-      return `<span class="text-emerald-400">${esc(text)}</span>`;
-    if (/(?:⚠|WARNING|warn)/i.test(text))
-      return `<span class="text-amber-400">${esc(text)}</span>`;
-    if (/Claiming WO|quality gate|peer review|validation/i.test(text))
-      return `<span class="text-violet-300">${esc(text)}</span>`;
-    if (text.startsWith('[factory-agent]'))
-      return `<span class="text-sky-400">${esc(text)}</span>`;
-    if (text.startsWith('[runner]'))
-      return `<span class="text-indigo-300">${esc(text)}</span>`;
-    if (text.startsWith('[draft-server]'))
-      return `<span class="text-slate-600">${esc(text)}</span>`;
-    if (/\[WO-\d+\]/.test(text))
-      return `<span class="text-cyan-300">${esc(text)}</span>`;
-    return `<span class="text-slate-400">${esc(text)}</span>`;
+    const e = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    if (/(?:error|failed|FAILED|ERROR|exited with code [^0])/i.test(text)) return `<span class="text-rose-400">${e(text)}</span>`;
+    if (/(?:✅|complete|passed|Worktree ready|done)/i.test(text)) return `<span class="text-emerald-400">${e(text)}</span>`;
+    if (/(?:⚠|WARNING|warn)/i.test(text)) return `<span class="text-amber-400">${e(text)}</span>`;
+    if (/Claiming WO|quality gate|peer review|validation/i.test(text)) return `<span class="text-violet-300">${e(text)}</span>`;
+    if (text.startsWith('[factory-agent]')) return `<span class="text-sky-400">${e(text)}</span>`;
+    if (text.startsWith('[runner]')) return `<span class="text-indigo-300">${e(text)}</span>`;
+    if (text.startsWith('[draft-server]')) return `<span class="text-slate-600">${e(text)}</span>`;
+    if (/\[WO-\d+\]/.test(text)) return `<span class="text-cyan-300">${e(text)}</span>`;
+    return `<span class="text-slate-400">${e(text)}</span>`;
   }
 
-  function append(text) {
+  function appendLog(text) {
     if (!text.trim()) return;
-    if (!connected) {
+    if (!feedConnected) {
       feed.innerHTML = '';
-      connected = true;
+      feedConnected = true;
       dotWrap.innerHTML = '<span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>';
     }
     lineCount++;
-    const div = document.createElement('div');
-    div.innerHTML = colorize(text);
-    feed.appendChild(div);
+    const d = document.createElement('div');
+    d.innerHTML = colorize(text);
+    feed.appendChild(d);
     if (autoscroll.checked) feed.scrollTop = feed.scrollHeight;
     if (lineCount > 2000) { feed.removeChild(feed.firstChild); lineCount--; }
     lineCountEl.textContent = lineCount + ' lines';
   }
 
-  const es = new EventSource('/api/runner/log/stream');
-  es.onmessage = function (e) {
-    try { append(JSON.parse(e.data)); } catch (_) {}
-  };
-  es.onerror = function () {
-    dotWrap.innerHTML = '<span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>';
-    connected = false;
+  function connectFeed(agentFilter) {
+    if (currentES) { currentES.close(); currentES = null; }
+    feed.innerHTML = '<div class="text-slate-700 italic">Connecting…</div>';
+    lineCount = 0; feedConnected = false;
+    dotWrap.innerHTML = '<span class="inline-flex rounded-full h-2 w-2 bg-slate-600"></span>';
+    const url = agentFilter
+      ? `/api/runner/log/stream?agent=${encodeURIComponent(agentFilter)}`
+      : '/api/runner/log/stream';
+    currentES = new EventSource(url);
+    currentES.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch (_) {} };
+    currentES.onerror = () => { dotWrap.innerHTML = '<span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>'; feedConnected = false; };
+  }
+
+  window.selectAgent = function(name) {
+    // Toggle off if already selected
+    if (activeAgent === name) name = null;
+    activeAgent = name;
+
+    // Update agent card styles
+    document.querySelectorAll('.agent-card').forEach(card => {
+      const isSelected = card.dataset.agent === name;
+      card.classList.toggle('ring-2', isSelected);
+      card.classList.toggle('ring-indigo-500', isSelected);
+      card.classList.toggle('shadow-lg', isSelected);
+      card.classList.toggle('shadow-indigo-900/30', isSelected);
+      card.querySelector('.agent-filter-badge').classList.toggle('hidden', !isSelected);
+    });
+
+    // Update feed filter tab styles
+    document.querySelectorAll('.feed-filter-btn').forEach(btn => {
+      const isActive = btn.id === (name ? `filter-${name}` : 'filter-all');
+      btn.classList.toggle('active', isActive);
+    });
+
+    connectFeed(name);
   };
 
-  window.clearFeed = function () { feed.innerHTML = ''; lineCount = 0; lineCountEl.textContent = '0 lines'; };
+  connectFeed(null);
+  window.clearFeed = () => { feed.innerHTML = ''; lineCount = 0; lineCountEl.textContent = '0 lines'; };
 
-  // Poll dispatch every 10s and refresh active WO list
+  /* ── Active WO polling ─────────────────────────────────────────── */
   async function refreshDispatch() {
     try {
       const r = await fetch('/api/factory/dispatch');
       if (!r.ok) return;
       const data = await r.json();
-      const wos = Object.values(data).sort((a, b) => (b.claimed_at || '').localeCompare(a.claimed_at || ''));
+      const allWos = Object.values(data).sort((a, b) => (b.claimed_at||'').localeCompare(a.claimed_at||''));
+      const activeWos = allWos.filter(w => w.status !== 'complete');
+      const doneWos = allWos.filter(w => w.status === 'complete');
       const list = document.getElementById('active-wo-list');
-      const countEl = document.getElementById('active-wo-count');
-      countEl.textContent = wos.length;
-      if (wos.length === 0) {
-        list.innerHTML = `<div class="px-4 py-10 text-center">
-          <div class="text-slate-700 text-2xl mb-2">⬜</div>
-          <div class="text-xs text-slate-600 font-mono">No active jobs</div>
-          <div class="text-[10px] text-slate-700 mt-1">Runner is idle</div></div>`;
-        return;
+      document.getElementById('active-wo-count').textContent = activeWos.length;
+      const e = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+      function statusClass(status) {
+        if (status === 'awaiting_human') return 'bg-amber-500/15 text-amber-400';
+        if (status === 'complete') return 'bg-emerald-500/15 text-emerald-400';
+        if (status === 'rejected') return 'bg-rose-500/15 text-rose-400';
+        return 'bg-indigo-500/15 text-indigo-400';
       }
-      list.innerHTML = wos.map(wo => {
-        const woNum = (wo.wo || '').replace('WO-', '');
-        const slug = (wo.slug || '').replace(wo.wo + '-', '').replace(/-/g, ' ');
-        const statusClass = wo.status === 'awaiting_human'
-          ? 'bg-amber-500/15 text-amber-400'
-          : 'bg-indigo-500/15 text-indigo-400';
-        const statusLabel = (wo.status || '').replace(/_/g, ' ');
-        const step = wo.step ? `<div class="flex items-center gap-1.5 mt-1.5"><span class="inline-block w-1 h-1 rounded-full bg-indigo-500 flex-shrink-0"></span><span class="text-[10px] text-slate-500 font-mono truncate">${esc(wo.step.slice(0, 70))}</span></div>` : '';
-        const ts = wo.last_seen ? `<div class="text-[9px] text-slate-700 font-mono mt-1">${wo.last_seen.slice(0, 16).replace('T', ' ')} UTC</div>` : '';
+
+      function woCard(wo) {
+        const num = (wo.wo||'').replace('WO-','');
+        const slug = (wo.slug||'').replace(wo.wo+'-','').replace(/-/g,' ');
+        const sc = statusClass(wo.status);
+        const isFailed = (wo.step||'').toLowerCase().includes('failed');
+        const stepDot = isFailed ? 'bg-rose-500' : 'bg-indigo-500';
+        const stepText = isFailed ? `text-rose-400 font-semibold` : 'text-slate-500';
+        const step = wo.step ? `<div class="flex items-center gap-1.5 mt-1.5"><span class="w-1 h-1 rounded-full ${stepDot} flex-shrink-0"></span><span class="text-[10px] ${stepText} font-mono truncate">${e(wo.step.slice(0,70))}</span></div>` : '';
+        const ts = wo.last_seen ? `<div class="text-[9px] text-slate-700 font-mono mt-1">${wo.last_seen.slice(0,16).replace('T',' ')} UTC</div>` : '';
+        const retryBtn = isFailed ? `<button onclick="retryWO('${e(wo.wo)}')" class="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 hover:bg-amber-500/30 font-mono transition-all" title="Re-queue for runner">↺ retry</button>` : '';
         return `<div class="px-4 py-3 hover:bg-slate-800/20 transition-colors group">
           <div class="flex items-center gap-2 mb-1.5">
-            <a href="/wo/${woNum}" class="text-[10px] font-mono font-bold text-indigo-400 hover:underline">${esc(wo.wo)}</a>
-            <span class="text-[9px] px-1.5 py-0.5 rounded font-mono ${statusClass}">${esc(statusLabel)}</span>
-            <button onclick="releaseWO('${esc(wo.wo)}')" class="ml-auto text-[9px] text-slate-700 hover:text-rose-400 font-mono transition-colors opacity-0 group-hover:opacity-100" title="Release from dispatch">✕</button>
+            <a href="/wo/${num}" class="text-[10px] font-mono font-bold text-indigo-400 hover:underline">${e(wo.wo)}</a>
+            <span class="text-[9px] px-1.5 py-0.5 rounded font-mono ${sc}">${e((wo.status||'').replace(/_/g,' '))}</span>
+            ${retryBtn}
+            <button onclick="releaseWO('${e(wo.wo)}')" class="ml-auto text-[9px] text-slate-700 hover:text-rose-400 font-mono opacity-0 group-hover:opacity-100 transition-all" title="Release">✕</button>
           </div>
-          <a href="/wo/${woNum}" class="block text-xs text-slate-300 leading-snug truncate group-hover:text-white transition-colors">${esc(slug)}</a>
+          <a href="/wo/${num}" class="block text-xs text-slate-300 truncate hover:text-white transition-colors">${e(slug)}</a>
           ${step}${ts}</div>`;
-      }).join('');
+      }
+
+      async function retryWO(woId) {
+        try {
+          const r = await fetch(`/api/dispatch/${woId}/retry`, {method: 'POST'});
+          if (r.ok) refreshDispatch();
+        } catch (_) {}
+      }
+
+      if (!activeWos.length && !doneWos.length) {
+        list.innerHTML = `<div class="px-4 py-10 text-center"><div class="text-slate-700 text-2xl mb-2">⬜</div><div class="text-xs text-slate-600 font-mono">No active jobs</div></div>`;
+        return;
+      }
+      const activePart = activeWos.map(woCard).join('');
+      const donePart = doneWos.length ? `
+        <div class="px-4 py-1.5 text-[9px] font-mono text-slate-600 uppercase tracking-widest border-t border-slate-800/40 mt-1">Recently done</div>
+        ${doneWos.map(woCard).join('')}` : '';
+      list.innerHTML = activePart + donePart;
     } catch (_) {}
   }
-
   setInterval(refreshDispatch, 10000);
 
+  /* ── Anthropic API usage banner ────────────────────────────────── */
+  async function refreshUsage() {
+    try {
+      const r = await fetch('/api/anthropic-usage');
+      if (!r.ok) return;
+      const d = await r.json();
+      const s = d.summary || {};
+      if (!s.call_count) return;
+      const banner = document.getElementById('usage-banner');
+      banner.classList.remove('hidden');
+      const fmt = n => n >= 1000 ? (n/1000).toFixed(1)+'k' : n;
+      document.getElementById('usage-calls').textContent = `${s.today_calls} calls today`;
+      document.getElementById('usage-tokens').textContent =
+        `${fmt(s.today_input_tokens)} in · ${fmt(s.today_output_tokens)} out tokens`;
+      const cost = s.today_cost_usd;
+      const costEl = document.getElementById('usage-cost');
+      costEl.textContent = `~$${cost.toFixed(4)}`;
+      costEl.className = cost > 0.50 ? 'text-amber-400' : cost > 0.10 ? 'text-yellow-400' : 'text-emerald-400';
+    } catch (_) {}
+  }
+  refreshUsage();
+  setInterval(refreshUsage, 60000);
+
+  /* ── Factory pause/resume ──────────────────────────────────────── */
+  async function syncPauseBtn() {
+    try {
+      const r = await fetch('/api/factory/pause');
+      if (!r.ok) return;
+      const { paused } = await r.json();
+      const btn = document.getElementById('pause-btn');
+      if (!btn) return;
+      if (paused) {
+        btn.textContent = '▶ resume';
+        btn.className = btn.className.replace('text-slate-400', 'text-amber-300').replace('border-slate-700/50', 'border-amber-500/40');
+        btn.classList.add('text-amber-300', 'border-amber-500/40');
+      } else {
+        btn.textContent = '⏸ pause';
+        btn.classList.remove('text-amber-300', 'border-amber-500/40');
+        btn.classList.add('text-slate-400', 'border-slate-700/50');
+      }
+    } catch (_) {}
+  }
+  window.togglePause = async function() {
+    try {
+      const cur = await fetch('/api/factory/pause').then(r => r.json());
+      const action = cur.paused ? 'resume' : 'pause';
+      await fetch(`/api/factory/${action}`, { method: 'POST' });
+      await syncPauseBtn();
+    } catch(e) { alert('Could not reach orchestrator: ' + e); }
+  };
+  syncPauseBtn();
+
   window.releaseWO = async function(woId) {
-    if (!confirm(`Release ${woId} from dispatch? It will be re-queued on the next poll.`)) return;
+    if (!confirm(`Release ${woId} from dispatch?`)) return;
     const r = await fetch(`/api/factory/dispatch/${encodeURIComponent(woId)}`, { method: 'DELETE' });
     if (r.ok) await refreshDispatch();
-    else alert('Failed: ' + await r.text());
   };
-
   window.releaseAll = async function() {
-    const countEl = document.getElementById('active-wo-count');
-    const count = parseInt(countEl.textContent || '0');
-    if (count === 0) return;
-    if (!confirm(`Clear all ${count} dispatch entries? All WOs will be re-queued.`)) return;
+    const count = parseInt(document.getElementById('active-wo-count').textContent || '0');
+    if (!count || !confirm(`Clear all ${count} dispatch entries?`)) return;
     const r = await fetch('/api/factory/dispatch', { method: 'DELETE' });
     if (r.ok) await refreshDispatch();
-    else alert('Failed: ' + await r.text());
   };
 })();
 </script>

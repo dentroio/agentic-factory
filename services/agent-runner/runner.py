@@ -6,6 +6,11 @@ from pathlib import Path
 
 import usage_tracker
 from backends import get_backend
+from backends.base import BackendHangError, QuotaExceededError
+from backends.cursor import CursorConnectionError
+import backends.quota_state as quota_state
+
+_BACKEND_FAIL = (CursorConnectionError, BackendHangError)
 import re
 
 from config import (
@@ -19,6 +24,7 @@ from config import (
     PREFERRED_AGENT,
     WORKTREE_BASE,
 )
+import httpx as _httpx
 from github_client import fetch_wo_markdown
 from orchestrator_client import (
     checkin,
@@ -31,13 +37,27 @@ from orchestrator_client import (
     request_validate,
 )
 from prompt_builder import build_prompt, slug_from_title
-from quality_gate import run_quality_gate
+from quality_gate import run_container_rebuild, run_quality_gate, _ci_env
 from review_chain import get_worktree_diff, run_review_chain
 from thread_monitor import ThreadMonitor, _is_question
 
 
 def _log(msg: str) -> None:
-    print(f"[runner] {msg}", flush=True)
+    line = f"[runner] {msg}"
+    print(line, flush=True)
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_post_log(line))
+    except RuntimeError:
+        pass  # not in async context — print only
+
+
+async def _post_log(line: str) -> None:
+    try:
+        async with _httpx.AsyncClient(timeout=1.0) as c:
+            await c.post(f"{ORCHESTRATOR_URL}/api/log", json={"line": line, "agent": AGENT_NAME})
+    except Exception:
+        pass
 
 
 async def _checkin_loop(wo_id: str, interval: int = 90) -> None:
@@ -136,6 +156,99 @@ async def _setup_worktree(wo_number: str | int, title: str) -> str:
     return worktree_dir
 
 
+async def _build_change_summary(worktree: str) -> str:
+    """Return a plain-text summary of files the agent created or modified."""
+    proc = await asyncio.create_subprocess_exec(
+        "git", "status", "--short",
+        cwd=worktree,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    out, _ = await proc.communicate()
+    lines = out.decode(errors="replace").strip().splitlines()
+    if not lines:
+        return "No file changes detected."
+    new_files = [l[3:] for l in lines if l.startswith("??")]
+    modified = [l[3:] for l in lines if not l.startswith("??")]
+    parts = []
+    if new_files:
+        names = ", ".join(new_files[:8]) + (" ..." if len(new_files) > 8 else "")
+        parts.append(f"New ({len(new_files)}): {names}")
+    if modified:
+        names = ", ".join(modified[:8]) + (" ..." if len(modified) > 8 else "")
+        parts.append(f"Modified ({len(modified)}): {names}")
+    return " | ".join(parts) if parts else "No changes."
+
+
+async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, monitor) -> bool:
+    """Commit all changes in the worktree, push the branch, and open a PR.
+
+    Returns True if a commit was created, False if the tree was already clean.
+    Runs shell commands directly — no AI backend needed for this step.
+    """
+    num = re.sub(r"[^0-9]", "", wo_id)
+    branch = f"wo/{num}-{re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:40].rstrip('-')}"
+
+    push_env = _ci_env(worktree)
+
+    async def _git(*args, env=None) -> tuple[int, str]:
+        proc = await asyncio.create_subprocess_exec(
+            "git", *args, cwd=worktree,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            env=env,
+        )
+        out, _ = await proc.communicate()
+        return proc.returncode, out.decode(errors="replace").strip()
+
+    # Check for any changes (staged, unstaged, or untracked)
+    rc, status = await _git("status", "--porcelain")
+    if not status:
+        _log(f"{wo_id} worktree is clean — nothing to commit")
+        return False
+
+    # Stage everything
+    await _git("add", "-A")
+
+    # Commit
+    commit_msg = f"feat({wo_id.lower()}): {title[:72]}\n\nImplemented by {AGENT_NAME} via agentic factory."
+    rc, out = await _git("commit", "-m", commit_msg)
+    if rc != 0:
+        _log(f"{wo_id} git commit failed: {out[:200]}")
+        await monitor.post(f"⚠️ Git commit failed:\n```\n{out[:400]}\n```")
+        return False
+
+    _log(f"{wo_id} committed: {out.splitlines()[0] if out else '(no output)'}")
+
+    # Push — pass venv-enriched PATH so the pre-push hook finds black/ruff
+    rc, out = await _git("push", "-u", "origin", branch, env=push_env)
+    if rc != 0:
+        _log(f"{wo_id} git push failed: {out[:200]}")
+        await monitor.post(f"⚠️ Git push failed:\n```\n{out[:400]}\n```\nBranch: `{branch}`")
+        return True  # commit was created, just push failed
+
+    _log(f"{wo_id} pushed branch {branch}")
+
+    # Open PR
+    pr_proc = await asyncio.create_subprocess_exec(
+        "gh", "pr", "create",
+        "--title", f"{wo_id}: {title[:60]}",
+        "--body", f"## Summary\n\nImplemented by {AGENT_NAME} (backend: {PREFERRED_AGENT}) via agentic factory.\n\n🤖 Auto-committed after human approval.",
+        "--base", "main",
+        "--head", branch,
+        cwd=worktree,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    pr_out, _ = await pr_proc.communicate()
+    pr_url = pr_out.decode(errors="replace").strip()
+    if pr_proc.returncode == 0:
+        _log(f"{wo_id} PR created: {pr_url}")
+        await monitor.post(f"✅ Committed, pushed, and PR opened: {pr_url}")
+    else:
+        _log(f"{wo_id} gh pr create failed: {pr_url[:200]}")
+        await monitor.post(f"✅ Changes pushed to `{branch}` — open PR manually:\n```\ngh pr create --head {branch}\n```")
+
+    return True
+
+
 async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     wo_number = wo_spec.get("wo", wo_spec.get("number", "?"))
     wo_id = f"WO-{wo_number}" if not str(wo_number).startswith("WO-") else str(wo_number)
@@ -145,7 +258,7 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     ask_calls: list[dict] = []
 
     _log(f"Claiming {wo_id}: {title}")
-    if not await claim(wo_id, slug):
+    if not await claim(wo_id, slug, backend=preferred_agent):
         _log(f"{wo_id} already claimed — skipping")
         return
 
@@ -166,24 +279,88 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
 
     monitor = ThreadMonitor(wo_id)
 
-    # Run the agent with a timeout; thread monitor runs in parallel
-    checkin_task = asyncio.create_task(_checkin_loop(wo_id))
-    monitor_task = asyncio.create_task(_thread_monitor_loop(wo_id, monitor, backend))
-    try:
+    # Fallback order: if primary fails, try other non-claude backends first.
+    # Claude is intentionally last — it consumes subscription quota and should
+    # only be used if everything else is unavailable.
+    _FALLBACK_ORDER = ["cursor", "codex", "gemini", "claude"]
+
+    async def _run_one(b, name):
         async with asyncio.timeout(AGENT_TIMEOUT):
-            async for chunk in backend.run(prompt, worktree_path):
+            async for chunk in b.run(prompt, worktree_path):
                 if chunk.strip():
                     _log(f"[{wo_id}] {chunk[:120]}")
                     await checkin(wo_id, chunk[:80])
-    except TimeoutError:
-        _log(f"{wo_id} timed out after {AGENT_TIMEOUT}s")
-    finally:
-        checkin_task.cancel()
-        monitor_task.cancel()
 
-    _log(f"{wo_id} agent run complete — running quality gate")
+    async def _run_with_fallback(active_backend, active_name):
+        checkin_task = asyncio.create_task(_checkin_loop(wo_id))
+        monitor_task = asyncio.create_task(_thread_monitor_loop(wo_id, monitor, active_backend))
+        try:
+            try:
+                await _run_one(active_backend, active_name)
+            except QuotaExceededError as exc:
+                quota_state.mark_exhausted(active_name)
+                _log(f"{wo_id} ⚠️ {active_name} quota exhausted — marking and trying fallbacks")
+                await checkin(wo_id, f"{active_name} quota exhausted")
+                await post_thread_message(wo_id, f"⚠️ **{active_name}** hit its usage limit — trying fallback backends")
+                raise  # handled below alongside _BACKEND_FAIL
+            except _BACKEND_FAIL as exc:
+                _log(f"{wo_id} {exc} — trying fallback backends")
+                await post_thread_message(wo_id, f"⚠️ {exc}")
+                raise
+        except (QuotaExceededError, *_BACKEND_FAIL):
+            for fallback_name in _FALLBACK_ORDER:
+                if fallback_name == active_name:
+                    continue
+                if quota_state.is_exhausted(fallback_name):
+                    _log(f"{wo_id} skipping {fallback_name} — quota exhausted this session")
+                    continue
+                try:
+                    fallback = get_backend(fallback_name)
+                    _log(f"{wo_id} retrying with {fallback_name} backend")
+                    await checkin(wo_id, f"retrying with {fallback_name}")
+                    await post_thread_message(wo_id, f"Retrying with **{fallback_name}** backend...")
+                    await _run_one(fallback, fallback_name)
+                    return  # fallback succeeded
+                except QuotaExceededError:
+                    quota_state.mark_exhausted(fallback_name)
+                    _log(f"{wo_id} {fallback_name} quota exhausted — skipping")
+                    continue
+                except (*_BACKEND_FAIL, RuntimeError) as e:
+                    _log(f"{wo_id} {fallback_name} also failed: {e}")
+                    continue
+            _log(f"{wo_id} all backends failed or exhausted")
+        except TimeoutError:
+            _log(f"{wo_id} timed out after {AGENT_TIMEOUT}s")
+        finally:
+            checkin_task.cancel()
+            monitor_task.cancel()
+
+    await _run_with_fallback(backend, preferred_agent)
+
+    _log(f"{wo_id} agent run complete — rebuilding changed containers")
+    await checkin(wo_id, "rebuilding changed containers")
+    await post_thread_message(wo_id, "Agent run complete. Detecting changed services and rebuilding containers...")
+
+    rebuild = await run_container_rebuild(worktree_path)
+    _log(f"{wo_id} rebuild: services={rebuild['services']} rebuilt={rebuild['rebuilt']} smoke={rebuild['smoke_passed']}")
+
+    if rebuild["services"]:
+        rebuild_status = "✅ rebuilt" if rebuild["rebuilt"] else "❌ build failed"
+        smoke_status = "✅ smoke passed" if rebuild["smoke_passed"] else "⚠️ smoke failed"
+        await post_thread_message(
+            wo_id,
+            f"Container rebuild: {', '.join(rebuild['services'])} — {rebuild_status}, {smoke_status}\n"
+            f"```\n{rebuild['output'][-800:]}\n```",
+        )
+        if not rebuild["rebuilt"]:
+            await checkin(wo_id, "container build failed — stopping")
+            return
+    else:
+        await post_thread_message(wo_id, "No container changes detected (docs/scripts only) — skipping rebuild.")
+
+    _log(f"{wo_id} running quality gate")
     await checkin(wo_id, "quality gate: running CI + security scan")
-    await post_thread_message(wo_id, "Agent run complete. Running quality gate (CI + security scan)...")
+    await post_thread_message(wo_id, "Running quality gate (CI + security scan)...")
 
     gate = await run_quality_gate(worktree_path)
     _log(f"{wo_id} gate: ci={'✅' if gate['ci_passed'] else '❌'} "
@@ -260,13 +437,19 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     )
 
     # Request human validation (gate + review chain both passed)
+    change_summary = await _build_change_summary(worktree_path)
+    thread_summary = f"{title} — {change_summary}"
     validated = await request_validate(
         wo_id,
         verify_url=f"http://localhost:8099/wo/{str(wo_number).replace('WO-', '')}",
-        steps=["Review the implementation", "Check outputs match WO spec"],
+        steps=[
+            "Open 'View thread →' above for full agent notes",
+            "Review the files listed above",
+            "Confirm output matches the WO spec",
+        ],
         ci_passed=gate["ci_passed"],
         security_passed=gate["security_passed"],
-        thread_summary=f"Implemented {wo_id}: {title}",
+        thread_summary=thread_summary,
     )
     if not validated:
         _log(f"{wo_id} validate rejected — agent must fix and retry (manual intervention needed)")
@@ -277,9 +460,13 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     await monitor.post("Implementation submitted for review. Monitoring thread for questions while waiting...")
     decision = await _poll_approval(wo_id, monitor=monitor)
     if decision == "approved":
-        _log(f"{wo_id} approved — agent should commit and push (handled in agent subprocess)")
+        _log(f"{wo_id} approved — committing and pushing")
+        await checkin(wo_id, "approved: committing and pushing")
+        committed = await _commit_and_push(wo_id, slug, worktree_path, title, monitor)
         await complete(wo_id)
         _log(f"{wo_id} complete")
+        if not committed:
+            await monitor.post("⚠️ Nothing to commit — work may have already been pushed, or the agent made no file changes.")
         await usage_tracker.record_run(ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, True, ask_calls)
     elif decision == "rejected":
         _log(f"{wo_id} rejected — check the factory dashboard for guidance")

@@ -9,7 +9,13 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 RUNS_PATH = os.getenv("RUNS_PATH", "docs/factory/runs")
-CACHE_TTL = 60
+# WO file contents change rarely — cache aggressively to avoid rate-limit exhaustion.
+# With 350+ WO files each needing an individual API call, a short TTL burns thousands
+# of requests per hour. 1800s matches the page refresh interval.
+CACHE_TTL = int(os.getenv("GITHUB_CACHE_TTL", "1800"))
+
+# Lighter TTL for dynamic data (PRs, branches, CI runs) — still needs to feel live.
+LIVE_CACHE_TTL = int(os.getenv("GITHUB_LIVE_CACHE_TTL", "120"))
 
 _cache: dict[str, tuple[float, Any]] = {}
 
@@ -21,16 +27,21 @@ def _headers() -> dict:
     return h
 
 
-async def _get(path: str, params: dict | None = None) -> Any:
+async def _get(path: str, params: dict | None = None, ttl: int | None = None) -> Any:
+    effective_ttl = ttl if ttl is not None else CACHE_TTL
     cache_key = f"{path}?{params}"
     if cache_key in _cache:
         ts, val = _cache[cache_key]
-        if time.time() - ts < CACHE_TTL:
+        if time.time() - ts < effective_ttl:
             return val
 
     url = f"https://api.github.com{path}"
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(url, headers=_headers(), params=params)
+        if resp.status_code == 403 and cache_key in _cache:
+            # Rate limited — return stale cache rather than failing
+            _, val = _cache[cache_key]
+            return val
         resp.raise_for_status()
         val = resp.json()
 
@@ -64,24 +75,24 @@ async def get_file_content_for(repo: str, file_path: str) -> str:
 
 async def list_open_prs() -> list[dict]:
     path = f"/repos/{GITHUB_REPO}/pulls"
-    return await _get(path, {"state": "open", "per_page": 100})
+    return await _get(path, {"state": "open", "per_page": 100}, ttl=LIVE_CACHE_TTL)
 
 
 async def list_branches() -> list[dict]:
     path = f"/repos/{GITHUB_REPO}/branches"
-    return await _get(path, {"per_page": 100})
+    return await _get(path, {"per_page": 100}, ttl=LIVE_CACHE_TTL)
 
 
 async def list_ci_runs() -> list[dict]:
     path = f"/repos/{GITHUB_REPO}/actions/runs"
-    data = await _get(path, {"per_page": 30})
+    data = await _get(path, {"per_page": 30}, ttl=LIVE_CACHE_TTL)
     return data.get("workflow_runs", [])
 
 
 async def get_branch_file(branch: str, file_path: str) -> str | None:
     path = f"/repos/{GITHUB_REPO}/contents/{file_path}"
     try:
-        data = await _get(f"{path}?ref={branch}")
+        data = await _get(f"{path}?ref={branch}", ttl=LIVE_CACHE_TTL)
         return base64.b64decode(data["content"]).decode("utf-8")
     except Exception:
         return None
@@ -90,12 +101,12 @@ async def get_branch_file(branch: str, file_path: str) -> str | None:
 async def get_pr_checks(pr_number: int) -> list[dict]:
     path = f"/repos/{GITHUB_REPO}/pulls/{pr_number}/commits"
     try:
-        commits = await _get(path)
+        commits = await _get(path, ttl=LIVE_CACHE_TTL)
         if not commits:
             return []
         sha = commits[-1]["sha"]
         checks_path = f"/repos/{GITHUB_REPO}/commits/{sha}/check-runs"
-        data = await _get(checks_path)
+        data = await _get(checks_path, ttl=LIVE_CACHE_TTL)
         return data.get("check_runs", [])
     except Exception:
         return []
@@ -103,7 +114,7 @@ async def get_pr_checks(pr_number: int) -> list[dict]:
 
 async def list_runners() -> list[dict]:
     try:
-        data = await _get(f"/repos/{GITHUB_REPO}/actions/runners")
+        data = await _get(f"/repos/{GITHUB_REPO}/actions/runners", ttl=LIVE_CACHE_TTL)
         return data.get("runners", [])
     except Exception:
         return []
@@ -111,8 +122,8 @@ async def list_runners() -> list[dict]:
 
 async def list_active_runs() -> list[dict]:
     try:
-        queued = await _get(f"/repos/{GITHUB_REPO}/actions/runs", {"status": "queued", "per_page": 20})
-        in_prog = await _get(f"/repos/{GITHUB_REPO}/actions/runs", {"status": "in_progress", "per_page": 20})
+        queued = await _get(f"/repos/{GITHUB_REPO}/actions/runs", {"status": "queued", "per_page": 20}, ttl=LIVE_CACHE_TTL)
+        in_prog = await _get(f"/repos/{GITHUB_REPO}/actions/runs", {"status": "in_progress", "per_page": 20}, ttl=LIVE_CACHE_TTL)
         runs = queued.get("workflow_runs", []) + in_prog.get("workflow_runs", [])
         return sorted(runs, key=lambda r: r.get("created_at", ""))
     except Exception:

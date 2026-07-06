@@ -1,8 +1,16 @@
 import asyncio
+import re
 import shutil
 from typing import AsyncIterator
 
-from backends.base import AgentBackend
+from backends.base import AgentBackend, QuotaExceededError
+
+# Claude Code emits these when the subscription usage cap is hit
+_QUOTA_RE = re.compile(
+    r"usage limit reached|rate limit|you've reached your|claude\.ai usage|"
+    r"exceeded.*limit|limit.*exceeded|upgrade your plan|claude\.ai/upgrade",
+    re.I,
+)
 
 
 class ClaudeBackend(AgentBackend):
@@ -27,14 +35,18 @@ class ClaudeBackend(AgentBackend):
             line = await proc.stdout.readline()
             if not line:
                 break
-            yield line.decode("utf-8", errors="replace").rstrip()
+            text = line.decode("utf-8", errors="replace").rstrip()
+            yield text
+            if _QUOTA_RE.search(text):
+                proc.kill()
+                await proc.wait()
+                raise QuotaExceededError(f"claude quota exhausted: {text.strip()}")
 
         await proc.wait()
         if proc.returncode and proc.returncode != 0:
             yield f"[claude] exited with code {proc.returncode}"
 
     async def inject(self, message: str) -> None:
-        # Queue for next invocation — Claude CLI is non-interactive when using --print
         self._pending_messages.append(message)
 
     async def ask(self, question: str) -> str:
@@ -48,4 +60,7 @@ class ClaudeBackend(AgentBackend):
         )
         assert proc.stdout is not None
         out, _ = await proc.communicate()
-        return out.decode("utf-8", errors="replace").strip()
+        text = out.decode("utf-8", errors="replace").strip()
+        if _QUOTA_RE.search(text):
+            raise QuotaExceededError(f"claude quota exhausted: {text[:120]}")
+        return text

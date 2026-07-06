@@ -1,9 +1,17 @@
 import asyncio
 import os
+import re
 import shutil
 from typing import AsyncIterator
 
 from backends.base import AgentBackend
+
+_RECONNECT_RE = re.compile(r"connection lost|reconnecting to|connecting to.*cursor\.sh", re.I)
+_MAX_CONN_FAILURES = 5
+
+
+class CursorConnectionError(RuntimeError):
+    """Raised when the Cursor agent can't reach its API after repeated attempts."""
 
 
 class CursorBackend(AgentBackend):
@@ -61,11 +69,25 @@ class CursorBackend(AgentBackend):
             stderr=asyncio.subprocess.STDOUT,
         )
         assert proc.stdout is not None
+        conn_failures = 0
         while True:
             line = await proc.stdout.readline()
             if not line:
                 break
-            yield line.decode("utf-8", errors="replace").rstrip()
+            text = line.decode("utf-8", errors="replace").rstrip()
+            if _RECONNECT_RE.search(text):
+                conn_failures += 1
+                yield text
+                if conn_failures >= _MAX_CONN_FAILURES:
+                    yield f"[cursor-agent] aborting — API unreachable after {conn_failures} attempts"
+                    proc.kill()
+                    await proc.wait()
+                    raise CursorConnectionError(
+                        f"Cursor API unreachable after {conn_failures} attempts — falling back"
+                    )
+            else:
+                conn_failures = 0
+                yield text
 
         await proc.wait()
         if proc.returncode and proc.returncode != 0:

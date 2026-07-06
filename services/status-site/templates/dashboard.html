@@ -185,8 +185,13 @@
             </span>
             <div class="flex items-center gap-1.5">
               <span class="text-[10px] text-slate-500 font-mono group-hover:text-indigo-400 transition-colors">WO-{{ spec.number }}</span>
-              {% if spec.repo and spec.repo != github_repo %}
-              <span class="text-[8px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-mono">{{ spec.repo.split("/")[-1] }}</span>
+              {% if spec.repo %}
+              {% set _rn = spec.repo.split("/")[-1] %}
+              {% if "factory" in _rn %}
+              <span class="text-[8px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 font-mono border border-amber-800/40">factory</span>
+              {% else %}
+              <span class="text-[8px] px-1.5 py-0.5 rounded bg-indigo-900/50 text-indigo-300 font-mono border border-indigo-800/40">{{ _rn }}</span>
+              {% endif %}
               {% endif %}
             </div>
           </div>

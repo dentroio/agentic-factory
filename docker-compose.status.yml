@@ -14,11 +14,13 @@ services:
       - PLAN_PATH=${PLAN_PATH:-docs/factory/PLAN.json}
       - ORCHESTRATOR_URL=http://orchestrator:8100
       - LOG_PATH=/var/log/factory-agent/out.log
+      - LOCAL_REPO_MOUNT=/repos/primary
     volumes:
       - watchdog-data:/watchdog:ro
       - orchestrator-data:/orchestrator:ro
       - factory-config:/config
       - ${HOME}/Library/Logs/factory-agent:/var/log/factory-agent:ro
+      - ${LOCAL_REPO_PATH}:/repos/primary:ro
     restart: unless-stopped
     depends_on:
       - pr-watchdog
@@ -89,9 +91,11 @@ services:
       - API_PORT=8100
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - AGENT_RUNNER_URL=${AGENT_RUNNER_URL:-http://host.docker.internal:8101}
+      - LOCAL_REPO_MOUNT=/repos/primary
     volumes:
       - orchestrator-data:/data
       - watchdog-data:/watchdog:ro
+      - ${LOCAL_REPO_PATH}:/repos/primary:ro
     restart: unless-stopped
 
 volumes:

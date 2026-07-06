@@ -43,6 +43,9 @@ for _entry in _SECONDARY_REPOS_RAW:
         SECONDARY_REPOS.append((_entry, WO_PATH))
 RUNS_PATH = os.getenv("RUNS_PATH", "docs/factory/runs")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
+# When set, WO specs / PLAN.json / branches are read from the local filesystem
+# instead of GitHub API — dramatically reduces API call volume.
+LOCAL_REPO_MOUNT = os.getenv("LOCAL_REPO_MOUNT", "")
 DAILY_SUMMARY_HOUR = os.getenv("DAILY_SUMMARY_HOUR", "")
 SUMMARY_ISSUE_NUMBER = os.getenv("SUMMARY_ISSUE_NUMBER", "")
 API_PORT = int(os.getenv("API_PORT", "8100"))
@@ -63,10 +66,18 @@ _orchestrator_output: dict = {}         # last poll snapshot
 _held_wos: set[str] = set()            # WO IDs on hold (skip, don't claim)
 
 HOLD_PATH = DATA_DIR / "held_wos.json"
+PAUSE_PATH = DATA_DIR / "factory_paused.json"
+
+_factory_paused: bool = False   # when True, get_next() returns null — drains gracefully
+
+# ── In-memory log buffer (replaces file-tail SSE — Docker volume mount lag) ───
+_LOG_BUFFER_MAX = 2000
+_log_buffer: list[str] = []            # circular buffer of log lines
+_log_subscribers: list[asyncio.Queue] = []  # one Queue per active SSE client
 
 
 def _load_state() -> None:
-    global _dispatch_state, _validations, _held_wos
+    global _dispatch_state, _validations, _held_wos, _factory_paused
     if DISPATCH_STATE_PATH.exists():
         try:
             _dispatch_state = json.loads(DISPATCH_STATE_PATH.read_text())
@@ -82,6 +93,11 @@ def _load_state() -> None:
             _held_wos = set(json.loads(HOLD_PATH.read_text()))
         except Exception:
             _held_wos = set()
+    if PAUSE_PATH.exists():
+        try:
+            _factory_paused = json.loads(PAUSE_PATH.read_text()).get("paused", False)
+        except Exception:
+            _factory_paused = False
 
 
 def _save_dispatch() -> None:
@@ -104,7 +120,8 @@ def _utcnow() -> str:
 
 class ClaimRequest(BaseModel):
     wo: str           # e.g. "WO-359"
-    agent: str        # "claude", "cursor", "antigravity"
+    agent: str        # agent runner name e.g. "claude-runner"
+    backend: str = "" # actual AI backend: "claude" | "cursor" | "codex" | "gemini"
     workstation: str = ""
     slug: str = ""
 
@@ -190,14 +207,26 @@ async def get_status():
 @app.get("/api/next")
 async def get_next():
     """Return the highest-priority unclaimed WO, or null if none available."""
+    if _factory_paused:
+        return {"wo": None, "reason": "factory paused — drain mode active"}
+
     plan = _orchestrator_output.get("plan", {})
     queue: list[dict] = plan.get("queue", [])
 
-    active_statuses = {"claimed", "in_progress", "awaiting_human", "awaiting_commit"}
+    active_statuses = {"claimed", "in_progress", "awaiting_human", "awaiting_commit", "complete"}
+
+    active_count = sum(
+        1 for c in _dispatch_state.values()
+        if c.get("status") in active_statuses - {"complete"}
+    )
+    if active_count >= MAX_PARALLEL_WOS:
+        return {"wo": None, "reason": f"at capacity ({active_count}/{MAX_PARALLEL_WOS} active)"}
 
     for wo in queue:
         wo_id = wo.get("wo", "")
         if wo_id in _held_wos:
+            continue
+        if _is_done(wo.get("status", "")):
             continue
         claim = _dispatch_state.get(wo_id, {})
         if claim.get("status") in active_statuses:
@@ -205,6 +234,30 @@ async def get_next():
         return {**wo, "repo": GITHUB_REPO}
 
     return {"wo": None, "reason": "queue empty or all candidates claimed/blocked"}
+
+
+@app.get("/api/factory/pause")
+async def get_pause_state():
+    return {"paused": _factory_paused}
+
+
+@app.post("/api/factory/pause")
+async def pause_factory():
+    """Stop claiming new WOs — in-flight agents finish their current WO then idle."""
+    global _factory_paused
+    _factory_paused = True
+    PAUSE_PATH.write_text(json.dumps({"paused": True}))
+    return {"paused": True, "message": "Factory draining — no new WOs will be claimed"}
+
+
+@app.post("/api/factory/resume")
+async def resume_factory():
+    """Allow the runner to claim new WOs again."""
+    global _factory_paused
+    _factory_paused = False
+    if PAUSE_PATH.exists():
+        PAUSE_PATH.unlink()
+    return {"paused": False, "message": "Factory resumed"}
 
 
 @app.get("/api/held-wos")
@@ -243,6 +296,7 @@ async def claim_wo(req: ClaimRequest):
         "wo": wo_id,
         "slug": req.slug,
         "agent": req.agent,
+        "backend": req.backend or req.agent,
         "workstation": req.workstation,
         "claimed_at": _utcnow(),
         "status": "claimed",
@@ -389,6 +443,17 @@ async def release_dispatch(wo_id: str):
     _save_dispatch()
     print(f"[orchestrator] {wo_id} released from dispatch (manual reset)")
     return {"ok": True, "released": wo_id}
+
+
+@app.post("/api/dispatch/{wo_id}/retry")
+async def retry_dispatch(wo_id: str):
+    """Reset a failed/stuck WO back to open so the runner picks it up again."""
+    wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
+    if wo_id in _dispatch_state:
+        del _dispatch_state[wo_id]
+        _save_dispatch()
+    print(f"[orchestrator] {wo_id} queued for retry (dispatch cleared)")
+    return {"ok": True, "retrying": wo_id}
 
 
 @app.delete("/api/dispatch")
@@ -548,6 +613,69 @@ async def get_dispatch():
     return _dispatch_state
 
 
+# ── Runner log stream (HTTP push from runner, SSE to browser) ─────────────────
+
+class LogLine(BaseModel):
+    line: str
+    agent: str = ""
+
+
+@app.post("/api/log")
+async def append_log(entry: LogLine):
+    """Runner posts each log line here; we buffer and broadcast to SSE clients."""
+    global _log_buffer
+    _log_buffer.append(entry.line)
+    if len(_log_buffer) > _LOG_BUFFER_MAX:
+        _log_buffer = _log_buffer[-_LOG_BUFFER_MAX:]
+    for q in list(_log_subscribers):
+        try:
+            q.put_nowait(entry.line)
+        except asyncio.QueueFull:
+            pass
+    return {"ok": True}
+
+
+@app.get("/api/log/stream")
+async def stream_log(request: Request, agent: str = "", tail: int = 150):
+    """SSE: send buffered history then stream new lines as runner posts them."""
+    q: asyncio.Queue = asyncio.Queue(maxsize=500)
+    _log_subscribers.append(q)
+
+    def _matches(line: str) -> bool:
+        if not agent:
+            return True
+        low = line.lower()
+        return agent.lower() in low
+
+    async def generate():
+        try:
+            for line in _log_buffer[-tail:]:
+                if _matches(line):
+                    yield f"data: {json.dumps(line)}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    line = await asyncio.wait_for(q.get(), timeout=2.0)
+                    if _matches(line):
+                        yield f"data: {json.dumps(line)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        except (GeneratorExit, asyncio.CancelledError):
+            pass
+        finally:
+            try:
+                _log_subscribers.remove(q)
+            except ValueError:
+                pass
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ── GitHub helpers ────────────────────────────────────────────────────────────
 
 def _headers() -> dict:
@@ -610,7 +738,40 @@ def _is_blocked(status: str) -> bool:
 
 # ── GitHub data fetchers ──────────────────────────────────────────────────────
 
+def _read_local_wo_specs(repo_root: str, wo_path: str, repo: str) -> dict[int, dict]:
+    """Read WO spec files directly from the local filesystem mount."""
+    specs: dict[int, dict] = {}
+    wo_dir = Path(repo_root) / wo_path
+    if not wo_dir.is_dir():
+        return specs
+    for f in wo_dir.glob("WO-*.md"):
+        num = _parse_wo_number(f.name)
+        if not num:
+            continue
+        try:
+            content = f.read_text(encoding="utf-8", errors="replace")
+            specs[num] = {
+                "number": num,
+                "repo": repo,
+                "title": _parse_title(content, num),
+                "status": _parse_status(content),
+                "priority": _parse_priority(content),
+                "effort": _parse_effort(content),
+                "depends_on": _parse_depends_on(content),
+            }
+        except Exception as e:
+            print(f"[orchestrator] Failed to read local WO-{num}: {e}")
+    return specs
+
+
 async def _fetch_wo_specs(client: httpx.AsyncClient, repo: str = GITHUB_REPO, wo_path: str = WO_PATH) -> dict[int, dict]:
+    # Use local filesystem for primary repo — zero API calls
+    if LOCAL_REPO_MOUNT and repo == GITHUB_REPO:
+        specs = _read_local_wo_specs(LOCAL_REPO_MOUNT, wo_path, repo)
+        if specs:
+            return specs
+        print(f"[orchestrator] Local WO specs empty, falling back to GitHub API")
+
     try:
         items = await _get(client, f"/repos/{repo}/contents/{wo_path}")
         wo_files = [i for i in items if i["name"].endswith(".md") and i["name"].startswith("WO-")]
@@ -641,6 +802,24 @@ async def _fetch_wo_specs(client: httpx.AsyncClient, repo: str = GITHUB_REPO, wo
 
 
 async def _fetch_active_branches(client: httpx.AsyncClient, repo: str = GITHUB_REPO) -> set[int]:
+    # Read from local git refs — no API call needed
+    if LOCAL_REPO_MOUNT:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "branch", "-r", "--list", "origin/wo/*",
+                cwd=LOCAL_REPO_MOUNT,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            results = set()
+            for line in out.decode().splitlines():
+                m = re.search(r"origin/wo/(\d+)-", line)
+                if m:
+                    results.add(int(m.group(1)))
+            return results
+        except Exception as e:
+            print(f"[orchestrator] Local branch read failed: {e}")
+
     try:
         branches = await _get(client, f"/repos/{repo}/branches", {"per_page": 100})
         return {int(m.group(1)) for b in branches if (m := re.match(r"wo/(\d+)-", b["name"]))}
@@ -648,9 +827,28 @@ async def _fetch_active_branches(client: httpx.AsyncClient, repo: str = GITHUB_R
         return set()
 
 
+# Cache for PR data to reduce GitHub API calls (PRs can't be read locally)
+_pr_cache: dict[str, tuple[float, object]] = {}
+_PR_CACHE_TTL = 300  # 5 minutes
+
+
+async def _cached_get(client: httpx.AsyncClient, url: str, params: dict, ttl: int = _PR_CACHE_TTL) -> list:
+    import time
+    key = f"{url}:{params}"
+    cached_at, cached_val = _pr_cache.get(key, (0, []))
+    if time.time() - cached_at < ttl:
+        return cached_val  # type: ignore[return-value]
+    try:
+        val = await _get(client, url, params)
+        _pr_cache[key] = (time.time(), val)
+        return val
+    except Exception:
+        return cached_val  # type: ignore[return-value]
+
+
 async def _fetch_open_pr_wos(client: httpx.AsyncClient, repo: str = GITHUB_REPO) -> set[int]:
     try:
-        prs = await _get(client, f"/repos/{repo}/pulls", {"state": "open", "per_page": 100})
+        prs = await _cached_get(client, f"/repos/{repo}/pulls", {"state": "open", "per_page": 100})
         return {int(m.group(1)) for p in prs if (m := re.search(r"WO-(\d+)", p.get("title", "")))}
     except Exception:
         return set()
@@ -660,14 +858,24 @@ async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient) -> int:
     from datetime import timedelta
     since = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
-        prs = await _get(client, f"/repos/{GITHUB_REPO}/pulls",
-                         {"state": "closed", "per_page": 50, "sort": "updated", "direction": "desc"})
+        prs = await _cached_get(client, f"/repos/{GITHUB_REPO}/pulls",
+                                 {"state": "closed", "per_page": 50, "sort": "updated", "direction": "desc"},
+                                 ttl=600)
         return sum(1 for p in prs if p.get("merged_at") and p["merged_at"] >= since)
     except Exception:
         return 0
 
 
 async def _fetch_plan(client: httpx.AsyncClient) -> dict | None:
+    # Read PLAN.json from local filesystem — no API call
+    if LOCAL_REPO_MOUNT:
+        plan_file = Path(LOCAL_REPO_MOUNT) / PLAN_PATH
+        if plan_file.exists():
+            try:
+                return json.loads(plan_file.read_text(encoding="utf-8"))
+            except Exception as e:
+                print(f"[orchestrator] Failed to read local PLAN.json: {e}")
+
     try:
         data = await _get(client, f"/repos/{GITHUB_REPO}/contents/{PLAN_PATH}")
         return json.loads(base64.b64decode(data["content"]).decode("utf-8"))
@@ -784,6 +992,7 @@ def _load_watchdog() -> dict | None:
 async def poll() -> None:
     global _orchestrator_output
     now_str = _utcnow()
+    _prev_output = _orchestrator_output  # keep last-good snapshot for rate-limit fallback
 
     async with httpx.AsyncClient(timeout=20) as client:
         # Primary repo fetches (always)
@@ -813,6 +1022,13 @@ async def poll() -> None:
     pr_wos: set[int] = results[2]
     merged_this_week: int = results[3]
     plan_raw: dict | None = results[4]
+
+    # If GitHub returned no specs (rate-limited or network error), preserve the last-good
+    # output so the queue doesn't go empty and running WOs keep their position.
+    if not primary_specs and _prev_output:
+        print("[orchestrator] poll: GitHub returned empty specs — keeping last-good output (rate limit?)")
+        _orchestrator_output = {**_prev_output, "generated_at": now_str, "stale": True}
+        return
 
     # Merge secondary specs (secondary repos contribute board visibility only)
     specs: dict[int, dict] = dict(primary_specs)
@@ -973,6 +1189,60 @@ async def put_agent_config(request: Request):
 # ── Usage tracking endpoints ──────────────────────────────────────────────────
 
 USAGE_PATH = DATA_DIR / "usage.json"
+ANTHROPIC_USAGE_PATH = DATA_DIR / "anthropic_usage.json"
+
+# Approximate cost per million tokens (USD) — update if Anthropic changes pricing
+_ANTHROPIC_PRICING: dict[str, dict] = {
+    "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.00},
+    "claude-sonnet-4-6":         {"input": 3.00, "output": 15.00},
+    "claude-opus-4-8":           {"input": 15.00, "output": 75.00},
+}
+
+
+def _record_anthropic_usage(model: str, input_tokens: int, output_tokens: int, endpoint: str) -> None:
+    try:
+        records = json.loads(ANTHROPIC_USAGE_PATH.read_text()) if ANTHROPIC_USAGE_PATH.exists() else []
+        pricing = _ANTHROPIC_PRICING.get(model, {"input": 3.00, "output": 15.00})
+        cost_usd = (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+        records.append({
+            "ts": datetime.now(UTC).isoformat(),
+            "model": model,
+            "endpoint": endpoint,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost_usd": round(cost_usd, 6),
+        })
+        if len(records) > 2000:
+            records = records[-2000:]
+        ANTHROPIC_USAGE_PATH.write_text(json.dumps(records))
+    except Exception:
+        pass
+
+
+@app.get("/api/anthropic-usage")
+async def get_anthropic_usage():
+    if not ANTHROPIC_USAGE_PATH.exists():
+        return {"records": [], "summary": {"total_input_tokens": 0, "total_output_tokens": 0, "total_cost_usd": 0.0, "call_count": 0}}
+    try:
+        records = json.loads(ANTHROPIC_USAGE_PATH.read_text())
+    except Exception:
+        records = []
+    from datetime import timedelta
+    day_ago = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+    today = [r for r in records if r.get("ts", "") >= day_ago]
+    return {
+        "records": records[-10:],
+        "summary": {
+            "total_input_tokens": sum(r.get("input_tokens", 0) for r in records),
+            "total_output_tokens": sum(r.get("output_tokens", 0) for r in records),
+            "total_cost_usd": round(sum(r.get("cost_usd", 0) for r in records), 4),
+            "call_count": len(records),
+            "today_input_tokens": sum(r.get("input_tokens", 0) for r in today),
+            "today_output_tokens": sum(r.get("output_tokens", 0) for r in today),
+            "today_cost_usd": round(sum(r.get("cost_usd", 0) for r in today), 4),
+            "today_calls": len(today),
+        },
+    }
 
 
 class UsageRecord(BaseModel):
@@ -1092,6 +1362,12 @@ class DraftRequest(BaseModel):
     backend: str = "claude-api"
 
 
+class PMChatRequest(BaseModel):
+    message: str
+    history: list[dict] = []   # [{role: "user"|"assistant", content: "..."}]
+    backend: str = "claude-api"
+
+
 @app.get("/api/backends")
 async def get_backends():
     """Report which AI backends are available (API key set / CLI installed)."""
@@ -1111,6 +1387,7 @@ async def get_backends():
                 result["agent_runner_online"] = True
                 for b in ("claude", "cursor", "codex", "gemini"):
                     result[b] = data.get("backends", {}).get(b, False)
+                result["exhausted_backends"] = data.get("exhausted_backends", [])
     except Exception:
         pass
     return result
@@ -1139,6 +1416,7 @@ async def plan_draft(req: DraftRequest):
                     "content": f"WO number: {req.next_wo_num:03d}\n\nRequest:\n{req.description}",
                 }],
             )
+            _record_anthropic_usage("claude-sonnet-4-6", msg.usage.input_tokens, msg.usage.output_tokens, "plan/draft")
             text = msg.content[0].text.strip()
             if text.startswith("```"):
                 text = re.sub(r"^```[a-z]*\n?", "", text)
@@ -1165,6 +1443,106 @@ async def plan_draft(req: DraftRequest):
             status_code=503,
             detail="Agent runner not reachable. Start it with: make agent-once  (or make agent-install for the daemon)",
         )
+
+
+_PM_SYSTEM = """\
+You are the AI Factory PM for the Clarion project — an AI-assisted software engineering factory.
+You coordinate AI agents (Claude, Cursor, Codex, Gemini) that autonomously implement work orders (WOs).
+
+{context}
+
+Your role:
+- Answer questions about active WOs, agent status, and queue health
+- Draft new work orders from plain-English feature requests
+- Advise on priorities (P1=core/risky, P2=feature/additive, P3=docs) and effort (XS<1h S~2h M=½d L=1d XL=2-3d)
+- Keep status answers to 2-4 sentences; be direct and specific
+
+WHEN THE USER WANTS TO CREATE A WORK ORDER respond with ONLY this JSON (no other text, no fences):
+{{"type":"wo_draft","title":"short action title ≤60 chars","priority":"P1|P2|P3","effort":"XS|S|M|L|XL","services":"comma-separated service names","problem":"2-3 sentences on the pain point","what_to_build":"technical description with files/approach","acceptance_criteria":["verifiable item 1","verifiable item 2","verifiable item 3"],"notes":"constraints or empty string"}}
+
+FOR ALL OTHER MESSAGES respond conversationally in plain text only — no JSON, no markdown.\
+"""
+
+
+@app.post("/api/pm/chat")
+async def pm_chat(req: PMChatRequest):
+    """PM assistant — conversational AI with factory context. Returns text or a WO draft."""
+    # Build factory context
+    ctx_parts: list[str] = []
+    if _dispatch_state:
+        lines = [
+            f"  {wo}: {info.get('status','?')} — {(info.get('step') or '')[:70]}"
+            for wo, info in _dispatch_state.items()
+        ]
+        ctx_parts.append("Active WOs:\n" + "\n".join(lines))
+    else:
+        ctx_parts.append("Active WOs: none (runner is idle)")
+
+    try:
+        async with httpx.AsyncClient(timeout=3) as _c:
+            _br = await _c.get(f"http://localhost:{API_PORT}/api/backends")
+            if _br.status_code == 200:
+                _b = _br.json()
+                online = [k for k, v in _b.items() if v and k not in ("agent_runner_online",)]
+                ctx_parts.append(f"Available AI backends: {', '.join(online) or 'none'}")
+                ctx_parts.append(f"Agent runner: {'online' if _b.get('agent_runner_online') else 'offline'}")
+    except Exception:
+        pass
+
+    system = _PM_SYSTEM.format(context="\n".join(ctx_parts))
+    messages = [{"role": m["role"], "content": m["content"]} for m in req.history]
+    messages.append({"role": "user", "content": req.message})
+
+    text = ""
+    if req.backend == "claude-api" or not req.backend:
+        api_key = _get_anthropic_key()
+        if api_key:
+            try:
+                import anthropic as _anthropic
+                _aclient = _anthropic.Anthropic(api_key=api_key)
+                _amsg = _aclient.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=1024,
+                    system=system,
+                    messages=messages,
+                )
+                _record_anthropic_usage("claude-haiku-4-5-20251001", _amsg.usage.input_tokens, _amsg.usage.output_tokens, "pm/chat")
+                text = _amsg.content[0].text.strip()
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+        else:
+            # Fall through to CLI backend
+            req = PMChatRequest(message=req.message, history=req.history, backend="cursor")
+
+    if not text:
+        # CLI backend via draft server
+        try:
+            async with httpx.AsyncClient(timeout=60) as _c:
+                _r = await _c.post(
+                    f"{AGENT_RUNNER_URL}/api/chat",
+                    json={"system": system, "message": req.message, "history": req.history,
+                          "backend": req.backend if req.backend != "claude-api" else None},
+                )
+                if _r.status_code != 200:
+                    raise HTTPException(status_code=_r.status_code, detail=_r.text[:300])
+                text = _r.json().get("reply", "")
+        except httpx.ConnectError:
+            raise HTTPException(
+                status_code=503,
+                detail="No AI backend available. Set an Anthropic API key in Settings → Authentication.",
+            )
+
+    # Detect WO draft JSON response
+    stripped = text.strip()
+    if stripped.startswith("{") and '"type"' in stripped and '"wo_draft"' in stripped:
+        try:
+            data = json.loads(stripped)
+            if data.get("type") == "wo_draft":
+                return {"type": "wo_draft", "reply": "", "wo_draft": data}
+        except json.JSONDecodeError:
+            pass
+
+    return {"type": "text", "reply": text, "wo_draft": None}
 
 
 if __name__ == "__main__":

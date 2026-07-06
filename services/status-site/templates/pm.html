@@ -348,8 +348,13 @@
           <td class="px-5 py-3">
             <div class="flex items-center gap-1.5">
               <a href="/wo/{{ spec.number }}" class="text-xs font-mono font-bold text-indigo-400 hover:underline">WO-{{ spec.number }}</a>
-              {% if spec.repo and spec.repo != github_repo %}
-              <span class="text-[8px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-mono">{{ spec.repo.split("/")[-1] }}</span>
+              {% if spec.repo %}
+              {% set _rn = spec.repo.split("/")[-1] %}
+              {% if "factory" in _rn %}
+              <span class="text-[8px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 font-mono border border-amber-800/40">factory</span>
+              {% else %}
+              <span class="text-[8px] px-1.5 py-0.5 rounded bg-indigo-900/50 text-indigo-300 font-mono border border-indigo-800/40">{{ _rn }}</span>
+              {% endif %}
               {% endif %}
             </div>
           </td>

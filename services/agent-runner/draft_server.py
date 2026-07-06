@@ -42,7 +42,7 @@ Request:
 
 
 def _probe_backends() -> dict[str, bool]:
-    """Check which agent CLIs are actually installed and executable."""
+    """Check which agent CLIs are installed and executable."""
     import shutil
 
     def _exe(*paths) -> bool:
@@ -92,11 +92,19 @@ class _ThreadedServer(ThreadingMixIn, HTTPServer):
 class _DraftHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
-            self._json(200, {"status": "ok", "port": DRAFT_PORT, "backends": _probe_backends()})
+            try:
+                import backends.quota_state as _qs
+                exhausted = _qs.exhausted_backends()
+            except Exception:
+                exhausted = []
+            self._json(200, {"status": "ok", "port": DRAFT_PORT, "backends": _probe_backends(), "exhausted_backends": exhausted})
         else:
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path == "/api/chat":
+            self._handle_chat()
+            return
         if self.path != "/api/draft":
             self._json(404, {"error": "not found"})
             return
@@ -131,6 +139,43 @@ class _DraftHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             raw = text[:400] if "text" in dir() else "(no output)"
             self._json(500, {"error": "LLM returned invalid JSON", "raw": raw})
+        except Exception as e:
+            self._json(500, {"error": str(e)})
+
+    def _handle_chat(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._json(400, {"error": "invalid JSON body"})
+            return
+
+        system = str(body.get("system", "")).strip()
+        message = str(body.get("message", "")).strip()
+        history = body.get("history", [])
+        backend_name = body.get("backend") or None
+
+        if not message:
+            self._json(400, {"error": "message is required"})
+            return
+
+        # Build a single prompt: system + history + user message
+        parts: list[str] = []
+        if system:
+            parts.append(system)
+        for h in history:
+            role = str(h.get("role", "user")).upper()
+            content = str(h.get("content", ""))
+            parts.append(f"[{role}]: {content}")
+        parts.append(f"[USER]: {message}")
+        parts.append("[ASSISTANT]:")
+        full_prompt = "\n\n".join(parts)
+
+        try:
+            from backends import get_backend
+            backend = get_backend(backend_name)
+            reply = asyncio.run(backend.ask(full_prompt))
+            self._json(200, {"reply": reply})
         except Exception as e:
             self._json(500, {"error": str(e)})
 

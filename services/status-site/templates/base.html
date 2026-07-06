@@ -38,15 +38,21 @@
       </div>
       <div class="flex items-center gap-1">
         <a id="nav-overview" href="/" class="nav-link px-3.5 py-1.5 text-sm {% if request.url.path == '/' %}active{% endif %}">Overview</a>
+        <a id="nav-factory" href="/factory" class="nav-link px-3.5 py-1.5 text-sm {% if request.url.path == '/factory' %}active{% endif %}">Factory</a>
         <a id="nav-pm" href="/pm" class="nav-link px-3.5 py-1.5 text-sm {% if request.url.path == '/pm' %}active{% endif %}">PM View</a>
         <a id="nav-ci" href="/ci" class="nav-link px-3.5 py-1.5 text-sm {% if request.url.path == '/ci' %}active{% endif %}">Engineering</a>
         <a id="nav-plan" href="/plan" class="nav-link px-3.5 py-1.5 text-sm {% if request.url.path == '/plan' %}active{% endif %}">Plan</a>
-        <a id="nav-factory" href="/factory" class="nav-link px-3.5 py-1.5 text-sm {% if request.url.path == '/factory' %}active{% endif %}">Factory</a>
         <a id="nav-settings" href="/settings" class="nav-link px-3.5 py-1.5 text-sm {% if request.url.path.startswith('/settings') %}active{% endif %}">Settings</a>
       </div>
     </div>
     
     <div class="flex items-center gap-4">
+      <a href="/factory#pm-panel"
+        class="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-all shadow-sm shadow-indigo-900/40"
+        title="Open PM Assistant to create a work order">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+        New WO
+      </a>
       <div class="refresh-indicator">
         <span class="refresh-dot"></span>
         <span>
@@ -91,8 +97,10 @@
               <div>
                 <span class="font-mono text-amber-300 font-semibold">{{ v.wo }}</span>
                 <span class="text-slate-300 text-sm ml-2">— {{ v.agent }} · {{ v.workstation or 'unknown host' }}</span>
-                {% if v.verify_url %}
-                <a href="{{ v.verify_url }}" target="_blank" class="ml-2 text-xs text-indigo-400 hover:text-indigo-300 underline">Open →</a>
+                {% set wo_num = v.wo | replace('WO-', '') %}
+                <a href="/wo/{{ wo_num }}" target="_blank" class="ml-2 text-xs text-indigo-400 hover:text-indigo-300 underline">View thread →</a>
+                {% if v.verify_url and v.verify_url.startswith('http') %}
+                <a href="{{ v.verify_url }}" target="_blank" class="ml-2 text-xs text-indigo-400 hover:text-indigo-300 underline">Open feature →</a>
                 {% endif %}
               </div>
               <div class="flex items-center gap-2">
@@ -100,6 +108,9 @@
                 <button onclick="decideValidation('{{ v.wo }}', 'reject')" class="btn-reject">✗ Reject</button>
               </div>
             </div>
+            {% if v.thread_summary %}
+            <p class="mt-2 text-sm text-slate-300 italic border-l-2 border-amber-700 pl-3">{{ v.thread_summary }}</p>
+            {% endif %}
             {% if v.steps %}
             <ol class="mt-2 ml-4 space-y-0.5 text-sm text-slate-300 list-decimal list-inside">
               {% for step in v.steps %}<li>{{ step }}</li>{% endfor %}

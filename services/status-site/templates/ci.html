@@ -28,20 +28,22 @@
           <span class="text-xs font-semibold text-slate-200 font-mono">{{ r.name }}</span>
         </div>
         <span class="text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-full uppercase
-          {% if r.busy %}bg-amber-500/15 text-amber-300 border border-amber-500/30
+          {% if r.status != 'online' %}bg-rose-500/15 text-rose-400 border border-rose-500/30
+          {% elif r.busy %}bg-amber-500/15 text-amber-300 border border-amber-500/30
           {% else %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/20{% endif %}">
-          {{ "busy" if r.busy else "idle" }}
+          {% if r.status != 'online' %}offline{% elif r.busy %}busy{% else %}idle{% endif %}
         </span>
       </div>
       {% endfor %}
     </div>
-    
+
     <div class="border-t border-slate-800/60 pt-4">
-      {% set busy_count = runners | selectattr('busy') | list | length %}
-      {% set total_count = runners | length %}
+      {% set online_runners = runners | selectattr('status', 'equalto', 'online') | list %}
+      {% set busy_count = online_runners | selectattr('busy') | list | length %}
+      {% set total_count = online_runners | length %}
       <div class="flex items-center justify-between mb-2">
         <span class="text-xs text-slate-400 font-medium">Runner Utilization</span>
-        <span class="text-xs font-mono font-bold text-slate-200">{{ busy_count }}/{{ total_count }} active</span>
+        <span class="text-xs font-mono font-bold text-slate-200">{{ busy_count }}/{{ runners | length }} active</span>
       </div>
       <div class="w-full bg-slate-950 border border-slate-900 rounded-full h-2.5 overflow-hidden">
         <div class="h-full rounded-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-500"

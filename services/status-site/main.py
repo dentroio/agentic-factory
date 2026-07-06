@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -35,6 +36,7 @@ PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 LOG_PATH = os.getenv("LOG_PATH", "/var/log/factory-agent/out.log")
 FACTORY_CONFIG_PATH = Path(os.getenv("FACTORY_CONFIG_PATH", "/config/factory-config.json"))
+LOCAL_REPO_MOUNT = os.getenv("LOCAL_REPO_MOUNT", "")
 
 
 def _load_watchdog() -> dict | None:
@@ -107,23 +109,51 @@ async def _fetch_plan_from_github() -> dict | None:
         return None
 
 
-async def _load_wos() -> tuple[dict[int, WOSpec], bool]:
-    try:
-        files = await gh.list_wo_files()
-    except Exception:
-        return {}, False
+def _load_wos_from_disk() -> dict[int, WOSpec] | None:
+    """Read WO markdown files directly from the locally-mounted repo volume.
+
+    Returns a populated dict when the mount is available, None when it isn't.
+    Eliminates ~390 GitHub API calls per page load (1 list + N individual fetches).
+    """
+    if not LOCAL_REPO_MOUNT:
+        return None
+    wo_dir = Path(LOCAL_REPO_MOUNT) / WO_PATH
+    if not wo_dir.is_dir():
+        return None
     results: dict[int, WOSpec] = {}
-    contents = await asyncio.gather(
-        *[gh.get_file_content(f["path"]) for f in files], return_exceptions=True
-    )
-    for f, content in zip(files, contents):
-        if isinstance(content, Exception):
+    for path in wo_dir.glob("WO-*.md"):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
             continue
-        spec = parse_wo_file(content, f["name"], repo=GITHUB_REPO)
+        spec = parse_wo_file(content, path.name, repo=GITHUB_REPO)
         if spec:
             results[spec.number] = spec
+    return results
 
-    # Load WOs from secondary repos registered via Settings → Projects
+
+async def _load_wos() -> tuple[dict[int, WOSpec], bool]:
+    # Prefer reading from the locally-mounted repo — zero GitHub API calls.
+    disk_results = _load_wos_from_disk()
+    if disk_results is not None:
+        results = disk_results
+    else:
+        try:
+            files = await gh.list_wo_files()
+        except Exception:
+            return {}, False
+        results = {}
+        contents = await asyncio.gather(
+            *[gh.get_file_content(f["path"]) for f in files], return_exceptions=True
+        )
+        for f, content in zip(files, contents):
+            if isinstance(content, Exception):
+                continue
+            spec = parse_wo_file(content, f["name"], repo=GITHUB_REPO)
+            if spec:
+                results[spec.number] = spec
+
+    # Load WOs from secondary repos registered via Settings → Projects (always GitHub)
     cfg = _load_factory_config()
     for project in cfg.get("projects", []):
         repo = project.get("repo", "")
@@ -155,28 +185,31 @@ async def _load_active_branches() -> list[dict]:
     except Exception:
         return []
     wo_branches = [b for b in branches if b["name"].startswith("wo/")]
-    results = []
-    for b in wo_branches:
+
+    async def _enrich(b: dict) -> dict:
         wo_num = extract_wo_number_from_branch(b["name"])
         agent_status = None
         if wo_num:
-            agent_status = await get_agent_status(b["name"], wo_num)
+            try:
+                agent_status = await get_agent_status(b["name"], wo_num)
+            except Exception:
+                pass
         commit = b.get("commit", {})
         committer = commit.get("commit", {}).get("committer", {})
-        results.append(
-            {
-                "branch": b["name"],
-                "wo_number": wo_num,
-                "last_commit_sha": commit.get("sha", "")[:7],
-                "last_commit_date": committer.get("date", ""),
-                "last_commit_ago": (
-                    format_duration(committer.get("date", ""))
-                    if committer.get("date")
-                    else "unknown"
-                ),
-                "agent_status": agent_status,
-            }
-        )
+        return {
+            "branch": b["name"],
+            "wo_number": wo_num,
+            "last_commit_sha": commit.get("sha", "")[:7],
+            "last_commit_date": committer.get("date", ""),
+            "last_commit_ago": (
+                format_duration(committer.get("date", ""))
+                if committer.get("date")
+                else "unknown"
+            ),
+            "agent_status": agent_status,
+        }
+
+    results = await asyncio.gather(*[_enrich(b) for b in wo_branches], return_exceptions=False)
     return sorted(results, key=lambda x: x["last_commit_date"], reverse=True)
 
 
@@ -247,12 +280,28 @@ async def _load_ci_health() -> dict:
     return {"runs": recent, "pass_rate": pass_rate, "error": False}
 
 
-def _apply_live_status(wos: dict[int, WOSpec], branches: list[dict], prs: list[dict]) -> None:
+def _apply_live_status(
+    wos: dict[int, WOSpec],
+    branches: list[dict],
+    prs: list[dict],
+    dispatch: dict | None = None,
+) -> None:
     branch_wo_map = {b["wo_number"]: b for b in branches if b["wo_number"]}
     pr_wo_map: dict[int, dict] = {}
     for pr in prs:
         if pr["wo_number"]:
             pr_wo_map[pr["wo_number"]] = pr
+
+    # Build a map from WO number → dispatch entry so we can mark active WOs
+    # even when the branch hasn't been pushed to GitHub yet (which is the normal
+    # case during agent work — branches are local-only until the PR is created).
+    dispatch_map: dict[int, dict] = {}
+    for wo_id, entry in (dispatch or {}).items():
+        try:
+            num = int(re.sub(r"[^0-9]", "", wo_id))
+            dispatch_map[num] = entry
+        except (ValueError, TypeError):
+            pass
 
     for num, spec in wos.items():
         if num in pr_wo_map:
@@ -271,6 +320,20 @@ def _apply_live_status(wos: dict[int, WOSpec], branches: list[dict], prs: list[d
             if b.get("agent_status"):
                 spec.agent_name = b["agent_status"].get("agent", "")
                 spec.agent_step = b["agent_status"].get("step", "")
+        elif num in dispatch_map:
+            # Agent has this WO claimed locally (branch not yet on GitHub)
+            entry = dispatch_map[num]
+            agent_status = entry.get("status", "in_progress")
+            step = entry.get("step", "")
+            if agent_status == "awaiting_human":
+                spec.status = "⏳ Awaiting Review"
+            elif "gate failed" in step:
+                spec.status = f"❌ Gate Failed"
+            else:
+                spec.status = "🔄 In Progress"
+            # Prefer the backend field (actual AI, e.g. "cursor") over the
+            # runner identity (e.g. "claude-runner") for display purposes.
+            spec.agent_name = entry.get("backend") or entry.get("agent", "")
 
 
 def _board_columns(wos: dict[int, WOSpec]) -> dict[str, list[WOSpec]]:
@@ -302,16 +365,27 @@ async def dashboard(request: Request):
             pass
         return False
 
-    wos_result, branches, prs, ci, agent_runner_online = await asyncio.gather(
+    async def _load_dispatch() -> dict:
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch")
+                if r.status_code == 200:
+                    return r.json()
+        except Exception:
+            pass
+        return {}
+
+    wos_result, branches, prs, ci, agent_runner_online, dispatch = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
         _load_ci_health(),
         _load_runner_status(),
+        _load_dispatch(),
     )
     wos, wos_available = wos_result
 
-    _apply_live_status(wos, branches, prs)
+    _apply_live_status(wos, branches, prs, dispatch)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
     validations = _load_validations()
@@ -415,14 +489,25 @@ async def pm_dashboard(request: Request):
             "site_title": SITE_TITLE, "message": "GITHUB_TOKEN and GITHUB_REPO required."
         })
 
-    wos_result, branches, prs, merged_prs = await asyncio.gather(
+    async def _pm_dispatch() -> dict:
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch")
+                if r.status_code == 200:
+                    return r.json()
+        except Exception:
+            pass
+        return {}
+
+    wos_result, branches, prs, merged_prs, dispatch = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
         gh.list_merged_prs(days=56),
+        _pm_dispatch(),
     )
     wos, wos_available = wos_result
-    _apply_live_status(wos, branches, prs)
+    _apply_live_status(wos, branches, prs, dispatch)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
 
@@ -1405,44 +1490,67 @@ def _log_line_matches_wo(line: str, wo_number: str) -> bool:
     return False
 
 
+def _log_line_matches_agent(line: str, agent: str) -> bool:
+    """True if a log line mentions the given agent backend name (case-insensitive)."""
+    if not agent:
+        return True
+    needle = agent.lower()
+    low = line.lower()
+    # Exclude noisy health-check lines when filtering by agent
+    if "[draft-server]" in line and "GET /health" in line:
+        return False
+    return needle in low
+
+
 @app.get("/api/runner/log/stream")
-async def stream_runner_log(request: Request, wo: str = "", tail: int = 150):
-    """SSE: tail the agent runner log, optionally filtered to a single WO number."""
+async def stream_runner_log(request: Request, wo: str = "", agent: str = "", tail: int = 150):
+    """SSE: proxy the orchestrator's in-memory log stream (avoids Docker volume mount lag)."""
+    params: dict = {"tail": tail}
+    if agent:
+        params["agent"] = agent
+
     async def event_gen():
         try:
-            with open(LOG_PATH, "r", errors="replace") as f:
-                all_lines = f.read().splitlines()
-            for line in all_lines[-tail:]:
-                if _log_line_matches_wo(line, wo):
-                    yield f"data: {json.dumps(line)}\n\n"
-        except FileNotFoundError:
-            yield f"data: {json.dumps('[runner log not found — agent may not have started yet]')}\n\n"
-            return
+            async with httpx.AsyncClient(timeout=None) as client:
+                url = f"{ORCHESTRATOR_URL}/api/log/stream"
+                async with client.stream("GET", url, params=params) as resp:
+                    async for raw in resp.aiter_lines():
+                        if await request.is_disconnected():
+                            break
+                        if not raw:
+                            continue
+                        if raw.startswith("data:"):
+                            try:
+                                line = json.loads(raw[5:].strip())
+                            except Exception:
+                                line = raw[5:].strip()
+                            # Apply WO filter here (orchestrator only filters by agent)
+                            if wo and not _log_line_matches_wo(line, wo):
+                                continue
+                            yield f"data: {json.dumps(line)}\n\n"
+                        else:
+                            yield f"{raw}\n"
         except Exception as e:
-            yield f"data: {json.dumps(f'[log read error: {e}]')}\n\n"
-            return
-
-        try:
-            with open(LOG_PATH, "r", errors="replace") as f:
-                f.seek(0, 2)
-                while True:
-                    if await request.is_disconnected():
-                        break
-                    line = f.readline()
-                    if line:
-                        stripped = line.rstrip()
-                        if stripped and _log_line_matches_wo(stripped, wo):
-                            yield f"data: {json.dumps(stripped)}\n\n"
-                    else:
-                        await asyncio.sleep(0.3)
-        except Exception as e:
-            yield f"data: {json.dumps(f'[stream error: {e}]')}\n\n"
+            yield f"data: {json.dumps(f'[log stream error: {e}]')}\n\n"
 
     return StreamingResponse(
         event_gen(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/api/anthropic-usage")
+async def api_anthropic_usage():
+    """Proxy orchestrator Anthropic API usage summary."""
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/anthropic-usage")
+            if r.status_code == 200:
+                return r.json()
+    except Exception:
+        pass
+    return {"records": [], "summary": {"call_count": 0}}
 
 
 @app.get("/api/factory/dispatch")
@@ -1466,6 +1574,14 @@ async def api_factory_release_wo(wo_id: str):
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
+@app.post("/api/dispatch/{wo_id}/retry")
+async def api_factory_retry_wo(wo_id: str):
+    """Re-queue a failed WO so the runner picks it up again."""
+    async with httpx.AsyncClient(timeout=4) as client:
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}/retry")
+    return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
 @app.delete("/api/factory/dispatch")
 async def api_factory_release_all():
     """Clear entire dispatch state."""
@@ -1474,11 +1590,58 @@ async def api_factory_release_all():
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
+@app.get("/api/factory/pause")
+async def api_factory_pause_state():
+    async with httpx.AsyncClient(timeout=3) as client:
+        r = await client.get(f"{ORCHESTRATOR_URL}/api/factory/pause")
+    return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
+@app.post("/api/factory/pause")
+async def api_factory_pause():
+    async with httpx.AsyncClient(timeout=3) as client:
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/factory/pause")
+    return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
+@app.post("/api/factory/resume")
+async def api_factory_resume():
+    async with httpx.AsyncClient(timeout=3) as client:
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/factory/resume")
+    return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
+@app.post("/api/factory/pm")
+async def api_factory_pm(request: Request):
+    """PM assistant — proxy to orchestrator /api/pm/chat."""
+    body = await request.json()
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/pm/chat", json=body)
+        return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse(content={"type": "text", "reply": f"PM unavailable: {e}", "wo_draft": None}, status_code=200)
+
+
+@app.post("/api/factory/wos")
+async def api_factory_create_wo(request: Request):
+    """Create a WO directly from a draft (used by PM chat inline creation)."""
+    body = await request.json()
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return JSONResponse(content={"error": "GitHub not configured"}, status_code=503)
+    try:
+        result = await gw.create_wo(body, GITHUB_TOKEN, GITHUB_REPO, WO_PATH)
+        return JSONResponse(content=result)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 @app.get("/factory", response_class=HTMLResponse)
 async def factory_floor(request: Request):
     backends = {
         "claude-api": False, "agent_runner_online": False,
         "claude": False, "cursor": False, "codex": False, "gemini": False,
+        "exhausted_backends": [],
     }
     dispatch: dict = {}
     try:
@@ -1497,11 +1660,29 @@ async def factory_floor(request: Request):
 
     active_wos = sorted(dispatch.values(), key=lambda w: w.get("claimed_at", ""), reverse=True)
 
+    # Map which backend names are actively working WOs so agent cards can show status.
+    # Use the `backend` field (set by runner when claiming) for exact matching.
+    # Fall back to the `agent` field prefix for old dispatch entries that predate the fix.
+    # Exclude "complete" WOs — they don't count as active work.
+    backend_wos: dict[str, list] = {}
+    for wo in active_wos:
+        if wo.get("status") == "complete":
+            continue
+        b = wo.get("backend") or wo.get("agent", "")
+        for backend in ["claude", "cursor", "codex", "gemini"]:
+            if b == backend or b.startswith(backend + "-"):
+                backend_wos.setdefault(backend, []).append(wo)
+                break
+
+    pending_validations = _load_validations()
+    pending_validations = [v for v in pending_validations if v.get("status") == "pending"]
+
     return templates.TemplateResponse(request=request, name="factory.html", context={
         "site_title": SITE_TITLE,
         "github_repo": GITHUB_REPO,
         "backends": backends,
         "active_wos": active_wos,
+        "backend_wos": backend_wos,
         "refresh_seconds": 9999,
-        "pending_validations": [],
+        "pending_validations": pending_validations,
     })
