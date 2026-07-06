@@ -57,10 +57,14 @@
               ('gemini', 'Gemini — gemini --yolo'),
             ] %}
             {% for val, label in backends %}
-            <option value="{{ val }}" {% if cfg.get('preferred', 'claude') == val %}selected{% endif %}>{{ label }}</option>
+            {% set is_installed = installed_backends.get(val, false) %}
+            <option value="{{ val }}" {% if cfg.get('preferred', 'claude') == val %}selected{% endif %}
+              {% if not is_installed %}disabled{% endif %}>
+              {{ '✓ ' if is_installed else '✗ ' }}{{ label }}{% if not is_installed %} (not installed){% endif %}
+            </option>
             {% endfor %}
           </select>
-          <p class="text-[10px] text-slate-600 mt-1">Which AI executes work orders end-to-end</p>
+          <p class="text-[10px] text-slate-600 mt-1">Which AI executes work orders end-to-end. Only installed backends are selectable.</p>
         </div>
 
         <div>
@@ -107,7 +111,11 @@
                   class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100
                          focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
             {% for val, label in [('claude','Claude'), ('cursor','Cursor'), ('codex','Codex'), ('gemini','Gemini')] %}
-            <option value="{{ val }}" {% if reviewer_cfg.get(role_key, 'claude') == val %}selected{% endif %}>{{ label }}</option>
+            {% set is_installed = installed_backends.get(val, false) %}
+            <option value="{{ val }}" {% if reviewer_cfg.get(role_key, 'claude') == val %}selected{% endif %}
+              {% if not is_installed %}disabled{% endif %}>
+              {{ '✓ ' if is_installed else '✗ ' }}{{ label }}{% if not is_installed %} (not installed){% endif %}
+            </option>
             {% endfor %}
           </select>
           <p class="text-[10px] text-slate-600 mt-1">{{ role_desc }}</p>

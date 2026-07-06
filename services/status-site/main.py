@@ -1036,6 +1036,17 @@ async def settings_agents(request: Request, saved: str = "", error: str = ""):
                 secrets = sec_r.json()
     except Exception:
         pass
+    # Fetch installed backends from the agent runner health check
+    installed_backends: dict[str, bool] = {}
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/backends")
+            if r.status_code == 200:
+                data = r.json()
+                for b in ("claude", "cursor", "codex", "gemini"):
+                    installed_backends[b] = bool(data.get(b, False))
+    except Exception:
+        pass
     return templates.TemplateResponse(request=request, name="settings_agents.html", context={
         "site_title": SITE_TITLE,
         "refresh_seconds": 3600,
@@ -1045,6 +1056,7 @@ async def settings_agents(request: Request, saved: str = "", error: str = ""):
         "error": error,
         "orchestrator_offline": not cfg,
         "anthropic_key_set": secrets.get("ANTHROPIC_API_KEY", False),
+        "installed_backends": installed_backends,
     })
 
 
