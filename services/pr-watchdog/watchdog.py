@@ -313,8 +313,8 @@ async def poll() -> None:
                 "pr_title": None,
                 "rule": "queue-depth",
                 "severity": "warning",
-                "message": f"CI queue depth: {queue_depth} jobs",
-                "detail": "Runners may be saturated",
+                "message": f"GitHub Actions: {queue_depth} workflow runs queued/running",
+                "detail": "Runners may be saturated (each PR triggers multiple checks)",
                 "first_seen": now_str,
                 "last_checked": now_str,
             })

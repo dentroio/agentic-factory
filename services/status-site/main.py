@@ -280,6 +280,34 @@ async def _load_ci_health() -> dict:
     return {"runs": recent, "pass_rate": pass_rate, "error": False}
 
 
+def _apply_plan_status(wos: dict[int, WOSpec]) -> None:
+    """Overlay PLAN.json statuses onto WOSpecs so done WOs show as done
+    even when their spec file header still says Open.
+
+    Live data (branch/PR/dispatch) applied afterward by _apply_live_status()
+    will always win over this overlay.
+    """
+    plan = _load_plan_from_orchestrator()
+    if not plan:
+        return
+    all_wos = plan.get("all_wos") or plan.get("queue", [])
+    done_words = {"done", "complete", "deferred", "superseded", "abandoned"}
+    for entry in all_wos:
+        wo_str = entry.get("wo", "")
+        status = entry.get("status", "").lower()
+        try:
+            num = int(re.sub(r"[^0-9]", "", wo_str))
+        except (ValueError, TypeError):
+            continue
+        if num not in wos:
+            continue
+        spec = wos[num]
+        if any(w in status for w in done_words):
+            spec.status = "✅ Done"
+        elif "progress" in status:
+            spec.status = "🔄 In Progress"
+
+
 def _apply_live_status(
     wos: dict[int, WOSpec],
     branches: list[dict],
@@ -385,6 +413,7 @@ async def dashboard(request: Request):
     )
     wos, wos_available = wos_result
 
+    _apply_plan_status(wos)
     _apply_live_status(wos, branches, prs, dispatch)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
@@ -507,6 +536,7 @@ async def pm_dashboard(request: Request):
         _pm_dispatch(),
     )
     wos, wos_available = wos_result
+    _apply_plan_status(wos)
     _apply_live_status(wos, branches, prs, dispatch)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
