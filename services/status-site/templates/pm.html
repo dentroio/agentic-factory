@@ -215,6 +215,7 @@
             <th class="px-2 py-2.5 text-[10px] font-semibold text-emerald-400 uppercase tracking-wider text-center w-12">Done</th>
             <th class="px-2 py-2.5 text-[10px] font-semibold text-indigo-400 uppercase tracking-wider text-center w-14">Active</th>
             <th class="px-2 py-2.5 text-[10px] font-semibold text-rose-400 uppercase tracking-wider text-center w-14">Blocked</th>
+            <th class="px-2 py-2.5 text-[10px] font-semibold text-slate-600 uppercase tracking-wider text-center w-14">Deferred</th>
             <th class="px-4 py-2.5 text-[10px] font-semibold text-slate-400 tracking-wider w-32">Progress</th>
           </tr>
         </thead>
@@ -231,6 +232,9 @@
             </td>
             <td class="px-2 py-2.5 text-center font-mono font-bold text-[10px]">
               <span class="{% if prog.blocked > 0 %}text-rose-400{% else %}text-slate-600{% endif %}">{{ prog.blocked }}</span>
+            </td>
+            <td class="px-2 py-2.5 text-center font-mono text-[10px]">
+              <span class="{% if prog.deferred > 0 %}text-slate-500{% else %}text-slate-800{% endif %}">{{ prog.deferred if prog.deferred > 0 else '—' }}</span>
             </td>
             <td class="px-4 py-2.5">
               <div class="flex items-center gap-2">
