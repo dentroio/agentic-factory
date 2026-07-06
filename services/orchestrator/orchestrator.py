@@ -989,10 +989,36 @@ def _load_watchdog() -> dict | None:
 
 # ── Main poll loop ────────────────────────────────────────────────────────────
 
+async def _sync_local_repo() -> None:
+    """Pull latest from origin/main so local WO specs and PLAN.json stay fresh.
+
+    Runs once per poll cycle. Failures are logged but never block the poll.
+    """
+    if not LOCAL_REPO_MOUNT:
+        return
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "pull", "--ff-only", "origin", "main",
+            cwd=LOCAL_REPO_MOUNT,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode == 0:
+            msg = out.decode(errors="replace").strip().splitlines()[0] if out else "ok"
+            if "Already up to date" not in msg:
+                print(f"[orchestrator] local repo synced: {msg}")
+        else:
+            print(f"[orchestrator] git pull failed (rc={proc.returncode}): {err.decode(errors='replace').strip()[:200]}")
+    except Exception as e:
+        print(f"[orchestrator] git pull error: {e}")
+
+
 async def poll() -> None:
     global _orchestrator_output
     now_str = _utcnow()
     _prev_output = _orchestrator_output  # keep last-good snapshot for rate-limit fallback
+
+    await _sync_local_repo()  # keep local WO specs + PLAN.json fresh on every cycle
 
     async with httpx.AsyncClient(timeout=20) as client:
         # Primary repo fetches (always)
