@@ -281,8 +281,8 @@ async def _load_ci_health() -> dict:
 
 
 def _apply_plan_status(wos: dict[int, WOSpec]) -> None:
-    """Overlay PLAN.json statuses onto WOSpecs so done WOs show as done
-    even when their spec file header still says Open.
+    """Overlay PLAN.json statuses onto WOSpecs so done/deferred WOs show
+    correctly even when their spec file header still says Open.
 
     Live data (branch/PR/dispatch) applied afterward by _apply_live_status()
     will always win over this overlay.
@@ -290,9 +290,13 @@ def _apply_plan_status(wos: dict[int, WOSpec]) -> None:
     plan = _load_plan_from_orchestrator()
     if not plan:
         return
-    all_wos = plan.get("all_wos") or plan.get("queue", [])
-    done_words = {"done", "complete", "deferred", "superseded", "abandoned"}
-    for entry in all_wos:
+    # Collect all WOs from queue + deferred sections
+    all_entries: list[dict] = list(plan.get("all_wos") or plan.get("queue", []))
+    all_entries.extend(plan.get("deferred", []))
+
+    done_words = {"done", "complete", "superseded", "abandoned"}
+    deferred_entries = {e.get("wo") for e in plan.get("deferred", [])}
+    for entry in all_entries:
         wo_str = entry.get("wo", "")
         status = entry.get("status", "").lower()
         try:
@@ -304,6 +308,8 @@ def _apply_plan_status(wos: dict[int, WOSpec]) -> None:
         spec = wos[num]
         if any(w in status for w in done_words):
             spec.status = "✅ Done"
+        elif "deferred" in status or wo_str in deferred_entries:
+            spec.status = "⏸ Deferred"
         elif "progress" in status:
             spec.status = "🔄 In Progress"
 
@@ -448,6 +454,7 @@ async def dashboard(request: Request):
                 "in_progress": columns.get("in_progress", []),
                 "review": columns.get("review", []),
                 "blocked": columns.get("blocked", []),
+                "deferred": columns.get("deferred", []),
                 "done": columns.get("done", [])[:20],
             },
             "branches": branches,

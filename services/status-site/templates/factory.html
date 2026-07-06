@@ -51,10 +51,12 @@
 
     {# Input #}
     <div class="px-5 pb-4 pt-2 border-t border-slate-800/30">
+      {# Image thumbnail strip — hidden until images are pasted #}
+      <div id="pm-image-strip" class="hidden flex gap-2 mb-2 flex-wrap"></div>
       <div class="flex gap-3">
         <textarea id="pm-input" rows="2"
           class="flex-1 bg-slate-900/80 border border-slate-700/60 rounded-xl px-4 py-2.5 text-sm text-slate-200 placeholder-slate-600 resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500/60 transition-all"
-          placeholder="Ask anything, or describe a feature to create a work order… (Enter to send, Shift+Enter for new line)"></textarea>
+          placeholder="Ask anything, paste a screenshot, or describe a feature to create a work order… (Enter to send, Shift+Enter for new line)"></textarea>
         <button onclick="sendMessage()" id="pm-send"
           class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-all self-end flex items-center gap-2">
           <span id="pm-send-label">Send</span>
@@ -254,18 +256,57 @@
   const sendBtn = document.getElementById('pm-send');
   const sendLabel = document.getElementById('pm-send-label');
   const spinner = document.getElementById('pm-spinner');
+  const imageStrip = document.getElementById('pm-image-strip');
   let history = [];
   let busy = false;
+  let pendingImages = []; // [{data: base64, media_type: "image/png", dataUrl: "..."}]
+
+  function addPendingImage(file) {
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+      const dataUrl = ev.target.result;
+      const [header, data] = dataUrl.split(',');
+      const media_type = header.match(/:(.*?);/)[1];
+      const img = { data, media_type, dataUrl };
+      pendingImages.push(img);
+      renderImageStrip();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function renderImageStrip() {
+    imageStrip.innerHTML = '';
+    if (pendingImages.length === 0) { imageStrip.classList.add('hidden'); return; }
+    imageStrip.classList.remove('hidden');
+    pendingImages.forEach((img, i) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'relative group';
+      wrap.innerHTML = `<img src="${img.dataUrl}" class="h-16 w-auto rounded-lg border border-slate-700/60 object-cover">
+        <button onclick="removePendingImage(${i})" class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-600 hover:bg-red-500 rounded-full text-white text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">✕</button>`;
+      imageStrip.appendChild(wrap);
+    });
+  }
+
+  window.removePendingImage = function(i) {
+    pendingImages.splice(i, 1);
+    renderImageStrip();
+  };
 
   function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-  function appendMsg(role, content) {
+  function appendMsg(role, content, images) {
     const welcome = document.getElementById('pm-welcome');
     if (welcome) welcome.remove();
     const wrap = document.createElement('div');
     if (role === 'user') {
       wrap.className = 'pm-msg-user';
-      wrap.innerHTML = `<div class="pm-bubble-user">${esc(content)}</div>`;
+      let imgHtml = '';
+      if (images && images.length) {
+        imgHtml = `<div class="flex gap-1.5 flex-wrap mb-1.5">${images.map(img =>
+          `<img src="${img.dataUrl}" class="h-20 w-auto rounded-lg border border-slate-700/50 object-cover">`
+        ).join('')}</div>`;
+      }
+      wrap.innerHTML = `<div class="pm-bubble-user">${imgHtml}${content ? esc(content) : ''}</div>`;
     } else {
       wrap.className = 'pm-msg-assistant flex gap-3';
       wrap.innerHTML = `<div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
@@ -317,14 +358,19 @@
 
   async function sendMessage() {
     const text = inputEl.value.trim();
-    if (!text || busy) return;
+    if (!text && pendingImages.length === 0) return;
+    if (busy) return;
     busy = true;
     sendBtn.disabled = true;
     sendLabel.textContent = 'Thinking…';
     spinner.classList.remove('hidden');
     inputEl.value = '';
 
-    appendMsg('user', text);
+    const sentImages = [...pendingImages];
+    pendingImages = [];
+    renderImageStrip();
+
+    appendMsg('user', text, sentImages);
     history.push({ role: 'user', content: text });
 
     // Typing indicator
@@ -335,11 +381,16 @@
     messagesEl.appendChild(typing);
     messagesEl.scrollTop = messagesEl.scrollHeight;
 
+    const payload = { message: text, history: history.slice(0, -1) };
+    if (sentImages.length) {
+      payload.images = sentImages.map(({ data, media_type }) => ({ data, media_type }));
+    }
+
     try {
       const r = await fetch('/api/factory/pm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, history: history.slice(0, -1) }),
+        body: JSON.stringify(payload),
       });
       const data = await r.json();
       typing.remove();
@@ -403,6 +454,17 @@
 
   inputEl.addEventListener('keydown', function(e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+
+  inputEl.addEventListener('paste', function(e) {
+    const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        addPendingImage(item.getAsFile());
+      }
+    }
   });
 
   /* ── Live Feed ─────────────────────────────────────────────────── */

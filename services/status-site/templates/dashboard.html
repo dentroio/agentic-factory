@@ -161,12 +161,13 @@
     <span class="text-xs text-slate-500">Work orders assigned to AI agents — click any card for details</span>
   </div>
 
-  <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+  <div class="grid grid-cols-1 md:grid-cols-6 gap-3">
     {% set board = [
       ("Open",        "open",        "kanban-col-open"),
       ("In Progress", "in_progress", "kanban-col-progress"),
       ("In Review",   "review",      "kanban-col-review"),
       ("Blocked",     "blocked",     "kanban-col-blocked"),
+      ("Deferred",    "deferred",    "kanban-col-deferred"),
       ("Done",        "done",        "kanban-col-done"),
     ] %}
 

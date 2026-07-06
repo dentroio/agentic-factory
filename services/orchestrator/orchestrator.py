@@ -1392,6 +1392,7 @@ class PMChatRequest(BaseModel):
     message: str
     history: list[dict] = []   # [{role: "user"|"assistant", content: "..."}]
     backend: str = "claude-api"
+    images: list[dict] = []    # [{data: "<base64>", media_type: "image/png"|...}]
 
 
 @app.get("/api/backends")
@@ -1517,7 +1518,24 @@ async def pm_chat(req: PMChatRequest):
 
     system = _PM_SYSTEM.format(context="\n".join(ctx_parts))
     messages = [{"role": m["role"], "content": m["content"]} for m in req.history]
-    messages.append({"role": "user", "content": req.message})
+
+    # Build user content — multi-modal when images are attached
+    if req.images:
+        user_content: list[dict] = []
+        for img in req.images:
+            user_content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": img.get("media_type", "image/png"),
+                    "data": img["data"],
+                },
+            })
+        if req.message:
+            user_content.append({"type": "text", "text": req.message})
+        messages.append({"role": "user", "content": user_content})
+    else:
+        messages.append({"role": "user", "content": req.message})
 
     text = ""
     if req.backend == "claude-api" or not req.backend:
@@ -1526,13 +1544,14 @@ async def pm_chat(req: PMChatRequest):
             try:
                 import anthropic as _anthropic
                 _aclient = _anthropic.Anthropic(api_key=api_key)
+                _model = "claude-sonnet-4-6" if req.images else "claude-haiku-4-5-20251001"
                 _amsg = _aclient.messages.create(
-                    model="claude-haiku-4-5-20251001",
+                    model=_model,
                     max_tokens=1024,
                     system=system,
                     messages=messages,
                 )
-                _record_anthropic_usage("claude-haiku-4-5-20251001", _amsg.usage.input_tokens, _amsg.usage.output_tokens, "pm/chat")
+                _record_anthropic_usage(_model, _amsg.usage.input_tokens, _amsg.usage.output_tokens, "pm/chat")
                 text = _amsg.content[0].text.strip()
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))

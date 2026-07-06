@@ -33,11 +33,13 @@ class WOSpec:
         s = self.status.lower()
         if "done" in s or "complete" in s or "✅" in self.status:
             return "done"
+        if "deferred" in s or "⏸" in self.status:
+            return "deferred"
         if "review" in s or "👀" in self.status:
             return "review"
         if "progress" in s or "🔄" in self.status:
             return "in_progress"
-        if "blocked" in s or "🔴" in self.status or "⏸" in self.status:
+        if "blocked" in s or "🔴" in self.status:
             return "blocked"
         return "open"
 
