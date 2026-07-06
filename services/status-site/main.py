@@ -549,11 +549,12 @@ async def pm_dashboard(request: Request):
     watchdog = _load_watchdog()
 
     # Program roll-ups
-    programs: dict[str, dict] = defaultdict(lambda: {"total": 0, "done": 0, "in_progress": 0, "blocked": 0, "in_review": 0, "open": 0})
+    programs: dict[str, dict] = defaultdict(lambda: {"total": 0, "done": 0, "in_progress": 0, "blocked": 0, "in_review": 0, "open": 0, "deferred": 0})
     for spec in wos.values():
         prog = spec.program or "Standalone"
         programs[prog]["total"] += 1
-        programs[prog][spec.board_column if spec.board_column != "review" else "in_review"] += 1
+        col = spec.board_column if spec.board_column != "review" else "in_review"
+        programs[prog][col] = programs[prog].get(col, 0) + 1
 
     for prog in programs.values():
         total = prog["total"]
