@@ -942,6 +942,45 @@ async def _fetch_dependabot_prs(client: httpx.AsyncClient) -> list[dict]:
         return []
 
 
+async def _fetch_all_open_prs(client: httpx.AsyncClient) -> list[dict]:
+    """Return all open PRs (non-Dependabot) with author, branch, CI state."""
+    try:
+        prs = await _cached_get(client, f"/repos/{GITHUB_REPO}/pulls",
+                                 {"state": "open", "per_page": 100}, ttl=60)
+        results = []
+        for pr in prs:
+            author = pr.get("user", {}).get("login", "unknown")
+            sha = pr.get("head", {}).get("sha", "")
+            ci_state = "unknown"
+            try:
+                checks = await _get(client, f"/repos/{GITHUB_REPO}/commits/{sha}/check-runs",
+                                     {"per_page": 100})
+                runs = checks.get("check_runs", [])
+                if runs:
+                    if all(r.get("conclusion") in ("success", "skipped") for r in runs):
+                        ci_state = "green"
+                    elif any(r.get("conclusion") == "failure" for r in runs):
+                        ci_state = "failed"
+                    else:
+                        ci_state = "pending"
+            except Exception:
+                pass
+            results.append({
+                "number": pr["number"],
+                "title": pr["title"],
+                "author": author,
+                "branch": pr["head"]["ref"],
+                "created_at": pr["created_at"][:10],
+                "url": pr["html_url"],
+                "draft": pr.get("draft", False),
+                "ci": ci_state,
+            })
+        return results
+    except Exception as exc:
+        print(f"[prs] fetch error: {exc}")
+        return []
+
+
 async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient) -> int:
     from datetime import timedelta
     since = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1664,6 +1703,11 @@ _DEPENDABOT_KEYWORDS = frozenset([
     "upgrade", "package update", "rebase", "conflicting pr",
 ])
 
+_PR_KEYWORDS = frozenset([
+    "pr", "prs", "pull request", "pull requests", "open pr", "current pr",
+    "merge", "branch", "branches", "review",
+])
+
 _WO_STATUS_KEYWORDS = frozenset([
     "wo", "work order", "work orders", "queue", "queued", "next",
     "open", "pending", "ready", "planned", "in progress", "closed",
@@ -1755,6 +1799,23 @@ async def pm_chat(req: PMChatRequest):
                 ctx_parts.append("Queued WOs (from PLAN.json):\n" + "\n".join(lines))
             else:
                 ctx_parts.append("PLAN.json queue: all registered WOs are done. Local spec files not accessible.")
+
+    if any(kw in msg_lower for kw in _PR_KEYWORDS):
+        try:
+            async with httpx.AsyncClient(timeout=10) as _pc:
+                all_prs = await _fetch_all_open_prs(_pc)
+            if all_prs:
+                lines = []
+                for p in all_prs:
+                    draft = " [DRAFT]" if p["draft"] else ""
+                    lines.append(
+                        f"  PR #{p['number']}{draft}: {p['title'][:60]} | by {p['author']} | CI={p['ci']} | branch={p['branch']}"
+                    )
+                ctx_parts.append(f"Open PRs in {GITHUB_REPO} ({len(all_prs)} total):\n" + "\n".join(lines))
+            else:
+                ctx_parts.append(f"Open PRs in {GITHUB_REPO}: none")
+        except Exception:
+            pass
 
     if any(kw in msg_lower for kw in _DEPENDABOT_KEYWORDS):
         try:
