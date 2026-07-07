@@ -55,15 +55,15 @@ read -rs CURSOR_KEY_VAL
 echo ""
 _store_keychain "CURSOR_API_KEY" "$CURSOR_KEY_VAL"
 
-# ntfy Topic (optional)
+# ntfy Topic — auto-generate a hard-to-guess name
 echo ""
-echo "── ntfy Push Notifications (optional) ──────────────────"
-echo "  Topic name for push alerts (e.g. my-factory-alerts)"
-echo "  Get the app at https://ntfy.sh · Press Enter to skip."
-printf "  Topic: "
-read -r NTFY_TOPIC_VAL
-echo ""
+echo "── ntfy Push Notifications ──────────────────────────────"
+NTFY_TOPIC_VAL="factory-$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 14 || openssl rand -hex 7)"
+echo "  Auto-generated topic: $NTFY_TOPIC_VAL"
+echo "  Subscribe at: https://ntfy.sh/$NTFY_TOPIC_VAL"
+echo "  (Add this URL in the ntfy app — https://ntfy.sh)"
 _store_keychain "NTFY_TOPIC" "$NTFY_TOPIC_VAL"
+_store_keychain "NTFY_SERVER" "https://ntfy.sh"
 
 # Slack Webhook (optional)
 echo ""

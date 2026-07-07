@@ -1158,6 +1158,8 @@ async def settings_authentication(request: Request, saved: str = "", error: str 
                 secrets = r.json()
     except Exception:
         pass
+    ntfy_topic = secrets.get("NTFY_TOPIC") or os.getenv("NTFY_TOPIC", "")
+    ntfy_server = secrets.get("NTFY_SERVER") or os.getenv("NTFY_SERVER", "https://ntfy.sh")
     return templates.TemplateResponse(request=request, name="settings_authentication.html", context={
         "site_title": SITE_TITLE,
         "refresh_seconds": 3600,
@@ -1167,6 +1169,8 @@ async def settings_authentication(request: Request, saved: str = "", error: str 
         "github_token_set": bool(GITHUB_TOKEN) or secrets.get("GITHUB_TOKEN", False),
         "anthropic_key_set": secrets.get("ANTHROPIC_API_KEY", False),
         "slack_webhook_set": secrets.get("SLACK_WEBHOOK_URL", False),
+        "ntfy_topic": ntfy_topic,
+        "ntfy_server": ntfy_server or "https://ntfy.sh",
         "restart_required": False,
     })
 
@@ -1180,6 +1184,9 @@ async def settings_authentication_save(request: Request):
     anthropic_key = str(form.get("anthropic_key", "")).strip()
     slack_webhook = str(form.get("slack_webhook", "")).strip()
 
+    ntfy_topic = str(form.get("ntfy_topic", "")).strip()
+    ntfy_server = str(form.get("ntfy_server", "")).strip()
+
     secrets_payload: dict = {}
     if github_token:
         secrets_payload["GITHUB_TOKEN"] = github_token
@@ -1189,6 +1196,10 @@ async def settings_authentication_save(request: Request):
         secrets_payload["SLACK_WEBHOOK_URL"] = slack_webhook
     if github_repo:
         secrets_payload["GITHUB_REPO"] = github_repo
+    if ntfy_topic:
+        secrets_payload["NTFY_TOPIC"] = ntfy_topic
+    if ntfy_server:
+        secrets_payload["NTFY_SERVER"] = ntfy_server
 
     if secrets_payload:
         try:
@@ -1718,6 +1729,17 @@ async def api_factory_create_wo(request: Request):
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.post("/api/factory/notifications/test")
+async def api_factory_notifications_test():
+    """Send a test ntfy notification via orchestrator."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/notifications/test")
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=503)
 
 
 @app.get("/api/factory/dependabot/prs")

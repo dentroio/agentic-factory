@@ -90,6 +90,79 @@
       </div>
     </div>
 
+    {# ── ntfy Push Notifications ────────────────────────────────────── #}
+    <div class="glass-panel overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-800/40 flex items-center justify-between">
+        <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">ntfy Push Notifications</span>
+        <a href="https://ntfy.sh" target="_blank" class="text-[10px] text-slate-600 hover:text-slate-400 transition-colors">ntfy.sh ↗</a>
+      </div>
+      <div class="px-5 py-4 space-y-4">
+
+        <div>
+          <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">
+            Topic
+            {% if ntfy_topic %}
+            <span class="ml-2 normal-case font-sans text-emerald-400">● active</span>
+            {% else %}
+            <span class="ml-2 normal-case font-sans text-slate-600">not set</span>
+            {% endif %}
+          </label>
+          <div class="flex gap-2">
+            <input type="text" name="ntfy_topic" id="ntfy-topic-input"
+              value="{{ ntfy_topic }}"
+              placeholder="e.g. factory-a7k3m9q2x4b8nf"
+              class="flex-1 bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+            <button type="button" onclick="generateTopic()"
+              class="px-3 py-2 text-xs font-mono bg-slate-800 text-slate-300 rounded border border-slate-700/60 hover:bg-slate-700 transition-colors whitespace-nowrap">
+              ⟳ Generate
+            </button>
+          </div>
+          <p class="text-[10px] text-slate-600 mt-1">
+            Your private notification channel. Click Generate for a random unguessable name, or type your own.
+          </p>
+
+          {% if ntfy_topic %}
+          <div class="mt-3 p-3 bg-slate-900/60 rounded border border-slate-800/60 space-y-2">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Subscribe URL</span>
+              <button type="button" onclick="copySubscribeUrl()"
+                class="text-[10px] font-mono text-slate-500 hover:text-slate-300 transition-colors">
+                copy ⎘
+              </button>
+            </div>
+            <div id="subscribe-url" class="text-xs font-mono text-indigo-300 break-all">{{ ntfy_server }}/{{ ntfy_topic }}</div>
+            <p class="text-[10px] text-slate-600">
+              Add this URL in the <strong class="text-slate-500">ntfy app</strong> (iOS / Android / desktop) to receive push notifications.
+              <a href="{{ ntfy_server }}/{{ ntfy_topic }}" target="_blank" class="text-indigo-400 hover:underline ml-1">Open in browser ↗</a>
+            </p>
+          </div>
+          {% endif %}
+        </div>
+
+        <div>
+          <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">Server URL</label>
+          <input type="text" name="ntfy_server"
+            value="{{ ntfy_server }}"
+            placeholder="https://ntfy.sh"
+            class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+          <p class="text-[10px] text-slate-600 mt-1">
+            Leave as <code class="text-slate-500">https://ntfy.sh</code> for the hosted service, or point to a self-hosted ntfy server.
+          </p>
+        </div>
+
+        {% if ntfy_topic %}
+        <div>
+          <button type="button" id="test-ntfy-btn" onclick="testNtfy()"
+            class="inline-flex items-center gap-2 px-4 py-2 text-xs font-mono bg-slate-800 text-slate-300 rounded border border-slate-700/60 hover:bg-slate-700 transition-colors">
+            🔔 Send test notification
+          </button>
+          <span id="test-ntfy-status" class="ml-3 text-xs font-mono text-slate-600"></span>
+        </div>
+        {% endif %}
+
+      </div>
+    </div>
+
     {# ── Slack ──────────────────────────────────────────────────────── #}
     <div class="glass-panel overflow-hidden">
       <div class="px-5 py-3 border-b border-slate-800/40">
@@ -137,6 +210,49 @@ document.getElementById('auth-form').addEventListener('submit', function() {
     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
   </svg> Saving…`;
 });
+
+function generateTopic() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const rand = Array.from(crypto.getRandomValues(new Uint8Array(14)))
+    .map(b => chars[b % chars.length]).join('');
+  const topic = `factory-${rand}`;
+  document.getElementById('ntfy-topic-input').value = topic;
+}
+
+function copySubscribeUrl() {
+  const el = document.getElementById('subscribe-url');
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent.trim())
+    .then(() => {
+      const btn = event.target;
+      btn.textContent = 'copied ✓';
+      setTimeout(() => { btn.textContent = 'copy ⎘'; }, 2000);
+    });
+}
+
+async function testNtfy() {
+  const btn = document.getElementById('test-ntfy-btn');
+  const status = document.getElementById('test-ntfy-status');
+  btn.disabled = true;
+  status.textContent = 'sending…';
+  status.className = 'ml-3 text-xs font-mono text-slate-500';
+  try {
+    const r = await fetch('/api/factory/notifications/test', { method: 'POST' });
+    if (r.ok) {
+      status.textContent = 'sent ✓ — check your ntfy app';
+      status.className = 'ml-3 text-xs font-mono text-emerald-400';
+    } else {
+      const d = await r.json();
+      status.textContent = d.detail || 'failed';
+      status.className = 'ml-3 text-xs font-mono text-rose-400';
+    }
+  } catch (e) {
+    status.textContent = 'error — orchestrator unreachable';
+    status.className = 'ml-3 text-xs font-mono text-rose-400';
+  }
+  btn.disabled = false;
+  setTimeout(() => { status.textContent = ''; }, 5000);
+}
 </script>
 
 {% endblock %}

@@ -18,7 +18,13 @@ from pydantic import BaseModel
 
 import thread as thread_store
 from github_dispatch import trigger_codex_workflow
-from notifications import notify_validation_needed
+from notifications import (
+    notify_validation_needed,
+    notify_wo_complete,
+    notify_wo_error,
+    notify_dependabot,
+    notify_test,
+)
 from plan_engine import next_wo, sorted_queue
 
 load_dotenv()
@@ -380,6 +386,7 @@ async def request_validation(req: ValidateRequest):
         agent=req.agent,
         verify_url=req.verify_url,
         thread_summary=req.thread_summary,
+        secrets=_load_secrets(),
     ))
 
     return {"ok": True}
@@ -483,6 +490,18 @@ async def complete_wo(req: CompleteRequest):
         f"✅ WO complete — merged and closed by **{req.agent}**"
     ))
     print(f"[orchestrator] {wo_id} marked complete by {req.agent}")
+    asyncio.create_task(notify_wo_complete(
+        wo_id=wo_id, agent=req.agent, secrets=_load_secrets()
+    ))
+    return {"ok": True}
+
+
+@app.post("/api/notifications/test")
+async def notifications_test():
+    """Send a test ntfy notification using current secrets config."""
+    sent = await notify_test(secrets=_load_secrets())
+    if not sent:
+        raise HTTPException(status_code=422, detail="NTFY_TOPIC not configured — set it in Settings → Authentication")
     return {"ok": True}
 
 
@@ -1571,7 +1590,6 @@ async def rebase_dependabot_pr(number: int):
 async def approve_merge_dependabot_pr(number: int):
     """Approve a Dependabot PR and merge it (squash). CI must be green."""
     async with httpx.AsyncClient(timeout=15) as client:
-        # Approve
         approve_resp = await client.post(
             f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{number}/reviews",
             headers=_headers(),
@@ -1580,7 +1598,6 @@ async def approve_merge_dependabot_pr(number: int):
         if approve_resp.status_code not in (200, 201):
             raise HTTPException(status_code=approve_resp.status_code,
                                 detail=f"Approve failed: {approve_resp.text[:200]}")
-        # Merge
         merge_resp = await client.put(
             f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{number}/merge",
             headers=_headers(),
@@ -1589,6 +1606,7 @@ async def approve_merge_dependabot_pr(number: int):
         if merge_resp.status_code not in (200, 201):
             raise HTTPException(status_code=merge_resp.status_code,
                                 detail=f"Merge failed: {merge_resp.text[:200]}")
+    asyncio.create_task(notify_dependabot("merged", [number], secrets=_load_secrets()))
     return {"status": "merged", "pr": number}
 
 
