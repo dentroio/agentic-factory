@@ -1151,15 +1151,22 @@ async def health():
 @app.get("/settings/authentication", response_class=HTMLResponse)
 async def settings_authentication(request: Request, saved: str = "", error: str = ""):
     secrets: dict = {}
+    ntfy_config: dict = {}
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/secrets")
-            if r.status_code == 200:
-                secrets = r.json()
+            sec_r, ntfy_r = await asyncio.gather(
+                client.get(f"{ORCHESTRATOR_URL}/api/secrets"),
+                client.get(f"{ORCHESTRATOR_URL}/api/notifications/config"),
+                return_exceptions=True,
+            )
+            if not isinstance(sec_r, Exception) and sec_r.status_code == 200:
+                secrets = sec_r.json()
+            if not isinstance(ntfy_r, Exception) and ntfy_r.status_code == 200:
+                ntfy_config = ntfy_r.json()
     except Exception:
         pass
-    ntfy_topic = secrets.get("NTFY_TOPIC") or os.getenv("NTFY_TOPIC", "")
-    ntfy_server = secrets.get("NTFY_SERVER") or os.getenv("NTFY_SERVER", "https://ntfy.sh")
+    ntfy_topic = ntfy_config.get("ntfy_topic", "")
+    ntfy_server = ntfy_config.get("ntfy_server", "https://ntfy.sh")
     return templates.TemplateResponse(request=request, name="settings_authentication.html", context={
         "site_title": SITE_TITLE,
         "refresh_seconds": 3600,

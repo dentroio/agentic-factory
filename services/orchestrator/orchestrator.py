@@ -496,6 +496,15 @@ async def complete_wo(req: CompleteRequest):
     return {"ok": True}
 
 
+@app.get("/api/notifications/config")
+async def notifications_config():
+    """Return ntfy topic and server URL (not sensitive — needed by the UI to display subscribe info)."""
+    s = _load_secrets()
+    topic = s.get("NTFY_TOPIC") or os.getenv("NTFY_TOPIC", "")
+    server = s.get("NTFY_SERVER") or os.getenv("NTFY_SERVER", "https://ntfy.sh") or "https://ntfy.sh"
+    return {"ntfy_topic": topic, "ntfy_server": server}
+
+
 @app.post("/api/notifications/test")
 async def notifications_test():
     """Send a test ntfy notification using current secrets config."""
