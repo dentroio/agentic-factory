@@ -80,6 +80,18 @@
     {% endfor %}
   </div>
 
+  {# ── Dependabot PR Queue ──────────────────────────────────────────────────── #}
+  <div id="dependabot-panel" class="glass-panel overflow-hidden hidden">
+    <div class="px-4 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Dependabot PRs</span>
+        <span id="dep-count" class="text-[10px] font-mono text-slate-600"></span>
+      </div>
+      <button onclick="refreshDependabot()" class="text-[10px] font-mono text-slate-600 hover:text-slate-300 transition-colors">↻ refresh</button>
+    </div>
+    <div id="dep-list" class="divide-y divide-slate-800/30 text-xs font-mono"></div>
+  </div>
+
   {# ── Active Jobs + Live Feed ──────────────────────────────────────────────── #}
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
@@ -372,6 +384,75 @@
     const r = await fetch('/api/factory/dispatch', { method: 'DELETE' });
     if (r.ok) await refreshDispatch();
   };
+
+  // ── Dependabot PR panel ────────────────────────────────────────────────────
+  async function refreshDependabot() {
+    const panel = document.getElementById('dependabot-panel');
+    const list = document.getElementById('dep-list');
+    const count = document.getElementById('dep-count');
+    try {
+      const r = await fetch('/api/factory/dependabot/prs');
+      if (!r.ok) return;
+      const { prs } = await r.json();
+      if (!prs || prs.length === 0) {
+        panel.classList.add('hidden');
+        return;
+      }
+      panel.classList.remove('hidden');
+      count.textContent = `${prs.length} open`;
+      list.innerHTML = prs.map(p => {
+        const ciColor = p.ci === 'green' ? 'text-emerald-400' : p.ci === 'failed' ? 'text-rose-400' : 'text-amber-400';
+        const ciLabel = p.ci === 'green' ? '● CI green' : p.ci === 'failed' ? '● CI failed' : '◌ CI pending';
+        const mg = p.mergeable || 'unknown';
+        const mgColor = mg === 'MERGEABLE' ? 'text-emerald-400' : mg === 'CONFLICTING' ? 'text-rose-400' : 'text-slate-500';
+        const canMerge = p.ci === 'green' && mg === 'MERGEABLE';
+        const needsRebase = mg === 'CONFLICTING';
+        return `<div class="px-4 py-2.5 flex items-center justify-between gap-3 hover:bg-slate-800/20">
+          <div class="flex-1 min-w-0">
+            <a href="${p.url}" target="_blank" class="text-indigo-400 hover:underline">#${p.number}</a>
+            <span class="text-slate-400 ml-2 truncate">${p.title.replace(/</g,'&lt;')}</span>
+            <div class="flex gap-3 mt-0.5">
+              <span class="${ciColor}">${ciLabel}</span>
+              <span class="${mgColor}">${mg.toLowerCase()}</span>
+              ${p.auto_merge ? '<span class="text-slate-500">auto-merge set</span>' : ''}
+            </div>
+          </div>
+          <div class="flex gap-1.5 flex-shrink-0">
+            ${needsRebase ? `<button onclick="depAction(${p.number},'rebase',this)"
+              class="px-2 py-0.5 text-[10px] rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-colors">⟳ Rebase</button>` : ''}
+            ${canMerge ? `<button onclick="depAction(${p.number},'approve-merge',this)"
+              class="px-2 py-0.5 text-[10px] rounded bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 transition-colors">✓ Merge</button>` : ''}
+          </div>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      console.warn('Dependabot panel error:', e);
+    }
+  }
+
+  window.depAction = async function(number, action, btn) {
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const r = await fetch(`/api/factory/dependabot/prs/${number}/${action}`, { method: 'POST' });
+      const data = await r.json();
+      if (r.ok) {
+        btn.textContent = action === 'rebase' ? '✓ rebasing' : '✓ merged';
+        btn.className = 'px-2 py-0.5 text-[10px] rounded bg-emerald-500/20 text-emerald-300';
+        setTimeout(refreshDependabot, 2000);
+      } else {
+        btn.textContent = '⚠ failed';
+        btn.disabled = false;
+        console.error('Dependabot action failed:', data);
+      }
+    } catch (e) {
+      btn.textContent = '⚠ error';
+      btn.disabled = false;
+    }
+  };
+
+  refreshDependabot();
+  setInterval(refreshDependabot, 120_000);  // refresh every 2 min
 })();
 </script>
 {% endblock %}

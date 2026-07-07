@@ -1720,6 +1720,39 @@ async def api_factory_create_wo(request: Request):
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
+@app.get("/api/factory/dependabot/prs")
+async def api_factory_dependabot_prs():
+    """Proxy Dependabot PR list from orchestrator."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/dependabot/prs")
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse(content={"prs": [], "error": str(e)}, status_code=503)
+
+
+@app.post("/api/factory/dependabot/prs/{number}/rebase")
+async def api_factory_dependabot_rebase(number: int):
+    """Proxy Dependabot rebase action to orchestrator."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/dependabot/prs/{number}/rebase")
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=503)
+
+
+@app.post("/api/factory/dependabot/prs/{number}/approve-merge")
+async def api_factory_dependabot_approve_merge(number: int):
+    """Proxy Dependabot approve-merge action to orchestrator."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/dependabot/prs/{number}/approve-merge")
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=503)
+
+
 @app.get("/factory", response_class=HTMLResponse)
 async def factory_floor(request: Request):
     backends = {

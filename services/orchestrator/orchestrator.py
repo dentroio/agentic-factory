@@ -854,6 +854,50 @@ async def _fetch_open_pr_wos(client: httpx.AsyncClient, repo: str = GITHUB_REPO)
         return set()
 
 
+async def _fetch_dependabot_prs(client: httpx.AsyncClient) -> list[dict]:
+    """Return open Dependabot PRs with CI status and mergeable state."""
+    try:
+        prs = await _cached_get(client, f"/repos/{GITHUB_REPO}/pulls",
+                                 {"state": "open", "per_page": 100}, ttl=60)
+        bot_prs = [p for p in prs if p.get("user", {}).get("login") == "dependabot[bot]"]
+        results = []
+        for pr in bot_prs:
+            sha = pr.get("head", {}).get("sha", "")
+            ci_state = "unknown"
+            try:
+                checks = await _get(client, f"/repos/{GITHUB_REPO}/commits/{sha}/check-runs",
+                                     {"per_page": 100})
+                runs = [r for r in checks.get("check_runs", [])
+                        if "dependabot" not in r["name"].lower()]
+                if runs:
+                    if all(r.get("conclusion") in ("success", "skipped") for r in runs):
+                        ci_state = "green"
+                    elif any(r.get("conclusion") == "failure" for r in runs):
+                        ci_state = "failed"
+                    else:
+                        ci_state = "pending"
+                else:
+                    ci_state = "pending"
+            except Exception:
+                pass
+            # mergeable requires individual fetch — use cached PR data (may be stale)
+            mergeable = pr.get("mergeable")  # None when not yet computed
+            results.append({
+                "number": pr["number"],
+                "title": pr["title"],
+                "branch": pr["head"]["ref"],
+                "created_at": pr["created_at"][:10],
+                "url": pr["html_url"],
+                "mergeable": mergeable,
+                "auto_merge": pr.get("auto_merge") is not None,
+                "ci": ci_state,
+            })
+        return results
+    except Exception as exc:
+        print(f"[dependabot] fetch error: {exc}")
+        return []
+
+
 async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient) -> int:
     from datetime import timedelta
     since = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1499,6 +1543,55 @@ async def plan_draft(req: DraftRequest):
         )
 
 
+# ── Dependabot PR endpoints ───────────────────────────────────────────────────
+
+@app.get("/api/dependabot/prs")
+async def list_dependabot_prs():
+    """Return all open Dependabot PRs with CI status and mergeable state."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        prs = await _fetch_dependabot_prs(client)
+    return {"prs": prs}
+
+
+@app.post("/api/dependabot/prs/{number}/rebase")
+async def rebase_dependabot_pr(number: int):
+    """Post @dependabot rebase comment to trigger a branch rebase."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"https://api.github.com/repos/{GITHUB_REPO}/issues/{number}/comments",
+            headers=_headers(),
+            json={"body": "@dependabot rebase"},
+        )
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=resp.status_code, detail=resp.text[:200])
+    return {"status": "rebase_triggered", "pr": number}
+
+
+@app.post("/api/dependabot/prs/{number}/approve-merge")
+async def approve_merge_dependabot_pr(number: int):
+    """Approve a Dependabot PR and merge it (squash). CI must be green."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        # Approve
+        approve_resp = await client.post(
+            f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{number}/reviews",
+            headers=_headers(),
+            json={"event": "APPROVE", "body": "✅ Approved by factory PM — CI green, patch/minor update."},
+        )
+        if approve_resp.status_code not in (200, 201):
+            raise HTTPException(status_code=approve_resp.status_code,
+                                detail=f"Approve failed: {approve_resp.text[:200]}")
+        # Merge
+        merge_resp = await client.put(
+            f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{number}/merge",
+            headers=_headers(),
+            json={"merge_method": "squash"},
+        )
+        if merge_resp.status_code not in (200, 201):
+            raise HTTPException(status_code=merge_resp.status_code,
+                                detail=f"Merge failed: {merge_resp.text[:200]}")
+    return {"status": "merged", "pr": number}
+
+
 _PM_SYSTEM = """\
 You are the AI Factory PM for the Clarion project — an AI-assisted software engineering factory.
 You coordinate AI agents (Claude, Cursor, Codex, Gemini) that autonomously implement work orders (WOs).
@@ -1506,16 +1599,27 @@ You coordinate AI agents (Claude, Cursor, Codex, Gemini) that autonomously imple
 {context}
 
 Your role:
-- Answer questions about active WOs, agent status, and queue health
+- Answer questions about active WOs, agent status, queue health, and dependency PR status
 - Draft new work orders from plain-English feature requests
 - Advise on priorities (P1=core/risky, P2=feature/additive, P3=docs) and effort (XS<1h S~2h M=½d L=1d XL=2-3d)
 - Keep status answers to 2-4 sentences; be direct and specific
+
+DEPENDABOT PR ACTIONS — when the user asks you to fix, merge, or rebase a Dependabot PR,
+include one or more action tags at the END of your response (after your text):
+  [DEPENDABOT:rebase:NNN]        — rebase PR #NNN (use when CONFLICTING)
+  [DEPENDABOT:approve-merge:NNN] — approve + merge PR #NNN (use when CI green and MERGEABLE)
+You may include multiple tags for multiple PRs. Only include a tag when the action is clearly safe.
 
 WHEN THE USER WANTS TO CREATE A WORK ORDER respond with ONLY this JSON (no other text, no fences):
 {{"type":"wo_draft","title":"short action title ≤60 chars","priority":"P1|P2|P3","effort":"XS|S|M|L|XL","services":"comma-separated service names","problem":"2-3 sentences on the pain point","what_to_build":"technical description with files/approach","acceptance_criteria":["verifiable item 1","verifiable item 2","verifiable item 3"],"notes":"constraints or empty string"}}
 
 FOR ALL OTHER MESSAGES respond conversationally in plain text only — no JSON, no markdown.\
 """
+
+_DEPENDABOT_KEYWORDS = frozenset([
+    "dependabot", "dependency", "dependencies", "deps", "dep pr",
+    "upgrade", "package update", "rebase", "conflicting pr",
+])
 
 
 @app.post("/api/pm/chat")
@@ -1542,6 +1646,27 @@ async def pm_chat(req: PMChatRequest):
                 ctx_parts.append(f"Agent runner: {'online' if _b.get('agent_runner_online') else 'offline'}")
     except Exception:
         pass
+
+    # Inject Dependabot PR context when message is about deps/PRs
+    msg_lower = req.message.lower()
+    if any(kw in msg_lower for kw in _DEPENDABOT_KEYWORDS):
+        try:
+            async with httpx.AsyncClient(timeout=10) as _dc:
+                dep_prs = await _fetch_dependabot_prs(_dc)
+            if dep_prs:
+                lines = []
+                for p in dep_prs:
+                    ci = p["ci"]
+                    mg = p.get("mergeable") or "unknown"
+                    am = "auto-merge enabled" if p["auto_merge"] else "no auto-merge"
+                    lines.append(
+                        f"  PR #{p['number']}: {p['title'][:60]} | CI={ci} | mergeable={mg} | {am}"
+                    )
+                ctx_parts.append("Open Dependabot PRs:\n" + "\n".join(lines))
+            else:
+                ctx_parts.append("Open Dependabot PRs: none")
+        except Exception:
+            pass
 
     system = _PM_SYSTEM.format(context="\n".join(ctx_parts))
     messages = [{"role": m["role"], "content": m["content"]} for m in req.history]
@@ -1627,7 +1752,48 @@ async def pm_chat(req: PMChatRequest):
         except json.JSONDecodeError:
             pass
 
-    return {"type": "text", "reply": text, "wo_draft": None}
+    # Parse and execute Dependabot action tags, e.g. [DEPENDABOT:rebase:278]
+    action_pattern = re.compile(r"\[DEPENDABOT:(rebase|approve-merge):(\d+)\]")
+    action_results: list[str] = []
+    clean_text = text
+    for match in action_pattern.finditer(text):
+        action, pr_num = match.group(1), int(match.group(2))
+        clean_text = clean_text.replace(match.group(0), "").strip()
+        try:
+            async with httpx.AsyncClient(timeout=15) as _ac:
+                if action == "rebase":
+                    resp = await _ac.post(
+                        f"https://api.github.com/repos/{GITHUB_REPO}/issues/{pr_num}/comments",
+                        headers=_headers(), json={"body": "@dependabot rebase"},
+                    )
+                    action_results.append(
+                        f"✅ Triggered rebase on PR #{pr_num}" if resp.status_code in (200, 201)
+                        else f"⚠️ Rebase on PR #{pr_num} failed ({resp.status_code})"
+                    )
+                elif action == "approve-merge":
+                    ar = await _ac.post(
+                        f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/reviews",
+                        headers=_headers(),
+                        json={"event": "APPROVE", "body": "✅ Approved by factory PM."},
+                    )
+                    if ar.status_code in (200, 201):
+                        mr = await _ac.put(
+                            f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/merge",
+                            headers=_headers(), json={"merge_method": "squash"},
+                        )
+                        action_results.append(
+                            f"✅ Approved and merged PR #{pr_num}" if mr.status_code in (200, 201)
+                            else f"⚠️ PR #{pr_num} approved but merge failed ({mr.status_code}: {mr.text[:100]})"
+                        )
+                    else:
+                        action_results.append(f"⚠️ Approve on PR #{pr_num} failed ({ar.status_code})")
+        except Exception as exc:
+            action_results.append(f"⚠️ Action {action} on PR #{pr_num} errored: {exc}")
+
+    if action_results:
+        clean_text = clean_text + "\n\n" + "\n".join(action_results)
+
+    return {"type": "text", "reply": clean_text.strip(), "wo_draft": None}
 
 
 if __name__ == "__main__":
