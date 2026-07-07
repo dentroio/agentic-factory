@@ -73,9 +73,13 @@ _orchestrator_output: dict = {}         # last poll snapshot
 _held_wos: set[str] = set()            # WO IDs on hold (skip, don't claim)
 _specs_cache: dict[int, dict] = {}     # all merged WO specs from last poll (primary + secondary)
 _pm_dispatch: dict | None = None       # PM-requested direct dispatch {wo, backend, title}
+_plan_overlay: list[dict] = []         # spec-file WOs not in PLAN.json — runtime-only, never written to disk
 
 HOLD_PATH = DATA_DIR / "held_wos.json"
 PAUSE_PATH = DATA_DIR / "factory_paused.json"
+PM_MEMORY_PATH = DATA_DIR / "pm_memory.json"
+
+_pm_memory: dict = {}   # persisted PM preferences, decisions, dispatched history
 
 _factory_paused: bool = False   # when True, get_next() returns null — drains gracefully
 
@@ -107,6 +111,45 @@ def _load_state() -> None:
             _factory_paused = json.loads(PAUSE_PATH.read_text()).get("paused", False)
         except Exception:
             _factory_paused = False
+
+
+def _load_pm_memory() -> None:
+    global _pm_memory
+    if PM_MEMORY_PATH.exists():
+        try:
+            _pm_memory = json.loads(PM_MEMORY_PATH.read_text())
+        except Exception:
+            _pm_memory = {}
+
+
+def _save_pm_memory() -> None:
+    try:
+        PM_MEMORY_PATH.write_text(json.dumps(_pm_memory, indent=2))
+    except Exception as e:
+        print(f"[orchestrator] pm_memory save failed: {e}")
+
+
+def _pm_memory_summary() -> str:
+    """Compact ≤10-line summary of PM memory for injection into system prompt."""
+    if not _pm_memory:
+        return ""
+    lines: list[str] = []
+    prefs = _pm_memory.get("preferences", {})
+    if prefs.get("preferred_backend"):
+        lines.append(f"Preferred backend: {prefs['preferred_backend']}")
+    dispatched = _pm_memory.get("dispatched", [])
+    if dispatched:
+        recent = dispatched[-5:]
+        lines.append("Recently dispatched:")
+        for d in reversed(recent):
+            outcome = f" ({d['outcome']})" if d.get("outcome") else ""
+            lines.append(f"  {d['wo']} via {d['backend']} on {d['date']}{outcome}")
+    decisions = _pm_memory.get("recent_decisions", [])
+    if decisions:
+        lines.append("Recent decisions:")
+        for dec in decisions[-3:]:
+            lines.append(f"  {dec['decision']}")
+    return "\n".join(lines[:10])
 
 
 def _save_dispatch() -> None:
@@ -180,6 +223,7 @@ async def lifespan(app: FastAPI):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     thread_store.THREADS_DIR.mkdir(parents=True, exist_ok=True)
     _load_state()
+    _load_pm_memory()
 
     if not GITHUB_TOKEN or not GITHUB_REPO:
         print("[orchestrator] WARNING: GITHUB_TOKEN or GITHUB_REPO not set — poll loop disabled")
@@ -274,6 +318,37 @@ async def pm_dispatch_wo(wo: str, backend: str = "claude"):
     _pm_dispatch = {"wo": wo_id, "backend": backend}
     print(f"[orchestrator] PM dispatch queued: {wo_id} → {backend}")
     return {"ok": True, "wo": wo_id, "backend": backend}
+
+
+@app.post("/api/pm/memory")
+async def write_pm_memory(key: str, value: str):
+    """Write a key/value pair into PM memory (preferences, decisions, dispatched)."""
+    from datetime import UTC, datetime
+    global _pm_memory
+    today = datetime.now(UTC).date().isoformat()
+    if key == "preferred_backend":
+        _pm_memory.setdefault("preferences", {})["preferred_backend"] = value
+        _pm_memory["preferences"]["last_updated"] = today
+    elif key == "decision":
+        _pm_memory.setdefault("recent_decisions", []).append({"date": today, "decision": value})
+        _pm_memory["recent_decisions"] = _pm_memory["recent_decisions"][-20:]
+    elif key == "dispatched":
+        try:
+            record = json.loads(value)
+        except Exception:
+            raise HTTPException(status_code=400, detail="dispatched value must be JSON: {wo, backend, outcome?}")
+        record["date"] = today
+        _pm_memory.setdefault("dispatched", []).append(record)
+        _pm_memory["dispatched"] = _pm_memory["dispatched"][-50:]
+    else:
+        _pm_memory.setdefault("extra", {})[key] = value
+    _save_pm_memory()
+    return {"ok": True, "key": key}
+
+
+@app.get("/api/pm/memory")
+async def read_pm_memory():
+    return _pm_memory
 
 
 @app.get("/api/factory/pause")
@@ -1262,6 +1337,32 @@ async def poll() -> None:
         {num: s for num, s in specs.items() if num in primary_open_wos}, done_wos,
     )
 
+    # WO-377: build runtime overlay — spec-file WOs not registered in PLAN.json
+    global _plan_overlay
+    plan_registered: set[str] = set()
+    if plan_raw:
+        for w in plan_raw.get("queue", []) + plan_raw.get("deferred", []):
+            plan_registered.add(str(w.get("wo", "")))
+    _actionable_statuses = {"ready", "open", "partial", "planned"}
+    _plan_overlay = []
+    for num, spec in sorted(specs.items()):
+        wo_id = f"WO-{num}"
+        if wo_id in plan_registered:
+            continue
+        status_raw = spec.get("status", "").lower()
+        if not any(s in status_raw for s in _actionable_statuses):
+            continue
+        if spec.get("repo", GITHUB_REPO) != GITHUB_REPO:
+            continue  # secondary-repo WOs board-visible only, not dispatchable
+        _plan_overlay.append({
+            "wo": wo_id,
+            "title": spec.get("title", wo_id),
+            "priority": spec.get("priority", "P2"),
+            "effort": spec.get("effort", ""),
+            "status": spec.get("status", "ready"),
+            "_overlay": True,
+        })
+
     # Enrich active_work with dispatch state (agent/step from API claims)
     active_work = []
     for num in sorted(in_progress_wos | in_review_wos):
@@ -1308,7 +1409,7 @@ async def poll() -> None:
             "loaded": plan_raw is not None,
             "last_updated": plan_raw.get("last_updated") if plan_raw else None,
             "next": plan_next,
-            "queue": plan_queue_sorted,
+            "queue": plan_queue_sorted + _plan_overlay,  # overlay appended; PLAN.json items take priority
             "all_wos": plan_raw.get("queue", []) if plan_raw else [],
             "deferred": plan_raw.get("deferred", []) if plan_raw else [],
             "milestones": plan_raw.get("milestones", []) if plan_raw else [],
@@ -1328,6 +1429,7 @@ async def poll() -> None:
             "blocked": len(blocked_wos),
             "done": len(done_wos),
             "done_this_week": merged_this_week,
+            "overlay_wos": len(_plan_overlay),
         },
         "dispatch_queue": dispatch_queue,
         "holding_queue": holding_queue,
@@ -1898,15 +2000,12 @@ async def pm_chat(req: PMChatRequest):
         summary = _wo_status_summary()
         if summary:
             ctx_parts.append("Current WO status (live from spec files):\n" + summary)
-        elif _plan_state:
-            queue = _plan_state.get("queue", [])
-            pending = [w for w in queue if w.get("status") not in ("done", "deferred")]
-            if pending:
-                lines = [f"  {w.get('wo','?')}: {w.get('title','')[:55]} [{w.get('priority','?')}] — {w.get('status','?')}"
-                         for w in pending[:20]]
-                ctx_parts.append("Queued WOs (from PLAN.json):\n" + "\n".join(lines))
-            else:
-                ctx_parts.append("PLAN.json queue: all registered WOs are done. Local spec files not accessible.")
+        elif _plan_overlay:
+            lines = [f"  {w.get('wo','?')}: {w.get('title','')[:55]} [{w.get('priority','?')}] — {w.get('status','?')}"
+                     for w in _plan_overlay[:20]]
+            ctx_parts.append(f"Spec-file WOs available ({len(_plan_overlay)} total):\n" + "\n".join(lines))
+        else:
+            ctx_parts.append("No open WOs found in PLAN.json or spec files.")
 
     if any(kw in msg_lower for kw in _PR_KEYWORDS):
         try:
@@ -1944,6 +2043,10 @@ async def pm_chat(req: PMChatRequest):
                 ctx_parts.append("Open Dependabot PRs: none")
         except Exception:
             pass
+
+    mem_summary = _pm_memory_summary()
+    if mem_summary:
+        ctx_parts.append("PM memory:\n" + mem_summary)
 
     system = _PM_SYSTEM.format(context="\n".join(ctx_parts))
     messages = [{"role": m["role"], "content": m["content"]} for m in req.history]
@@ -2094,17 +2197,27 @@ async def pm_chat(req: PMChatRequest):
                     params={"wo": wo_id, "backend": backend},
                 )
                 # Try to wake the runner immediately so it doesn't wait for the next poll
+                runner_woke = False
                 try:
                     await _dc.post(
                         f"{AGENT_RUNNER_URL}/dispatch",
                         json={"wo": wo_id, "backend": backend},
                         timeout=3,
                     )
-                    dispatch_results.append(f"✅ {wo_id} dispatched to {backend} — runner woke up")
+                    runner_woke = True
                 except Exception:
-                    dispatch_results.append(
-                        f"✅ {wo_id} queued for {backend} — runner picks it up on next poll"
-                    )
+                    pass
+                dispatch_results.append(
+                    f"✅ {wo_id} dispatched to {backend} — {'runner woke up' if runner_woke else 'runner picks it up on next poll'}"
+                )
+                # Persist to PM memory
+                from datetime import UTC, datetime
+                _pm_memory.setdefault("dispatched", []).append({
+                    "wo": wo_id, "backend": backend,
+                    "date": datetime.now(UTC).date().isoformat(),
+                })
+                _pm_memory["dispatched"] = _pm_memory["dispatched"][-50:]
+                _save_pm_memory()
         except Exception as exc:
             dispatch_results.append(f"⚠️ Dispatch of {wo_id} failed: {exc}")
 

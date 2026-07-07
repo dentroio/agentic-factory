@@ -1,19 +1,24 @@
 """Slack Socket Mode bot — two-way PM chat with the factory via Slack."""
+import json
 import logging
 import os
 import re
 import threading
 import time
+from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8100")
+_STATE_PATH = Path("/data/slack_state.json")
+_MAX_HISTORY = 20
+_MAX_THREADS = 100
+_MAX_TURNS = 50
 
 # In-memory conversation history keyed by thread_ts (or channel for DMs)
 _history: dict[str, list[dict]] = {}
-_MAX_HISTORY = 20
 
 # Threads the bot has already replied in — used to pick up follow-ups without @mention
 _active_threads: set[str] = set()
@@ -21,6 +26,37 @@ _active_threads: set[str] = set()
 # Active socket client — replaced on reconnect
 _socket_client = None
 _socket_lock = threading.Lock()
+_state_lock = threading.Lock()
+
+
+def _save_state() -> None:
+    """Flush conversation state to disk — cap at _MAX_THREADS / _MAX_TURNS."""
+    try:
+        with _state_lock:
+            threads = list(_active_threads)[-_MAX_THREADS:]
+            history_trimmed = {
+                k: v[-_MAX_TURNS:] for k, v in list(_history.items())[-_MAX_THREADS:]
+            }
+            data = {"history": history_trimmed, "active_threads": threads}
+        _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _STATE_PATH.write_text(json.dumps(data))
+    except Exception as e:
+        logger.warning("[slack_bot] state save failed: %s", e)
+
+
+def _load_state() -> None:
+    """Load persisted conversation state from disk on startup."""
+    global _history, _active_threads
+    if not _STATE_PATH.exists():
+        return
+    try:
+        data = json.loads(_STATE_PATH.read_text())
+        with _state_lock:
+            _history = data.get("history", {})
+            _active_threads = set(data.get("active_threads", []))
+        logger.info("[slack_bot] state loaded: %d threads, %d active", len(_history), len(_active_threads))
+    except Exception as e:
+        logger.warning("[slack_bot] state load failed (starting fresh): %s", e)
 
 
 def _get_tokens(secrets: dict | None = None) -> tuple[str, str]:
@@ -96,7 +132,8 @@ def _make_handler(bot_token: str):
 
             history.append({"role": "user", "content": text})
             history.append({"role": "assistant", "content": reply})
-            _history[history_key] = history[-_MAX_HISTORY:]
+            with _state_lock:
+                _history[history_key] = history[-_MAX_HISTORY:]
         except Exception as e:
             logger.error("[slack_bot] pm/chat error: %s", e)
             reply = f":warning: Factory error: {e}"
@@ -113,9 +150,11 @@ def _make_handler(bot_token: str):
             resp = web.chat_postMessage(**msg_kwargs)
             # Track both the user's message ts AND the bot's reply ts.
             # Follow-ups may thread off either one, so we need both.
-            _active_threads.add(ts)
-            if resp and resp.get("ts"):
-                _active_threads.add(resp["ts"])
+            with _state_lock:
+                _active_threads.add(ts)
+                if resp and resp.get("ts"):
+                    _active_threads.add(resp["ts"])
+            _save_state()
         except Exception as e:
             logger.error("[slack_bot] chat_postMessage error: %s", e)
 
@@ -148,6 +187,7 @@ def start_slack_bot(secrets: dict | None = None) -> bool:
         logger.info("[slack_bot] tokens not configured — bot disabled")
         return False
 
+    _load_state()
     stop_slack_bot()
 
     def _run() -> None:
