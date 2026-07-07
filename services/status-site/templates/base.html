@@ -6,9 +6,7 @@
   <meta http-equiv="refresh" content="{{ refresh_seconds }}">
   <title>{% if pending_validations is defined and pending_validations %}({{ pending_validations | length }}) {% endif %}{% block page_title %}{{ site_title }}{% endblock %}</title>
   <meta name="description" content="Dentro AI Factory live status dashboard. Real-time insights into work orders, active branches, PR progress, and CI/CD health.">
-  <!-- Tailwind CSS via CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Custom Stylesheet -->
   <link rel="stylesheet" href="/static/style.css">
   <script>
     (function(){var t=localStorage.getItem('theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();
@@ -18,11 +16,7 @@
       theme: {
         extend: {
           colors: {
-            brand: {
-              dark: '#080b11',
-              card: '#0f131c',
-              border: 'rgba(255, 255, 255, 0.06)'
-            }
+            brand: { dark: '#080b11', card: '#0f131c', border: 'rgba(255, 255, 255, 0.06)' }
           }
         }
       }
@@ -45,24 +39,34 @@
         <a id="nav-settings" href="/settings" class="nav-link px-3.5 py-1.5 text-sm {% if request.url.path.startswith('/settings') %}active{% endif %}">Settings</a>
       </div>
     </div>
-    
-    <div class="flex items-center gap-4">
-      <a href="/factory#pm-panel"
+
+    <div class="flex items-center gap-3">
+      {# + New WO — opens PM panel in WO creation mode #}
+      <button onclick="openPMAndCreateWO()"
         class="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-all shadow-sm shadow-indigo-900/40"
         title="Open PM Assistant to create a work order">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
         New WO
-      </a>
+      </button>
+
       <div class="refresh-indicator">
         <span class="refresh-dot"></span>
         <span>
-          {% if refresh_seconds >= 60 %}
-            Refreshes in {{ (refresh_seconds / 60) | int }} mins
-          {% else %}
-            Refreshes in {{ refresh_seconds }}s
-          {% endif %}
+          {% if refresh_seconds >= 60 %}Refreshes in {{ (refresh_seconds / 60) | int }} mins
+          {% else %}Refreshes in {{ refresh_seconds }}s{% endif %}
         </span>
       </div>
+
+      {# PM Assistant button #}
+      <button onclick="togglePMPanel()" id="pm-nav-btn"
+        title="PM Assistant"
+        class="relative flex items-center justify-center w-8 h-8 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-slate-800 border border-transparent hover:border-slate-700/60 transition-all">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+        </svg>
+        <span id="pm-nav-dot" class="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-indigo-500"></span>
+      </button>
+
       <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle light/dark mode" title="Toggle theme">
         <svg id="theme-icon-moon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display:none">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
@@ -71,6 +75,7 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
         </svg>
       </button>
+
       {% if github_repo is defined %}
       <a id="repo-link" href="https://github.com/{{ github_repo }}" class="text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg transition-all" target="_blank">
         <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.07 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0012 2z"/></svg>
@@ -79,6 +84,7 @@
       {% endif %}
     </div>
   </nav>
+
   {% if pending_validations is defined and pending_validations %}
   <div class="validation-banner" id="validation-banner">
     <div class="max-w-screen-2xl mx-auto px-6 flex items-start gap-4">
@@ -123,12 +129,497 @@
     </div>
   </div>
   {% endif %}
+
   <main class="flex-1 max-w-screen-2xl w-full mx-auto px-6 py-8">
     {% block content %}{% endblock %}
   </main>
+
   <footer class="mt-auto py-6 border-t border-slate-900/60 bg-slate-950/20 text-center">
     <span class="text-xs text-slate-500">Dentro AI Factory · Dynamic Status Hub</span>
   </footer>
+
+  {# ── PM Side Panel ──────────────────────────────────────────────────────────── #}
+  <div id="pm-backdrop"
+    class="hidden fixed inset-0 bg-black/50 z-[90] backdrop-blur-[2px] transition-opacity"
+    onclick="togglePMPanel(false)"></div>
+
+  <div id="pm-side-panel"
+    class="fixed inset-y-0 right-0 w-[420px] z-[100] flex flex-col bg-slate-950 border-l border-slate-800/80 shadow-2xl shadow-black/60 transition-transform duration-300 ease-out translate-x-full">
+
+    {# Header #}
+    <div class="px-4 py-3 bg-slate-900/60 border-b border-slate-800/60 flex items-center justify-between flex-shrink-0">
+      <div class="flex items-center gap-2.5">
+        <div class="w-6 h-6 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-[10px]">◆</div>
+        <span class="text-sm font-semibold text-slate-200">PM Assistant</span>
+        <span class="text-[10px] text-slate-600 font-mono hidden sm:inline">ask · create WOs</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <button onclick="clearPMChat()" class="text-[10px] text-slate-600 hover:text-slate-300 font-mono transition-colors">clear</button>
+        <button onclick="togglePMPanel(false)" class="text-slate-600 hover:text-slate-300 transition-colors p-0.5" title="Close">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+
+    {# Messages #}
+    <div id="pm-messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div id="pm-welcome" class="flex gap-3">
+        <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+        <div class="text-sm text-slate-300 leading-relaxed">I'm your Factory PM. Ask me what's running, what's next, or describe a feature and I'll draft a work order for you.<br><span class="text-[10px] text-slate-600 font-mono">Conversation persists across page loads.</span></div>
+      </div>
+    </div>
+
+    {# Bottom controls #}
+    <div class="flex-shrink-0 border-t border-slate-800/40">
+
+      {# Quick chips #}
+      <div class="px-3 pt-2.5 pb-2 flex flex-wrap gap-1.5">
+        <button onclick="sendPMChip('What are the agents working on right now?')" class="pm-chip">What's running?</button>
+        <button onclick="sendPMChip('What should we work on next?')" class="pm-chip">What's next?</button>
+        <button onclick="sendPMChip('Give me a status summary of the factory.')" class="pm-chip">Status report</button>
+        <button onclick="toggleWOHints()" class="pm-chip pm-chip-accent" id="create-wo-chip">＋ Create a WO...</button>
+      </div>
+
+      {# WO Hints panel #}
+      <div id="wo-hints-panel" class="hidden px-3 pb-2">
+        <div class="rounded-xl border border-indigo-500/20 bg-indigo-950/20 px-3 py-2.5">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[9px] font-bold text-indigo-300 uppercase tracking-widest">WO Metadata <span class="text-indigo-500 font-normal normal-case">(optional — AI fills in blanks)</span></span>
+            <button onclick="toggleWOHints()" class="text-[9px] text-slate-600 hover:text-slate-300 transition-colors">✕ hide</button>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Program</label>
+              <input type="text" id="hint-program" list="pm-programs-list" placeholder="e.g. Launch Program"
+                class="w-full bg-slate-900/80 border border-slate-700/60 rounded px-2 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
+              <datalist id="pm-programs-list"></datalist>
+            </div>
+            <div>
+              <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Priority</label>
+              <select id="hint-priority" class="w-full bg-slate-900/80 border border-slate-700/60 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
+                <option value="">AI decides</option>
+                <option value="P1">P1 — Core / schema</option>
+                <option value="P2">P2 — Feature</option>
+                <option value="P3">P3 — Docs</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Phase</label>
+              <select id="hint-phase" class="w-full bg-slate-900/80 border border-slate-700/60 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
+                <option value="">Unassigned</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Effort</label>
+              <select id="hint-effort" class="w-full bg-slate-900/80 border border-slate-700/60 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
+                <option value="">AI decides</option>
+                <option value="XS">XS — &lt;1h</option>
+                <option value="S">S — ~2h</option>
+                <option value="M">M — half day</option>
+                <option value="L">L — full day</option>
+                <option value="XL">XL — 2–3 days</option>
+              </select>
+            </div>
+          </div>
+          <div class="mt-1.5">
+            <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Depends On</label>
+            <input type="text" id="hint-depends-on" placeholder="e.g. WO-370, WO-371"
+              class="w-full bg-slate-900/80 border border-slate-700/60 rounded px-2 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
+          </div>
+        </div>
+      </div>
+
+      {# Image strip #}
+      <div id="pm-image-strip" class="hidden px-3 pb-1 flex gap-2 flex-wrap"></div>
+
+      {# Input #}
+      <div class="px-3 pb-3 pt-2 flex gap-2">
+        <textarea id="pm-input" rows="2"
+          class="flex-1 bg-slate-900/80 border border-slate-700/60 rounded-xl px-3 py-2 text-sm text-slate-200 placeholder-slate-600 resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500/60 transition-all"
+          placeholder="Ask anything or describe a feature… (Enter to send)"></textarea>
+        <button onclick="sendPMMessage()" id="pm-send"
+          class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold rounded-xl transition-all self-end flex items-center gap-1.5 flex-shrink-0">
+          <span id="pm-send-label">Send</span>
+          <svg id="pm-spinner" class="hidden w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    #pm-side-panel { transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
+    #pm-side-panel.pm-open { transform: translateX(0); }
+    #pm-backdrop.pm-open { display: block; }
+    .pm-chip {
+      padding: 0.2rem 0.65rem; font-size: 0.68rem; font-family: ui-monospace, monospace;
+      color: #94a3b8; background: #0f172a; border: 1px solid #1e293b;
+      border-radius: 9999px; cursor: pointer; transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .pm-chip:hover { border-color: rgba(99,102,241,0.5); color: #a5b4fc; }
+    .pm-chip-accent { color: #818cf8; border-color: rgba(99,102,241,0.3); background: rgba(99,102,241,0.05); }
+    .pm-msg-user { display: flex; gap: 0.75rem; justify-content: flex-end; }
+    .pm-msg-assistant { display: flex; gap: 0.75rem; }
+    .pm-bubble-user {
+      background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 1rem; border-top-right-radius: 0.25rem;
+      padding: 0.625rem 1rem; font-size: 0.875rem; color: #e2e8f0; max-width: 85%;
+    }
+    .pm-bubble-assistant {
+      background: rgba(15,23,42,0.6); border: 1px solid rgba(30,41,59,0.6);
+      border-radius: 1rem; border-top-left-radius: 0.25rem;
+      padding: 0.625rem 1rem; font-size: 0.875rem; color: #cbd5e1; max-width: 88%;
+    }
+    #pm-nav-btn.pm-active { color: #818cf8; background: rgba(99,102,241,0.1); border-color: rgba(99,102,241,0.3); }
+  </style>
+
+  <script>
+  (function() {
+    'use strict';
+    /* ── State ───────────────────────────────────────────────────────── */
+    const HISTORY_KEY = 'pm_chat_history_v1';
+    let pmHistory = [];
+    let pmBusy = false;
+    let pendingImages = [];
+    let claudeApiAvailable = false;
+    let phasesLoaded = false;
+
+    const panel     = document.getElementById('pm-side-panel');
+    const backdrop  = document.getElementById('pm-backdrop');
+    const messagesEl = document.getElementById('pm-messages');
+    const inputEl   = document.getElementById('pm-input');
+    const sendBtn   = document.getElementById('pm-send');
+    const sendLabel = document.getElementById('pm-send-label');
+    const spinner   = document.getElementById('pm-spinner');
+    const imageStrip = document.getElementById('pm-image-strip');
+    const navBtn    = document.getElementById('pm-nav-btn');
+    const navDot    = document.getElementById('pm-nav-dot');
+
+    /* ── Panel open/close ────────────────────────────────────────────── */
+    window.togglePMPanel = function(force) {
+      const isOpen = panel.classList.contains('pm-open');
+      const open = force !== undefined ? force : !isOpen;
+      panel.classList.toggle('pm-open', open);
+      backdrop.classList.toggle('pm-open', open);
+      navBtn.classList.toggle('pm-active', open);
+      if (open) {
+        inputEl.focus();
+        loadBackendCaps();
+        loadPhases();
+      }
+    };
+
+    window.openPMAndCreateWO = function() {
+      togglePMPanel(true);
+      setTimeout(() => toggleWOHints(true), 50);
+    };
+
+    /* ── Escape key closes panel ─────────────────────────────────────── */
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && panel.classList.contains('pm-open')) togglePMPanel(false);
+    });
+
+    /* ── Fetch backend caps (for image support) ──────────────────────── */
+    async function loadBackendCaps() {
+      try {
+        const r = await fetch('/api/backends');
+        if (r.ok) { const d = await r.json(); claudeApiAvailable = !!d['claude-api']; }
+      } catch(_) {}
+    }
+
+    /* ── Load phases into hint dropdown ─────────────────────────────── */
+    async function loadPhases() {
+      if (phasesLoaded) return;
+      try {
+        const r = await fetch('/api/plan');
+        if (!r.ok) return;
+        const d = await r.json();
+        const sel = document.getElementById('hint-phase');
+        if (!sel) return;
+        (d.phases || []).forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.id || '';
+          opt.textContent = p.label || p.id || '';
+          sel.appendChild(opt);
+        });
+        phasesLoaded = true;
+      } catch(_) {}
+    }
+
+    /* ── localStorage persistence ────────────────────────────────────── */
+    function saveHistory() {
+      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(pmHistory.slice(-40))); } catch(_) {}
+    }
+
+    function restoreHistory() {
+      try {
+        const raw = localStorage.getItem(HISTORY_KEY);
+        if (!raw) return;
+        const saved = JSON.parse(raw);
+        if (!saved || !saved.length) return;
+        pmHistory = saved;
+        const welcome = document.getElementById('pm-welcome');
+        if (welcome) welcome.remove();
+        const divider = document.createElement('div');
+        divider.className = 'text-center text-[10px] text-slate-700 font-mono py-1';
+        divider.textContent = `↑ ${saved.length} messages from previous session`;
+        messagesEl.appendChild(divider);
+        saved.slice(-8).forEach(m => appendPMMsg(m.role, m.content));
+        navDot.classList.remove('hidden');
+      } catch(_) {}
+    }
+
+    /* ── Message rendering ───────────────────────────────────────────── */
+    function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    function appendPMMsg(role, content, images) {
+      const welcome = document.getElementById('pm-welcome');
+      if (welcome) welcome.remove();
+      const wrap = document.createElement('div');
+      if (role === 'user') {
+        wrap.className = 'pm-msg-user';
+        let imgHtml = '';
+        if (images && images.length) {
+          imgHtml = `<div class="flex gap-1.5 flex-wrap mb-1.5">${images.map(img =>
+            `<img src="${img.dataUrl}" class="h-16 w-auto rounded-lg border border-slate-700/50 object-cover">`
+          ).join('')}</div>`;
+        }
+        wrap.innerHTML = `<div class="pm-bubble-user">${imgHtml}${content ? esc(content) : ''}</div>`;
+      } else {
+        wrap.className = 'pm-msg-assistant';
+        wrap.innerHTML = `<div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+          <div class="pm-bubble-assistant">${esc(content)}</div>`;
+      }
+      messagesEl.appendChild(wrap);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return wrap;
+    }
+
+    function showWODraft(draft) {
+      const welcome = document.getElementById('pm-welcome');
+      if (welcome) welcome.remove();
+      const ac = (draft.acceptance_criteria || []).map(c => `<li class="text-slate-400">${esc(c)}</li>`).join('');
+      const card = document.createElement('div');
+      card.className = 'pm-msg-assistant';
+      card.innerHTML = `
+        <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+        <div class="flex-1 min-w-0">
+          <div class="bg-slate-900 border border-indigo-500/30 rounded-2xl rounded-tl-sm overflow-hidden">
+            <div class="px-4 py-2.5 bg-indigo-500/10 border-b border-indigo-500/20 flex items-center justify-between">
+              <span class="text-[10px] font-mono text-indigo-400 uppercase tracking-widest">Work Order Draft</span>
+              <div class="flex items-center gap-2">
+                <span class="text-[9px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300">${esc(draft.priority||'P2')}</span>
+                <span class="text-[9px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400">${esc(draft.effort||'M')}</span>
+              </div>
+            </div>
+            <div class="px-4 py-3 space-y-1.5">
+              <div class="text-sm font-semibold text-slate-100">${esc(draft.title||'')}</div>
+              <div class="text-xs text-slate-400">${esc(draft.problem||'')}</div>
+              ${ac ? `<ul class="text-xs list-disc list-inside space-y-0.5 mt-1">${ac}</ul>` : ''}
+              <div class="text-[10px] font-mono text-slate-600">Services: ${esc(draft.services||'—')}</div>
+            </div>
+            <div class="px-4 py-2.5 border-t border-slate-800/60 flex gap-2">
+              <button onclick="publishWO(this, ${JSON.stringify(draft).replace(/"/g,'&quot;')})"
+                class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-all">
+                Publish to GitHub
+              </button>
+              <button onclick="this.closest('.pm-msg-assistant').remove()"
+                class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition-all">
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>`;
+      messagesEl.appendChild(card);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    /* ── Send message ────────────────────────────────────────────────── */
+    window.sendPMMessage = async function() {
+      const text = inputEl.value.trim();
+      if (!text && pendingImages.length === 0) return;
+      if (pmBusy) return;
+      pmBusy = true;
+      sendBtn.disabled = true;
+      sendLabel.textContent = 'Thinking…';
+      spinner.classList.remove('hidden');
+      inputEl.value = '';
+
+      const sentImages = [...pendingImages];
+      pendingImages = [];
+      renderImageStrip();
+
+      appendPMMsg('user', text, sentImages);
+      pmHistory.push({ role: 'user', content: text });
+
+      const typing = document.createElement('div');
+      typing.className = 'pm-msg-assistant';
+      typing.innerHTML = `<div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+        <div class="pm-bubble-assistant text-slate-600 italic text-xs">Thinking…</div>`;
+      messagesEl.appendChild(typing);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+
+      const payload = { message: text, history: pmHistory.slice(0, -1) };
+      if (sentImages.length) payload.images = sentImages.map(({ data, media_type }) => ({ data, media_type }));
+
+      const hintsPanel = document.getElementById('wo-hints-panel');
+      if (hintsPanel && !hintsPanel.classList.contains('hidden')) {
+        const hints = {};
+        const hv = id => document.getElementById(id)?.value?.trim() || '';
+        if (hv('hint-program'))    hints.program    = hv('hint-program');
+        if (hv('hint-priority'))   hints.priority   = hv('hint-priority');
+        if (hv('hint-phase'))      hints.phase      = hv('hint-phase');
+        if (hv('hint-effort'))     hints.effort     = hv('hint-effort');
+        if (hv('hint-depends-on')) hints.depends_on = hv('hint-depends-on');
+        if (Object.keys(hints).length) payload.hints = hints;
+      }
+
+      try {
+        const r = await fetch('/api/factory/pm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await r.json();
+        typing.remove();
+
+        if (!r.ok) {
+          const errMsg = data.detail || `Error ${r.status}`;
+          appendPMMsg('assistant', (r.status === 422 && sentImages.length) ? `⚠️ ${errMsg}` : `Error: ${errMsg}`);
+        } else if (data.type === 'wo_draft' && data.wo_draft) {
+          showWODraft(data.wo_draft);
+        } else {
+          const reply = data.reply || data.detail || 'No response.';
+          appendPMMsg('assistant', reply);
+          pmHistory.push({ role: 'assistant', content: reply });
+          saveHistory();
+        }
+      } catch(_) {
+        typing.remove();
+        appendPMMsg('assistant', 'Could not reach PM backend. Is the orchestrator running?');
+      }
+
+      pmBusy = false;
+      sendBtn.disabled = false;
+      sendLabel.textContent = 'Send';
+      spinner.classList.add('hidden');
+      inputEl.focus();
+    };
+
+    /* ── Publish WO ──────────────────────────────────────────────────── */
+    window.publishWO = async function(btn, draft) {
+      btn.textContent = 'Publishing…';
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/factory/wos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(draft),
+        });
+        const data = await r.json();
+        if (data.pr_url || data.url) {
+          btn.closest('.overflow-hidden').innerHTML = `<div class="px-4 py-3 flex items-center gap-3">
+            <span class="text-emerald-400">✅</span>
+            <div>
+              <div class="text-sm font-semibold text-slate-200">Work order published</div>
+              <a href="${data.pr_url || data.url}" target="_blank" class="text-xs text-indigo-400 hover:underline">Open PR →</a>
+            </div></div>`;
+        } else if (data.error) {
+          btn.textContent = 'Failed: ' + data.error.slice(0, 60);
+          btn.disabled = false;
+        }
+      } catch(_) { btn.textContent = 'Error — try again'; btn.disabled = false; }
+    };
+
+    /* ── Chips & WO hints ────────────────────────────────────────────── */
+    window.sendPMChip = function(msg) { inputEl.value = msg; sendPMMessage(); };
+
+    window.toggleWOHints = function(forceOpen) {
+      const hintsPanel = document.getElementById('wo-hints-panel');
+      const chip = document.getElementById('create-wo-chip');
+      const isHidden = hintsPanel.classList.contains('hidden');
+      const open = forceOpen !== undefined ? forceOpen : isHidden;
+      hintsPanel.classList.toggle('hidden', !open);
+      chip.textContent = open ? '✕ Cancel WO' : '＋ Create a WO...';
+      if (open) { loadPhases(); inputEl.placeholder = 'Describe the feature you want to build…'; inputEl.focus(); }
+      else { inputEl.placeholder = 'Ask anything or describe a feature… (Enter to send)'; }
+    };
+
+    window.clearPMChat = function() {
+      messagesEl.innerHTML = `<div id="pm-welcome" class="flex gap-3">
+        <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+        <div class="text-sm text-slate-300 leading-relaxed">I'm your Factory PM. Ask me what's running, what's next, or describe a feature and I'll draft a work order for you.</div>
+      </div>`;
+      pmHistory = [];
+      navDot.classList.add('hidden');
+      try { localStorage.removeItem(HISTORY_KEY); } catch(_) {}
+    };
+
+    /* ── Image paste ─────────────────────────────────────────────────── */
+    function addPendingImage(file) {
+      const reader = new FileReader();
+      reader.onload = function(ev) {
+        const dataUrl = ev.target.result;
+        const [header, data] = dataUrl.split(',');
+        const media_type = header.match(/:(.*?);/)[1];
+        pendingImages.push({ data, media_type, dataUrl });
+        renderImageStrip();
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function renderImageStrip() {
+      imageStrip.innerHTML = '';
+      if (!pendingImages.length) { imageStrip.classList.add('hidden'); return; }
+      imageStrip.classList.remove('hidden');
+      pendingImages.forEach((img, i) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'relative group';
+        wrap.innerHTML = `<img src="${img.dataUrl}" class="h-14 w-auto rounded border border-slate-700/60 object-cover">
+          <button onclick="window._removePMImage(${i})" class="absolute -top-1 -right-1 w-4 h-4 bg-red-600 hover:bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">✕</button>`;
+        imageStrip.appendChild(wrap);
+      });
+    }
+    window._removePMImage = function(i) { pendingImages.splice(i, 1); renderImageStrip(); };
+
+    inputEl.addEventListener('paste', function(e) {
+      const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          if (!claudeApiAvailable) {
+            appendPMMsg('assistant', '⚠️ Image input requires an Anthropic API key — add one in Settings → Agents.');
+            return;
+          }
+          addPendingImage(item.getAsFile());
+        }
+      }
+    });
+
+    inputEl.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPMMessage(); }
+    });
+
+    /* ── Hash-based auto-open (#create-wo) ──────────────────────────── */
+    function checkHash() {
+      if (window.location.hash === '#create-wo') {
+        togglePMPanel(true);
+        setTimeout(() => toggleWOHints(true), 50);
+        history.replaceState(null, '', window.location.pathname);
+      }
+    }
+    checkHash();
+    window.addEventListener('hashchange', checkHash);
+
+    /* ── Restore history on load ─────────────────────────────────────── */
+    restoreHistory();
+  })();
+  </script>
+
   <script>
     function toggleTheme() {
       var html = document.documentElement;
@@ -141,35 +632,23 @@
       var moon = document.getElementById('theme-icon-moon');
       var sun = document.getElementById('theme-icon-sun');
       if (!moon || !sun) return;
-      if (theme === 'light') {
-        moon.style.display = 'block';
-        sun.style.display = 'none';
-      } else {
-        moon.style.display = 'none';
-        sun.style.display = 'block';
-      }
+      moon.style.display = theme === 'light' ? 'block' : 'none';
+      sun.style.display  = theme === 'light' ? 'none'  : 'block';
     }
     updateThemeIcons(document.documentElement.getAttribute('data-theme') || 'dark');
 
     async function decideValidation(wo, decision) {
       var notes = '';
-      if (decision === 'reject') {
-        notes = prompt('Reason for rejection (optional):') || '';
-      }
+      if (decision === 'reject') notes = prompt('Reason for rejection (optional):') || '';
       try {
         var resp = await fetch('/api/validations/' + wo + '/' + decision, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({decided_by: 'human', notes: notes}),
         });
-        if (resp.ok) {
-          location.reload();
-        } else {
-          alert('Failed: ' + (await resp.text()));
-        }
-      } catch (e) {
-        alert('Could not reach orchestrator: ' + e);
-      }
+        if (resp.ok) location.reload();
+        else alert('Failed: ' + (await resp.text()));
+      } catch (e) { alert('Could not reach orchestrator: ' + e); }
     }
   </script>
 </body>

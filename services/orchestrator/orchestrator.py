@@ -1386,6 +1386,11 @@ class DraftRequest(BaseModel):
     description: str
     next_wo_num: int = 1
     backend: str = "claude-api"
+    program: str = ""
+    priority: str = ""
+    phase: str = ""
+    effort: str = ""
+    depends_on: str = ""
 
 
 class PMChatRequest(BaseModel):
@@ -1393,6 +1398,7 @@ class PMChatRequest(BaseModel):
     history: list[dict] = []   # [{role: "user"|"assistant", content: "..."}]
     backend: str = "claude-api"
     images: list[dict] = []    # [{data: "<base64>", media_type: "image/png"|...}]
+    hints: dict = {}            # optional WO metadata: program, priority, phase, effort, depends_on
 
 
 @app.get("/api/backends")
@@ -1434,13 +1440,25 @@ async def plan_draft(req: DraftRequest):
         try:
             import anthropic
             client = anthropic.Anthropic(api_key=api_key)
+            hints = []
+            if req.program:
+                hints.append(f"Program: {req.program}")
+            if req.priority:
+                hints.append(f"Priority: {req.priority} (use this exact value)")
+            if req.phase:
+                hints.append(f"Phase: {req.phase}")
+            if req.effort:
+                hints.append(f"Effort: {req.effort} (use this exact value)")
+            if req.depends_on:
+                hints.append(f"Depends on: {req.depends_on}")
+            hint_block = ("\n\nUser-provided hints (respect these in your output):\n" + "\n".join(hints)) if hints else ""
             msg = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=1024,
                 system=_DRAFT_SYSTEM,
                 messages=[{
                     "role": "user",
-                    "content": f"WO number: {req.next_wo_num:03d}\n\nRequest:\n{req.description}",
+                    "content": f"WO number: {req.next_wo_num:03d}\n\nRequest:\n{req.description}{hint_block}",
                 }],
             )
             _record_anthropic_usage("claude-sonnet-4-6", msg.usage.input_tokens, msg.usage.output_tokens, "plan/draft")
@@ -1460,7 +1478,16 @@ async def plan_draft(req: DraftRequest):
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(
                 f"{AGENT_RUNNER_URL}/api/draft",
-                json={"description": req.description, "next_wo_num": req.next_wo_num, "backend": backend},
+                json={
+                    "description": req.description,
+                    "next_wo_num": req.next_wo_num,
+                    "backend": backend,
+                    "program": req.program,
+                    "priority": req.priority,
+                    "phase": req.phase,
+                    "effort": req.effort,
+                    "depends_on": req.depends_on,
+                },
             )
             if r.status_code == 200:
                 return r.json()
@@ -1519,6 +1546,13 @@ async def pm_chat(req: PMChatRequest):
     system = _PM_SYSTEM.format(context="\n".join(ctx_parts))
     messages = [{"role": m["role"], "content": m["content"]} for m in req.history]
 
+    # Append WO metadata hints to message if provided
+    user_message = req.message
+    if req.hints:
+        hint_lines = [f"  {k}: {v}" for k, v in req.hints.items() if v]
+        if hint_lines:
+            user_message = user_message + "\n\n[User-specified WO metadata — use these exact values in the draft:\n" + "\n".join(hint_lines) + "]"
+
     # Build user content — multi-modal when images are attached
     if req.images:
         user_content: list[dict] = []
@@ -1531,11 +1565,11 @@ async def pm_chat(req: PMChatRequest):
                     "data": img["data"],
                 },
             })
-        if req.message:
-            user_content.append({"type": "text", "text": req.message})
+        if user_message:
+            user_content.append({"type": "text", "text": user_message})
         messages.append({"role": "user", "content": user_content})
     else:
-        messages.append({"role": "user", "content": req.message})
+        messages.append({"role": "user", "content": user_message})
 
     text = ""
     if req.backend == "claude-api" or not req.backend:
@@ -1571,7 +1605,7 @@ async def pm_chat(req: PMChatRequest):
             async with httpx.AsyncClient(timeout=60) as _c:
                 _r = await _c.post(
                     f"{AGENT_RUNNER_URL}/api/chat",
-                    json={"system": system, "message": req.message, "history": req.history,
+                    json={"system": system, "message": user_message, "history": req.history,
                           "backend": req.backend if req.backend != "claude-api" else None},
                 )
                 if _r.status_code != 200:

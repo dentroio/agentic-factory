@@ -24,12 +24,81 @@
     </div>
     {% endif %}
 
-    <form action="/settings/plan/wos/draft" method="post" id="draft-form" class="px-6 py-6 space-y-4">
-      <textarea name="description" rows="6" autofocus required
-        placeholder="e.g. Add a dark mode toggle to the settings page. It should persist across sessions and apply to all dashboard views."
-        class="w-full bg-slate-900 border border-slate-700/60 rounded-lg px-4 py-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 resize-y leading-relaxed">{% if description %}{{ description }}{% endif %}</textarea>
+    <form action="/settings/plan/wos/draft" method="post" id="draft-form" class="px-6 py-6 space-y-5">
 
-      <div class="flex items-center justify-between">
+      {# Description #}
+      <div>
+        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Description <span class="text-rose-400">*</span></label>
+        <textarea name="description" rows="5" autofocus required
+          placeholder="e.g. Add a dark mode toggle to the settings page. It should persist across sessions and apply to all dashboard views."
+          class="w-full bg-slate-900 border border-slate-700/60 rounded-lg px-4 py-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 resize-y leading-relaxed">{% if description %}{{ description }}{% endif %}</textarea>
+      </div>
+
+      {# Program + Priority row #}
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Program</label>
+          <input type="text" name="program" list="programs-list"
+            placeholder="e.g. Launch Program"
+            class="w-full bg-slate-900 border border-slate-700/60 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
+          <datalist id="programs-list">
+            {% for prog in existing_programs %}
+            <option value="{{ prog }}">
+            {% endfor %}
+          </datalist>
+          <p class="text-[10px] text-slate-600 mt-1">Type or pick an existing program</p>
+        </div>
+
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Priority</label>
+          <select name="priority"
+            class="w-full bg-slate-900 border border-slate-700/60 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
+            <option value="">— AI decides —</option>
+            <option value="P1">P1 — Core / schema changes (human merge)</option>
+            <option value="P2">P2 — Additive feature (auto-merge)</option>
+            <option value="P3">P3 — Docs / config (direct to main)</option>
+          </select>
+        </div>
+      </div>
+
+      {# Phase + Effort row #}
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Phase</label>
+          <select name="phase"
+            class="w-full bg-slate-900 border border-slate-700/60 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
+            <option value="">— Unassigned —</option>
+            {% for phase in phases %}
+            <option value="{{ phase.id }}">{{ phase.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Effort</label>
+          <select name="effort"
+            class="w-full bg-slate-900 border border-slate-700/60 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
+            <option value="">— AI decides —</option>
+            <option value="XS">XS — &lt;1 hour</option>
+            <option value="S">S — ~2 hours</option>
+            <option value="M">M — Half day</option>
+            <option value="L">L — Full day</option>
+            <option value="XL">XL — 2–3 days</option>
+          </select>
+        </div>
+      </div>
+
+      {# Depends on #}
+      <div>
+        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Depends On</label>
+        <input type="text" name="depends_on"
+          placeholder="e.g. WO-370, WO-371"
+          class="w-full bg-slate-900 border border-slate-700/60 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
+        <p class="text-[10px] text-slate-600 mt-1">Comma-separated WO numbers this work depends on</p>
+      </div>
+
+      {# Backend + actions row #}
+      <div class="flex items-center justify-between pt-1 border-t border-slate-800/40">
         <div class="flex items-center gap-2">
           <label class="text-[10px] font-mono text-slate-500 uppercase tracking-widest whitespace-nowrap">Generate with</label>
           <select name="backend" id="backend-select"
@@ -53,18 +122,18 @@
           </button>
         </div>
       </div>
+
     </form>
   </div>
 
   <p class="text-center text-[10px] text-slate-600 mt-4">
-    The AI generates title, priority, effort, acceptance criteria, and implementation notes.
+    The AI generates title, acceptance criteria, and implementation notes.
     You'll review everything before a PR is opened.
   </p>
 
 </div>
 
 <script>
-// Probe backend availability on page load
 (async function() {
   try {
     const res = await fetch('/api/backends');
@@ -78,20 +147,15 @@
 
     for (const opt of sel.options) {
       const key = opt.dataset.key;
-      let ok = false;
-      if (key === 'claude-api') {
-        ok = avail['claude-api'];
-      } else {
-        ok = avail.agent_runner_online && avail[key];
-      }
+      const ok = key === 'claude-api'
+        ? avail['claude-api']
+        : avail.agent_runner_online && avail[key];
       if (!ok) {
         opt.text += ' — unavailable';
         opt.style.color = '#64748b';
-        // Don't disable — still let them try; just signal the state
       }
     }
 
-    // Auto-select first available option
     for (const opt of sel.options) {
       const key = opt.dataset.key;
       const ok = key === 'claude-api'

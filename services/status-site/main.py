@@ -1306,6 +1306,14 @@ async def settings_plan_new_wo(request: Request, error: str = ""):
             next_num = await gw.next_wo_number(GITHUB_REPO, WO_PATH, GITHUB_TOKEN)
         except Exception:
             pass
+
+    wos, _ = await _load_wos()
+    _apply_plan_status(wos)
+    existing_programs = sorted({s.program for s in wos.values() if s.program})
+
+    plan = _load_plan_from_orchestrator() or {}
+    phases = [{"id": p.get("id", ""), "label": p.get("label", p.get("id", ""))} for p in plan.get("phases", [])]
+
     return templates.TemplateResponse(request=request, name="settings_plan_new_wo.html", context={
         "site_title": SITE_TITLE,
         "github_repo": GITHUB_REPO,
@@ -1313,6 +1321,8 @@ async def settings_plan_new_wo(request: Request, error: str = ""):
         "next_wo_number": next_num,
         "error": error,
         "description": "",
+        "existing_programs": existing_programs,
+        "phases": phases,
     })
 
 
@@ -1331,6 +1341,11 @@ async def settings_plan_draft_wo(request: Request):
             pass
 
     backend = str(form.get("backend", "claude-api")).strip() or "claude-api"
+    program = str(form.get("program", "")).strip()
+    priority = str(form.get("priority", "")).strip()
+    phase = str(form.get("phase", "")).strip()
+    effort = str(form.get("effort", "")).strip()
+    depends_on = str(form.get("depends_on", "")).strip()
 
     draft = None
     error = ""
@@ -1338,7 +1353,16 @@ async def settings_plan_draft_wo(request: Request):
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(
                 f"{ORCHESTRATOR_URL}/api/plan/draft",
-                json={"description": description, "next_wo_num": next_num, "backend": backend},
+                json={
+                    "description": description,
+                    "next_wo_num": next_num,
+                    "backend": backend,
+                    "program": program,
+                    "priority": priority,
+                    "phase": phase,
+                    "effort": effort,
+                    "depends_on": depends_on,
+                },
             )
             if r.status_code == 200:
                 draft = r.json()
@@ -1348,6 +1372,11 @@ async def settings_plan_draft_wo(request: Request):
         error = f"Orchestrator unreachable: {e}"
 
     if error or not draft:
+        wos, _ = await _load_wos()
+        _apply_plan_status(wos)
+        existing_programs = sorted({s.program for s in wos.values() if s.program})
+        plan = _load_plan_from_orchestrator() or {}
+        phases = [{"id": p.get("id", ""), "label": p.get("label", p.get("id", ""))} for p in plan.get("phases", [])]
         return templates.TemplateResponse(request=request, name="settings_plan_new_wo.html", context={
             "site_title": SITE_TITLE,
             "github_repo": GITHUB_REPO,
@@ -1355,6 +1384,8 @@ async def settings_plan_draft_wo(request: Request):
             "next_wo_number": next_num,
             "error": error or "Draft generation failed — try again",
             "description": description,
+            "existing_programs": existing_programs,
+            "phases": phases,
         })
 
     ac_text = "\n".join(draft.get("acceptance_criteria", []))
@@ -1730,6 +1761,9 @@ async def factory_floor(request: Request):
     pending_validations = _load_validations()
     pending_validations = [v for v in pending_validations if v.get("status") == "pending"]
 
+    plan = _load_plan_from_orchestrator() or {}
+    phases = [{"id": p.get("id", ""), "label": p.get("label", p.get("id", ""))} for p in plan.get("phases", [])]
+
     return templates.TemplateResponse(request=request, name="factory.html", context={
         "site_title": SITE_TITLE,
         "github_repo": GITHUB_REPO,
@@ -1738,4 +1772,5 @@ async def factory_floor(request: Request):
         "backend_wos": backend_wos,
         "refresh_seconds": 9999,
         "pending_validations": pending_validations,
+        "phases": phases,
     })

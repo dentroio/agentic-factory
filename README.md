@@ -68,10 +68,13 @@ The agent-runner supports four AI backends, all subscription-based — no per-to
 
 | Backend | How it runs | Requires |
 |---------|-------------|---------|
-| `claude` | `claude --print` CLI | Claude subscription + CLI logged in |
-| `cursor` | `cursor --print` CLI | Cursor subscription + CLI logged in |
-| `codex` | `codex exec -` CLI | OpenAI Codex subscription |
-| `gemini` | `gemini -p` CLI | Google Gemini subscription |
+| `claude` | `claude --dangerously-skip-permissions` CLI | Claude Pro/Max + CLI logged in |
+| `cursor` | `agent --print --trust` CLI¹ | Cursor Pro + CLI logged in |
+| `codex` | `codex --approval-mode full-auto` CLI | OpenAI Codex subscription |
+| `gemini` | `gemini --yolo -p` CLI | Google Gemini Advanced |
+| `claude-api` | Anthropic SDK (Docker) | `ANTHROPIC_API_KEY` in secrets |
+
+> ¹ Cursor installs its headless CLI as `agent`, not `cursor`. Verify with `which agent`.
 | `claude-api` | Anthropic SDK (Docker) | `ANTHROPIC_API_KEY` in secrets |
 
 The agent-runner starts a local HTTP server (`draft_server.py`) on port **8101**. The orchestrator proxies WO draft requests to this server when using subscription backends — so the Docker container never needs your CLI session credentials.

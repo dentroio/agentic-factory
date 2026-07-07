@@ -131,9 +131,39 @@ Rebuilding and passing smoke tests confirms the service starts and existing endp
 <!-- This section is filled in by setup_factory.py during project setup. -->
 <!-- Run: python3 scripts/setup_factory.py  to configure -->
 
-{{DEVELOPMENT_ENVIRONMENT_SECTION}}
+This factory runs on **local Docker** via `docker-compose.status.yml`. There is no staging environment — all changes must be verified against the running containers on `localhost`.
 
-If the WO has no frontend impact, write: `No UI changes — backend / API only.`
+**Services and ports:**
+| Service | Port | Purpose |
+|---------|------|---------|
+| factory-status | 8099 | Dashboard UI + status API |
+| orchestrator | 8100 | PM chat, plan engine, dispatch |
+| agent-runner | 8101 | Draft server (host process, not Docker) |
+| pr-watchdog | — | Watches GitHub PRs and triggers cleanup |
+
+**After every code change to a service:**
+```bash
+docker compose -f docker-compose.status.yml build <service>
+docker compose -f docker-compose.status.yml up -d <service>
+# Then verify:
+curl -s http://localhost:8099/health   # factory-status
+curl -s http://localhost:8100/health   # orchestrator
+```
+
+**Full restart:**
+```bash
+make restart   # rebuilds all images and recreates all containers
+```
+
+**Verify the dashboard is reachable:**  
+Open `http://localhost:8099` — the Factory page should load with backend status cards showing online agents.
+
+**Agent runner** runs as a host daemon (not in Docker). Restart it with:
+```bash
+make agent-stop && make agent-start
+# or tail logs:
+make agent-logs
+```
 
 ---
 
