@@ -1801,6 +1801,17 @@ async def api_factory_dependabot_rebase(number: int):
         return JSONResponse(content={"error": str(e)}, status_code=503)
 
 
+@app.post("/api/factory/dependabot/prs/{number}/recreate")
+async def api_factory_dependabot_recreate(number: int):
+    """Proxy Dependabot recreate action to orchestrator."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/dependabot/prs/{number}/recreate")
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=503)
+
+
 @app.post("/api/factory/dependabot/prs/{number}/approve-merge")
 async def api_factory_dependabot_approve_merge(number: int):
     """Proxy Dependabot approve-merge action to orchestrator."""

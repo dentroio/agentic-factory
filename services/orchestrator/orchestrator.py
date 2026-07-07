@@ -926,6 +926,22 @@ async def _fetch_dependabot_prs(client: httpx.AsyncClient) -> list[dict]:
                 pass
             # mergeable requires individual fetch — use cached PR data (may be stale)
             mergeable = pr.get("mergeable")  # None when not yet computed
+
+            # Check if rebase is blocked ("edited by someone other than Dependabot")
+            rebase_blocked = False
+            try:
+                comments = await _get(client, f"/repos/{GITHUB_REPO}/issues/{pr['number']}/comments",
+                                       {"per_page": 20})
+                for c in reversed(comments):
+                    body = c.get("body", "")
+                    if "edited by someone other than Dependabot" in body:
+                        rebase_blocked = True
+                        break
+                    if c.get("user", {}).get("login") == "dependabot[bot]" and "rebase" in body.lower():
+                        break  # latest dependabot comment is about something else
+            except Exception:
+                pass
+
             results.append({
                 "number": pr["number"],
                 "title": pr["title"],
@@ -935,6 +951,7 @@ async def _fetch_dependabot_prs(client: httpx.AsyncClient) -> list[dict]:
                 "mergeable": mergeable,
                 "auto_merge": pr.get("auto_merge") is not None,
                 "ci": ci_state,
+                "rebase_blocked": rebase_blocked,
             })
         return results
     except Exception as exc:
@@ -1650,6 +1667,20 @@ async def rebase_dependabot_pr(number: int):
     return {"status": "rebase_triggered", "pr": number}
 
 
+@app.post("/api/dependabot/prs/{number}/recreate")
+async def recreate_dependabot_pr(number: int):
+    """Post @dependabot recreate — used when rebase is blocked due to manual edits."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"https://api.github.com/repos/{GITHUB_REPO}/issues/{number}/comments",
+            headers=_headers(),
+            json={"body": "@dependabot recreate"},
+        )
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=resp.status_code, detail=resp.text[:200])
+    return {"status": "recreate_triggered", "pr": number}
+
+
 @app.post("/api/dependabot/prs/{number}/approve-merge")
 async def approve_merge_dependabot_pr(number: int):
     """Approve a Dependabot PR and merge it (squash). CI must be green."""
@@ -1688,9 +1719,11 @@ Your role:
 
 DEPENDABOT PR ACTIONS — when the user asks you to fix, merge, or rebase a Dependabot PR,
 include one or more action tags at the END of your response (after your text):
-  [DEPENDABOT:rebase:NNN]        — rebase PR #NNN (use when CONFLICTING)
+  [DEPENDABOT:rebase:NNN]        — rebase PR #NNN (use when CONFLICTING and rebase_blocked=false)
+  [DEPENDABOT:recreate:NNN]      — recreate PR #NNN from scratch (use when rebase_blocked=true — Dependabot refuses to rebase PRs that were manually edited; recreate closes the old PR and opens a fresh one against current main)
   [DEPENDABOT:approve-merge:NNN] — approve + merge PR #NNN (use when CI green and MERGEABLE)
 You may include multiple tags for multiple PRs. Only include a tag when the action is clearly safe.
+IMPORTANT: if rebase_blocked=true, NEVER use [DEPENDABOT:rebase:NNN] — it will fail. Use [DEPENDABOT:recreate:NNN] instead.
 
 WHEN THE USER WANTS TO CREATE A WORK ORDER respond with ONLY this JSON (no other text, no fences):
 {{"type":"wo_draft","title":"short action title ≤60 chars","priority":"P1|P2|P3","effort":"XS|S|M|L|XL","services":"comma-separated service names","problem":"2-3 sentences on the pain point","what_to_build":"technical description with files/approach","acceptance_criteria":["verifiable item 1","verifiable item 2","verifiable item 3"],"notes":"constraints or empty string"}}
@@ -1829,6 +1862,7 @@ async def pm_chat(req: PMChatRequest):
                     am = "auto-merge enabled" if p["auto_merge"] else "no auto-merge"
                     lines.append(
                         f"  PR #{p['number']}: {p['title'][:60]} | CI={ci} | mergeable={mg} | {am}"
+                        + (" | rebase_blocked=true (use recreate)" if p.get("rebase_blocked") else "")
                     )
                 ctx_parts.append("Open Dependabot PRs:\n" + "\n".join(lines))
             else:
@@ -1921,7 +1955,7 @@ async def pm_chat(req: PMChatRequest):
             pass
 
     # Parse and execute Dependabot action tags, e.g. [DEPENDABOT:rebase:278]
-    action_pattern = re.compile(r"\[DEPENDABOT:(rebase|approve-merge):(\d+)\]")
+    action_pattern = re.compile(r"\[DEPENDABOT:(rebase|recreate|approve-merge):(\d+)\]")
     action_results: list[str] = []
     clean_text = text
     for match in action_pattern.finditer(text):
@@ -1937,6 +1971,15 @@ async def pm_chat(req: PMChatRequest):
                     action_results.append(
                         f"✅ Triggered rebase on PR #{pr_num}" if resp.status_code in (200, 201)
                         else f"⚠️ Rebase on PR #{pr_num} failed ({resp.status_code})"
+                    )
+                elif action == "recreate":
+                    resp = await _ac.post(
+                        f"https://api.github.com/repos/{GITHUB_REPO}/issues/{pr_num}/comments",
+                        headers=_headers(), json={"body": "@dependabot recreate"},
+                    )
+                    action_results.append(
+                        f"✅ Triggered recreate on PR #{pr_num} — Dependabot will open a fresh PR against main" if resp.status_code in (200, 201)
+                        else f"⚠️ Recreate on PR #{pr_num} failed ({resp.status_code})"
                     )
                 elif action == "approve-merge":
                     ar = await _ac.post(
