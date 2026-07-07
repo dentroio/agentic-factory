@@ -1,6 +1,6 @@
 # WO-379 — PM Session Memory Across Conversations
 
-**Status:** 🔲 Ready
+**Status:** ✅ Done
 **Priority:** P2
 **Effort:** S
 **Services:** orchestrator

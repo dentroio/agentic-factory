@@ -1,6 +1,6 @@
 # WO-376 — Slack Conversation Persistence
 
-**Status:** 🔲 Ready
+**Status:** ✅ Done
 **Priority:** P2
 **Effort:** S
 **Services:** orchestrator

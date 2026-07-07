@@ -1,6 +1,6 @@
 # WO-375 — Agent Dispatch from PM Chat
 
-**Status:** 🔲 Ready
+**Status:** ✅ Done
 **Priority:** P1
 **Effort:** M
 **Services:** orchestrator

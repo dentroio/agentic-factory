@@ -65,10 +65,22 @@ The orchestrator is a FastAPI application (APScheduler polling loop, port 8100) 
 | `/api/held-wos` | GET | List of WO IDs currently on hold |
 | `/api/wos/{wo_id}/hold` | POST | Add a WO to the hold list — orchestrator skips it when assigning work |
 | `/api/wos/{wo_id}/hold` | DELETE | Remove a WO from the hold list |
+| `/api/pm/chat` | POST | PM assistant chat — context-aware, includes queue/board state; processes `[DISPATCH:WO-NNN:backend]` action tags to trigger immediate dispatch |
+| `/api/pm/dispatch` | POST | Directly dispatch a WO from PM chat; sets a priority slot in `/api/next` and wakes the runner via the draft server `/dispatch` endpoint |
+| `/api/pm/memory` | GET | Return the current PM session memory (`/data/pm_memory.json`) |
+| `/api/pm/memory` | POST | Write a key/value pair to PM memory (keys: `preferred_backend`, `decision`, `dispatched`) |
 
 **Secrets vault:** Credentials are stored at `/data/secrets.json` inside the orchestrator's Docker volume. They persist across restarts. The `GET /api/secrets` endpoint returns a boolean presence map — it never returns actual values. Set credentials via the factory dashboard (Settings → Authentication) or directly via `PUT /api/secrets`.
 
 **Hold/unhold queue:** The hold list is persisted at `/data/held_wos.json`. When `get_next()` is called, any WO in the hold set is skipped. Hold state survives container restarts.
+
+**SECONDARY_REPOS:** Set `SECONDARY_REPOS=owner/repo:path/to/wos` (comma-separated for multiple) to have the orchestrator poll additional GitHub repositories for WO specs. Secondary specs are merged into the board view and into the PM assistant's context (`_wo_status_summary()`), but they are **not dispatchable** — the dispatch queue only pulls from the primary repo's PLAN.json.
+
+**PLAN overlay:** During each poll cycle the orchestrator computes a `_plan_overlay` — spec-file WOs from the primary repo that have an actionable status (Ready/Open/Planned) but are absent from PLAN.json. These are appended to `/api/next`'s queue at runtime, making spec-file-only WOs visible and dispatchable without requiring a PLAN.json entry.
+
+**PM memory:** `/api/pm/memory` persists lightweight PM session state to `/data/pm_memory.json`. Tracked keys: `preferred_backend` (last chosen backend), `decision` (notable PM decisions), `dispatched` (WO IDs dispatched this session). The PM assistant reads this at the start of each chat turn to maintain continuity across container restarts.
+
+**PM dispatch:** `POST /api/pm/dispatch` sets a priority slot consumed by the next `/api/next` call. It also calls the agent-runner draft server at `http://host.docker.internal:8101/dispatch`, which sets a `threading.Event` to wake the runner immediately instead of waiting for the next poll interval.
 
 **Thread storage:** Per-WO conversation lives in `/data/threads/{wo}.json`. System messages are auto-posted on lifecycle transitions (claim, validate, approve, reject, complete). Image messages store base64-decoded PNGs in `/data/threads/images/{wo}/{timestamp}.png`.
 
@@ -77,6 +89,41 @@ The orchestrator is a FastAPI application (APScheduler polling loop, port 8100) 
 **Draft routing:** `POST /api/plan/draft` accepts `{description, next_wo_num, backend}`. If `backend=claude-api`, it calls the Anthropic SDK directly using the key from the secrets vault. For all other backends (`claude`, `cursor`, `codex`, `gemini`), it proxies the request to the agent-runner draft server at `http://host.docker.internal:8101/api/draft` — so subscription CLI credentials never need to be in Docker.
 
 **Notification hooks:** The orchestrator fires `notifications.py` on key lifecycle events, posting to ntfy.sh and Slack Block Kit webhooks in parallel if `NTFY_TOPIC` / `SLACK_WEBHOOK_URL` are configured (secrets vault or env vars). Both channels are no-ops if absent. Events: WO needs human review (high priority), WO complete (default), agent error/gave up (high), Dependabot PR merged (low), Dependabot conflict auto-rebased (low). `NTFY_SERVER` defaults to `https://ntfy.sh`; override to point at a self-hosted ntfy instance. Topics are auto-generated as `factory-{14 random alphanumeric chars}` by `make agent-setup` and managed via `Settings → Authentication`. `GET /api/notifications/config` returns the current topic and server (non-sensitive — needed by the Settings UI to display the subscribe URL). `POST /api/notifications/test` sends a test ping.
+
+---
+
+### Slack Socket Mode Bot (`services/orchestrator/slack_bot.py`)
+
+The orchestrator runs an optional two-way Slack bot via Socket Mode. When `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are configured, the bot starts automatically alongside the orchestrator.
+
+**How it works:**
+
+All Slack communication is routed through the PM assistant (`/api/pm/chat`). The bot listens for:
+- DMs to the bot
+- `@mention` in any channel
+- Follow-up messages in threads the bot has already replied in
+
+**Block Kit rich messages:**
+
+The bot automatically upgrades plain-text PM replies to Slack Block Kit when the reply contains structured data:
+
+- **WO lists** — if the reply contains two or more lines matching `WO-NNN: Title [metadata]`, each WO gets a `▶ Dispatch` button inline. Clicking dispatches that WO immediately via the PM chat confirmation flow.
+- **Dispatch offers** — if the reply contains a phrase like "Want me to dispatch WO-NNN to cursor?", it renders as a text block with `✅ Yes, dispatch` / `❌ Not yet` action buttons. Pronoun resolution handles "it", "this one", "that one" by scanning the full reply for the most recently mentioned `WO-NNN`.
+
+**Persistence:**
+
+Conversation history and active thread IDs are flushed to `/data/slack_state.json` after each message. On restart, the bot reloads this state so conversations survive container restarts. Capped at 100 threads × 50 turns per thread.
+
+**Configuration:**
+
+| Env var | Purpose |
+|---------|---------|
+| `SLACK_BOT_TOKEN` | `xoxb-...` OAuth token — issued from Slack app's OAuth page |
+| `SLACK_APP_TOKEN` | `xapp-...` Socket Mode token — issued from Slack app's "App-Level Tokens" page |
+
+Both tokens can be stored in the secrets vault (`PUT /api/secrets`) or passed as env vars. The bot is a no-op if either token is absent — it does not block orchestrator startup.
+
+**Important:** `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` (Socket Mode conversational bot) are separate from `SLACK_WEBHOOK_URL` (one-way Incoming Webhook for lifecycle notifications). Both can be configured simultaneously.
 
 ---
 
@@ -158,8 +205,10 @@ A lightweight stdlib HTTP server that starts as a daemon thread inside the agent
 
 - `GET /health` — returns `{"status": "ok", "backends": {...}}` where `backends` maps each CLI name to a boolean (found in PATH or at known install path)
 - `POST /api/draft` — accepts `{description, next_wo_num, backend}`, calls `backend.ask(prompt)`, returns the structured JSON spec
+- `POST /dispatch` — accepts `{wo, backend}`; sets `_pending_dispatch` and fires `_wake_event` to interrupt the runner's polling sleep immediately
+- `POST /api/chat` — accepts `{system, message, history, backend}`; calls `backend.ask()` with the assembled prompt; used for non-agentic PM-level queries
 
-The orchestrator calls this server when a subscription CLI backend is selected for WO drafting. This design keeps CLI credentials on the host machine — the Docker container never needs them.
+The orchestrator calls this server when a subscription CLI backend is selected for WO drafting or PM dispatch. This design keeps CLI credentials on the host machine — the Docker container never needs them.
 
 **Backends** (`services/agent-runner/backends/`):
 

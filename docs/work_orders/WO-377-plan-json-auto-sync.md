@@ -1,6 +1,6 @@
 # WO-377 — PLAN.json Auto-Sync from WO Spec Files
 
-**Status:** 🔲 Ready
+**Status:** ✅ Done
 **Priority:** P2
 **Effort:** S
 **Services:** orchestrator

@@ -48,6 +48,19 @@ Open **Settings → Plan**, click the ✎ button next to any open WO, edit the r
 - **⏸ Hold** — prevents the orchestrator from dispatching a WO. Use this when a dependency hasn't merged yet or when you want to defer a WO without removing it from the queue.
 - **▶ Resume** — re-enables a held WO. Hold state persists across restarts.
 
+### Dispatching from Slack or the PM assistant
+
+The PM assistant (`/api/pm/chat`) is a context-aware chat interface that knows the current queue, board state, and your PM memory. You can ask it about WO status, priorities, and backlog, and it will dispatch work on request.
+
+**To dispatch from Slack:**
+1. DM the bot or `@mention` it in any channel.
+2. Ask "What's ready to run?" — the bot replies with a WO list, each with a `▶ Dispatch` button.
+3. Click the button (or ask "dispatch WO-NNN to cursor") — the bot sends a `[DISPATCH:WO-NNN:backend]` action, which wakes the runner immediately.
+
+**To dispatch from the dashboard:** Open the PM view at `http://localhost:8099/pm` and use the chat panel.
+
+**SECONDARY_REPOS:** Set `SECONDARY_REPOS=owner/repo:path` in `.env` to make the PM assistant aware of WO specs in other repositories. Their WOs appear on the board and in PM context but are not dispatchable — dispatch always runs against the primary repo's queue.
+
 ---
 
 ## The 12 GitHub Actions Workflows
