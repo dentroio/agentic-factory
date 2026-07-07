@@ -261,7 +261,8 @@ A team with an existing project needs:
 gh repo create your-org/your-project --template dentroio/agentic-factory --private
 
 # 2. One-time credential setup (macOS Keychain)
-make agent-setup   # prompts for GitHub token, repo, Slack webhook, Anthropic key
+make agent-setup   # stores GitHub token, repo, Anthropic key in macOS Keychain
+                   # auto-generates a private ntfy push-notification topic
 
 # 3. Start the factory
 make up

@@ -76,7 +76,7 @@ The orchestrator is a FastAPI application (APScheduler polling loop, port 8100) 
 
 **Draft routing:** `POST /api/plan/draft` accepts `{description, next_wo_num, backend}`. If `backend=claude-api`, it calls the Anthropic SDK directly using the key from the secrets vault. For all other backends (`claude`, `cursor`, `codex`, `gemini`), it proxies the request to the agent-runner draft server at `http://host.docker.internal:8101/api/draft` — so subscription CLI credentials never need to be in Docker.
 
-**Notification hooks:** On successful validate, the orchestrator fires `notifications.py` which POSTs to ntfy.sh and Slack Block Kit webhooks if `NTFY_URL` / `SLACK_WEBHOOK_URL` are configured (in secrets vault or environment variables). Both are no-ops if absent.
+**Notification hooks:** The orchestrator fires `notifications.py` on key lifecycle events, posting to ntfy.sh and Slack Block Kit webhooks in parallel if `NTFY_TOPIC` / `SLACK_WEBHOOK_URL` are configured (secrets vault or env vars). Both channels are no-ops if absent. Events: WO needs human review (high priority), WO complete (default), agent error/gave up (high), Dependabot PR merged (low), Dependabot conflict auto-rebased (low). `NTFY_SERVER` defaults to `https://ntfy.sh`; override to point at a self-hosted ntfy instance. Topics are auto-generated as `factory-{14 random alphanumeric chars}` by `make agent-setup` and managed via `Settings → Authentication`. `GET /api/notifications/config` returns the current topic and server (non-sensitive — needed by the Settings UI to display the subscribe URL). `POST /api/notifications/test` sends a test ping.
 
 ---
 
@@ -96,7 +96,7 @@ A FastAPI + Jinja2 server (port 8099) that renders the live dashboard, provides 
 | `/usage` | Per-backend usage stats — runs, success rate, estimated requests |
 | `/settings` | Settings hub — links to all settings pages |
 | `/settings/agents` | Agent configuration (preferred backend, reviewer backends, timeout) + Anthropic key panel |
-| `/settings/authentication` | GitHub token, Anthropic API key, Slack webhook — reads presence from orchestrator secrets |
+| `/settings/authentication` | GitHub token, Anthropic API key, ntfy topic/server, Slack webhook — reads presence from orchestrator secrets; ntfy topic/server fetched from `/api/notifications/config` (actual values, not booleans) |
 | `/settings/plan` | Plan Authoring Hub — open WOs (with hold/unhold + edit), phases, milestones |
 | `/settings/plan/wos/new` | WO creation — natural language textarea + backend selector |
 | `/settings/plan/wos/draft` | POST handler — calls orchestrator draft endpoint, renders review form |
@@ -670,9 +670,9 @@ All scripts use `model="claude-sonnet-4-6"`. Change this string in each script. 
 
 The factory uses two complementary credential stores:
 
-**macOS Keychain** (host machine) — used by `scripts/factory-env.sh` at startup. `make agent-setup` stores `GITHUB_TOKEN`, `GITHUB_REPO`, `SLACK_WEBHOOK_URL`, and `ANTHROPIC_API_KEY` in Keychain under service name `dentroio-factory`. On `make up`, these are read from Keychain and written to `.env.runtime`, which `docker compose` consumes. Credentials never touch the filesystem as plaintext files.
+**macOS Keychain** (host machine) — used by `scripts/factory-env.sh` at startup. `make agent-setup` stores `GITHUB_TOKEN`, `GITHUB_REPO`, `ANTHROPIC_API_KEY`, `NTFY_TOPIC`, `NTFY_SERVER`, and `SLACK_WEBHOOK_URL` in Keychain under service name `dentroio-factory`. The ntfy topic is auto-generated as `factory-{14 random alphanumeric chars}` — no user input required. On `make up`, these are read from Keychain and written to `.env.runtime`, which `docker compose` consumes. Credentials never touch the filesystem as plaintext files.
 
-**Orchestrator secrets vault** (`/data/secrets.json` in the Docker volume) — set via `Settings → Authentication` in the dashboard or via `PUT /api/secrets`. The vault persists across container restarts. `GET /api/secrets` returns a boolean presence map — actual values are never returned over the API. The vault is the runtime source of truth for credentials that the orchestrator needs during operation (ANTHROPIC_API_KEY for the draft endpoint, SLACK_WEBHOOK_URL for notifications).
+**Orchestrator secrets vault** (`/data/secrets.json` in the Docker volume) — set via `Settings → Authentication` in the dashboard or via `PUT /api/secrets`. The vault persists across container restarts. `GET /api/secrets` returns a boolean presence map — actual values are never returned over the API (security). Exception: `GET /api/notifications/config` returns the actual `NTFY_TOPIC` and `NTFY_SERVER` values — these are not sensitive (subscribers need to know the topic URL), and the Settings UI needs them to display the subscribe link and copy buttons. The vault is the runtime source of truth for credentials the orchestrator needs during operation: `ANTHROPIC_API_KEY` for drafting, `NTFY_TOPIC`/`NTFY_SERVER` for push notifications, and `SLACK_WEBHOOK_URL` for Slack alerts.
 
 **GitHub Actions secrets** — `ANTHROPIC_API_KEY` must be set in GitHub repo secrets for AI review workflows to function. `GITHUB_TOKEN` is provisioned automatically per workflow run.
 
