@@ -153,6 +153,10 @@ async def notify_dependabot(
             tags="arrows_counterclockwise",
             secrets=secrets,
         )
+        await _send_slack(
+            f":arrows_counterclockwise: *Dependabot conflict* on {prs} — rebase triggered automatically.",
+            secrets=secrets,
+        )
     elif action == "merged":
         await _send_ntfy(
             title=f"📦 Dependabot merged — {prs}",
@@ -161,18 +165,29 @@ async def notify_dependabot(
             tags="package",
             secrets=secrets,
         )
+        await _send_slack(
+            f":package: *Dependabot merged* {prs}" + (f" — {details}" if details else ""),
+            secrets=secrets,
+        )
 
 
 async def notify_test(secrets: dict | None = None) -> bool:
-    """Send a test notification. Returns True if ntfy topic is configured."""
+    """Send a test notification. Returns True if ntfy or Slack is configured."""
     topic = _ntfy_topic(secrets)
-    if not topic:
+    slack = _slack_url(secrets)
+    if not topic and not slack:
         return False
-    await _send_ntfy(
-        title="🏭 Factory notifications active",
-        body="Your AI Factory will send alerts here for WO completions, reviews, and errors.",
-        priority="default",
-        tags="bell",
-        secrets=secrets,
-    )
+    if topic:
+        await _send_ntfy(
+            title="🏭 Factory notifications active",
+            body="Your AI Factory will send alerts here for WO completions, reviews, and errors.",
+            priority="default",
+            tags="bell",
+            secrets=secrets,
+        )
+    if slack:
+        await _send_slack(
+            ":factory: *Factory notifications active* — WO completions, reviews, and errors will appear here.",
+            secrets=secrets,
+        )
     return True

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 import thread as thread_store
 from github_dispatch import trigger_codex_workflow
+from slack_bot import start_slack_bot
 from notifications import (
     notify_validation_needed,
     notify_wo_complete,
@@ -187,6 +188,8 @@ async def lifespan(app: FastAPI):
         app.state.scheduler = scheduler
         # Fire first poll in background — store ref so it isn't GC'd
         app.state.initial_poll = asyncio.create_task(poll())
+
+    app.state.slack_bot = start_slack_bot()
 
     yield
 
@@ -510,7 +513,7 @@ async def notifications_test():
     """Send a test ntfy notification using current secrets config."""
     sent = await notify_test(secrets=_load_secrets())
     if not sent:
-        raise HTTPException(status_code=422, detail="NTFY_TOPIC not configured — set it in Settings → Authentication")
+        raise HTTPException(status_code=422, detail="No notification channel configured — set NTFY_TOPIC or Slack Webhook in Settings → Authentication")
     return {"ok": True}
 
 

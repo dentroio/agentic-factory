@@ -87,6 +87,8 @@ services:
       - NTFY_TOPIC=${NTFY_TOPIC:-}
       - NTFY_SERVER=${NTFY_SERVER:-https://ntfy.sh}
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-}
       - CODEX_WORKFLOW_FILE=${CODEX_WORKFLOW_FILE:-codex-dispatch.yml}
       - API_PORT=8100
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
