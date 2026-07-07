@@ -1934,7 +1934,7 @@ async def pm_chat(req: PMChatRequest):
             try:
                 import anthropic as _anthropic
                 _aclient = _anthropic.Anthropic(api_key=api_key)
-                _model = "claude-sonnet-4-6" if req.images else "claude-haiku-4-5-20251001"
+                _model = "claude-opus-4-8"
                 _amsg = _aclient.messages.create(
                     model=_model,
                     max_tokens=1024,
