@@ -1,5 +1,6 @@
 """Notification dispatch — ntfy.sh and Slack webhooks for human-in-the-loop alerts."""
 import os
+from urllib.parse import quote
 
 import httpx
 
@@ -34,10 +35,11 @@ async def _send_ntfy(
     url = f"{_ntfy_server(secrets)}/{topic}"
     try:
         async with httpx.AsyncClient(timeout=8) as client:
-            await client.post(url, content=body.encode(), headers={
-                "Title": title,
+            await client.post(url, content=body.encode("utf-8"), headers={
+                "Title": quote(title),   # URL-encode for non-ASCII chars (emoji, etc.)
                 "Priority": priority,
                 "Tags": tags,
+                "Content-Type": "text/plain; charset=utf-8",
             })
     except Exception as e:
         print(f"[notifications] ntfy failed: {e}")
