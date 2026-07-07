@@ -71,6 +71,7 @@ _dispatch_state: dict[str, dict] = {}   # wo_id → claim record
 _validations: list[dict] = []           # pending human validations
 _orchestrator_output: dict = {}         # last poll snapshot
 _held_wos: set[str] = set()            # WO IDs on hold (skip, don't claim)
+_specs_cache: dict[int, dict] = {}     # all merged WO specs from last poll (primary + secondary)
 
 HOLD_PATH = DATA_DIR / "held_wos.json"
 PAUSE_PATH = DATA_DIR / "factory_paused.json"
@@ -1205,6 +1206,9 @@ async def poll() -> None:
     for sec_specs in results[5:]:
         specs.update(sec_specs)
 
+    global _specs_cache
+    _specs_cache = dict(specs)  # snapshot for PM chat context injection
+
     # Sets for board summary use all specs; dispatch queue uses primary-repo specs only
     done_wos = {num for num, s in specs.items() if _is_done(s["status"])}
     in_progress_wos = active_branch_wos - pr_wos - done_wos
@@ -1757,10 +1761,13 @@ _WO_STATUS_KEYWORDS = frozenset([
 
 
 def _wo_status_summary() -> str:
-    """Build a live WO status summary from local spec files. Fast — reads filesystem only."""
-    if not LOCAL_REPO_MOUNT:
+    """Build a live WO status summary. Prefers the poll-cycle cache (includes secondary repos)."""
+    if _specs_cache:
+        specs = _specs_cache
+    elif LOCAL_REPO_MOUNT:
+        specs = _read_local_wo_specs(LOCAL_REPO_MOUNT, WO_PATH, GITHUB_REPO)
+    else:
         return ""
-    specs = _read_local_wo_specs(LOCAL_REPO_MOUNT, WO_PATH, GITHUB_REPO)
     if not specs:
         return ""
 
@@ -1786,10 +1793,12 @@ def _wo_status_summary() -> str:
     for num in sorted(specs):
         w = specs[num]
         b = _bucket(w.get("status", ""))
-        label = f"WO-{num}: {w.get('title', '')[:55]} [{w.get('priority','?')}]"
+        repo_tag = f" ({w['repo'].split('/')[-1]})" if w.get("repo") and w["repo"] != GITHUB_REPO else ""
+        label = f"WO-{num}: {w.get('title', '')[:55]} [{w.get('priority','?')}]{repo_tag}"
         buckets[b].append(label)
 
-    lines = []
+    repos = sorted({v.get("repo", GITHUB_REPO) for v in specs.values()})
+    lines = [f"WO status across {', '.join(repos)}:"]
     for key, label in [("in_progress", "In Progress"), ("ready", "Ready"),
                         ("open", "Open / Partial"), ("planned", "Planned")]:
         if buckets[key]:
