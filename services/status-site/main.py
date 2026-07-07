@@ -1176,6 +1176,8 @@ async def settings_authentication(request: Request, saved: str = "", error: str 
         "github_token_set": bool(GITHUB_TOKEN) or secrets.get("GITHUB_TOKEN", False),
         "anthropic_key_set": secrets.get("ANTHROPIC_API_KEY", False),
         "slack_webhook_set": secrets.get("SLACK_WEBHOOK_URL", False),
+        "slack_bot_token_set": secrets.get("SLACK_BOT_TOKEN", False),
+        "slack_app_token_set": secrets.get("SLACK_APP_TOKEN", False),
         "ntfy_topic": ntfy_topic,
         "ntfy_server": ntfy_server or "https://ntfy.sh",
         "restart_required": False,
@@ -1190,6 +1192,8 @@ async def settings_authentication_save(request: Request):
     github_repo = str(form.get("github_repo", "")).strip()
     anthropic_key = str(form.get("anthropic_key", "")).strip()
     slack_webhook = str(form.get("slack_webhook", "")).strip()
+    slack_bot_token = str(form.get("slack_bot_token", "")).strip()
+    slack_app_token = str(form.get("slack_app_token", "")).strip()
 
     ntfy_topic = str(form.get("ntfy_topic", "")).strip()
     ntfy_server = str(form.get("ntfy_server", "")).strip()
@@ -1201,6 +1205,10 @@ async def settings_authentication_save(request: Request):
         secrets_payload["ANTHROPIC_API_KEY"] = anthropic_key
     if slack_webhook:
         secrets_payload["SLACK_WEBHOOK_URL"] = slack_webhook
+    if slack_bot_token:
+        secrets_payload["SLACK_BOT_TOKEN"] = slack_bot_token
+    if slack_app_token:
+        secrets_payload["SLACK_APP_TOKEN"] = slack_app_token
     if github_repo:
         secrets_payload["GITHUB_REPO"] = github_repo
     if ntfy_topic:

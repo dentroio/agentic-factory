@@ -182,21 +182,55 @@
       <div class="px-5 py-3 border-b border-slate-800/40">
         <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Slack</span>
       </div>
-      <div class="px-5 py-4">
-        <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">
-          Webhook URL
-          {% if slack_webhook_set %}
-          <span class="ml-2 normal-case font-sans text-emerald-400">● set</span>
-          {% else %}
-          <span class="ml-2 normal-case font-sans text-slate-600">not set</span>
-          {% endif %}
-        </label>
-        <input type="password" name="slack_webhook" autocomplete="off"
-          placeholder="https://hooks.slack.com/…  (leave blank to keep current)"
-          class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
-        <p class="text-[10px] text-slate-600 mt-1">
-          Factory posts WO completions and failures here.
-        </p>
+      <div class="px-5 py-4 space-y-4">
+        <div>
+          <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">
+            Webhook URL
+            {% if slack_webhook_set %}
+            <span class="ml-2 normal-case font-sans text-emerald-400">● set</span>
+            {% else %}
+            <span class="ml-2 normal-case font-sans text-slate-600">not set</span>
+            {% endif %}
+          </label>
+          <input type="password" name="slack_webhook" autocomplete="off"
+            placeholder="https://hooks.slack.com/…  (leave blank to keep current)"
+            class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+          <p class="text-[10px] text-slate-600 mt-1">
+            Outbound notifications — WO completions, failures, Dependabot events.
+          </p>
+        </div>
+
+        <div class="border-t border-slate-800/40 pt-4">
+          <p class="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-3">Two-Way Bot (Socket Mode)</p>
+
+          <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">
+            Bot Token <span class="font-sans normal-case text-slate-600">(xoxb-…)</span>
+            {% if slack_bot_token_set %}
+            <span class="ml-2 normal-case font-sans text-emerald-400">● set</span>
+            {% else %}
+            <span class="ml-2 normal-case font-sans text-slate-600">not set</span>
+            {% endif %}
+          </label>
+          <input type="password" name="slack_bot_token" autocomplete="off"
+            placeholder="xoxb-…  (leave blank to keep current)"
+            class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50 mb-3">
+
+          <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">
+            App Token <span class="font-sans normal-case text-slate-600">(xapp-…)</span>
+            {% if slack_app_token_set %}
+            <span class="ml-2 normal-case font-sans text-emerald-400">● set</span>
+            {% else %}
+            <span class="ml-2 normal-case font-sans text-slate-600">not set</span>
+            {% endif %}
+          </label>
+          <input type="password" name="slack_app_token" autocomplete="off"
+            placeholder="xapp-…  (leave blank to keep current)"
+            class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+          <p class="text-[10px] text-slate-600 mt-1">
+            DM the bot or @mention it in a channel to chat with the factory PM.
+            Requires Socket Mode enabled on your Slack App with <code class="text-slate-500">connections:write</code> scope.
+          </p>
+        </div>
       </div>
     </div>
 
