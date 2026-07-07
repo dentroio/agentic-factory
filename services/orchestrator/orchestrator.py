@@ -72,6 +72,7 @@ _validations: list[dict] = []           # pending human validations
 _orchestrator_output: dict = {}         # last poll snapshot
 _held_wos: set[str] = set()            # WO IDs on hold (skip, don't claim)
 _specs_cache: dict[int, dict] = {}     # all merged WO specs from last poll (primary + secondary)
+_pm_dispatch: dict | None = None       # PM-requested direct dispatch {wo, backend, title}
 
 HOLD_PATH = DATA_DIR / "held_wos.json"
 PAUSE_PATH = DATA_DIR / "factory_paused.json"
@@ -217,13 +218,32 @@ async def get_status():
 @app.get("/api/next")
 async def get_next():
     """Return the highest-priority unclaimed WO, or null if none available."""
+    global _pm_dispatch
     if _factory_paused:
         return {"wo": None, "reason": "factory paused — drain mode active"}
 
+    active_statuses = {"claimed", "in_progress", "awaiting_human", "awaiting_commit", "complete"}
+
+    # PM-dispatched WO takes priority over the normal queue
+    if _pm_dispatch:
+        dispatch = _pm_dispatch
+        _pm_dispatch = None
+        wo_id = dispatch["wo"]
+        existing = _dispatch_state.get(wo_id, {})
+        if existing.get("status") in active_statuses - {"complete"}:
+            return {"wo": None, "reason": f"{wo_id} already active"}
+        spec = _specs_cache.get(int(wo_id.replace("WO-", "")), {}) if _specs_cache else {}
+        return {
+            "wo": wo_id,
+            "title": spec.get("title", dispatch.get("title", wo_id)),
+            "priority": spec.get("priority", "P2"),
+            "effort": spec.get("effort", "M"),
+            "repo": spec.get("repo", GITHUB_REPO),
+            "_dispatch_backend": dispatch.get("backend"),
+        }
+
     plan = _orchestrator_output.get("plan", {})
     queue: list[dict] = plan.get("queue", [])
-
-    active_statuses = {"claimed", "in_progress", "awaiting_human", "awaiting_commit", "complete"}
 
     active_count = sum(
         1 for c in _dispatch_state.values()
@@ -244,6 +264,16 @@ async def get_next():
         return {**wo, "repo": GITHUB_REPO}
 
     return {"wo": None, "reason": "queue empty or all candidates claimed/blocked"}
+
+
+@app.post("/api/pm/dispatch")
+async def pm_dispatch_wo(wo: str, backend: str = "claude"):
+    """Store a PM-requested direct dispatch — picked up by the runner on next /api/next poll."""
+    global _pm_dispatch
+    wo_id = wo.upper() if wo.upper().startswith("WO-") else f"WO-{wo}"
+    _pm_dispatch = {"wo": wo_id, "backend": backend}
+    print(f"[orchestrator] PM dispatch queued: {wo_id} → {backend}")
+    return {"ok": True, "wo": wo_id, "backend": backend}
 
 
 @app.get("/api/factory/pause")
@@ -1728,8 +1758,15 @@ YOUR CAPABILITIES:
 - Read WO specs (provided in context when a WO is mentioned) to advise on dependencies and sequencing
 - Draft new work orders from plain-English feature requests
 - Trigger Dependabot actions (rebase, recreate, merge)
+- Dispatch WOs directly to an agent backend
 - Priorities: P1=core/risky, P2=feature/additive, P3=docs
 - Effort: XS<1h S~2h M=½d L=1d XL=2-3d
+
+DISPATCH ACTION — emit at the END of your response when the user confirms they want to start a WO:
+  [DISPATCH:WO-NNN:backend]  — claim WO-NNN and dispatch to backend (claude, cursor, codex, gemini)
+  Example: [DISPATCH:WO-185:cursor]
+  Only emit this when the user says "yes", "start it", "do it", "go ahead", or similar confirmation.
+  Always tell the user which WO and backend you're dispatching before emitting the tag.
 
 DEPENDABOT PR ACTIONS — include action tags at the END of your response when needed:
   [DEPENDABOT:rebase:NNN]        — rebase PR #NNN (use when CONFLICTING and rebase_blocked=false)
@@ -2041,6 +2078,38 @@ async def pm_chat(req: PMChatRequest):
 
     if action_results:
         clean_text = clean_text + "\n\n" + "\n".join(action_results)
+
+    # Parse and execute DISPATCH action tags, e.g. [DISPATCH:WO-375:cursor]
+    dispatch_pattern = re.compile(r"\[DISPATCH:(WO-\d+|\d+):([\w-]+)\]")
+    dispatch_results: list[str] = []
+    for match in dispatch_pattern.finditer(clean_text):
+        raw_wo, backend = match.group(1), match.group(2)
+        wo_id = raw_wo if raw_wo.startswith("WO-") else f"WO-{raw_wo}"
+        clean_text = clean_text.replace(match.group(0), "").strip()
+        try:
+            async with httpx.AsyncClient(timeout=10) as _dc:
+                # Queue in orchestrator so /api/next returns it
+                await _dc.post(
+                    f"http://localhost:{API_PORT}/api/pm/dispatch",
+                    params={"wo": wo_id, "backend": backend},
+                )
+                # Try to wake the runner immediately so it doesn't wait for the next poll
+                try:
+                    await _dc.post(
+                        f"{AGENT_RUNNER_URL}/dispatch",
+                        json={"wo": wo_id, "backend": backend},
+                        timeout=3,
+                    )
+                    dispatch_results.append(f"✅ {wo_id} dispatched to {backend} — runner woke up")
+                except Exception:
+                    dispatch_results.append(
+                        f"✅ {wo_id} queued for {backend} — runner picks it up on next poll"
+                    )
+        except Exception as exc:
+            dispatch_results.append(f"⚠️ Dispatch of {wo_id} failed: {exc}")
+
+    if dispatch_results:
+        clean_text = clean_text + "\n\n" + "\n".join(dispatch_results)
 
     return {"type": "text", "reply": clean_text.strip(), "wo_draft": None}
 

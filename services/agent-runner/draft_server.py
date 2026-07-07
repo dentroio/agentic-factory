@@ -12,8 +12,25 @@ import json
 import os
 import re
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
+
+# Wake event + pending dispatch — set by POST /dispatch, consumed by runner.py
+_wake_event = threading.Event()
+_dispatch_lock = threading.Lock()
+_pending_dispatch: dict | None = None
+
+
+def pop_dispatch() -> dict | None:
+    """Return and clear any pending PM dispatch. Thread-safe."""
+    global _pending_dispatch
+    with _dispatch_lock:
+        item = _pending_dispatch
+        _pending_dispatch = None
+    if item:
+        _wake_event.clear()
+    return item
 
 DRAFT_PORT = int(os.getenv("DRAFT_PORT", "8101"))
 
@@ -102,6 +119,9 @@ class _DraftHandler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path == "/dispatch":
+            self._handle_dispatch()
+            return
         if self.path == "/api/chat":
             self._handle_chat()
             return
@@ -141,6 +161,25 @@ class _DraftHandler(BaseHTTPRequestHandler):
             self._json(500, {"error": "LLM returned invalid JSON", "raw": raw})
         except Exception as e:
             self._json(500, {"error": str(e)})
+
+    def _handle_dispatch(self) -> None:
+        global _pending_dispatch
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._json(400, {"error": "invalid JSON body"})
+            return
+        wo = str(body.get("wo", "")).strip()
+        backend = str(body.get("backend", "claude")).strip()
+        if not wo:
+            self._json(400, {"error": "wo is required"})
+            return
+        with _dispatch_lock:
+            _pending_dispatch = {"wo": wo, "backend": backend}
+        _wake_event.set()
+        print(f"[draft-server] dispatch wake: {wo} → {backend}", flush=True)
+        self._json(200, {"ok": True, "wo": wo, "backend": backend})
 
     def _handle_chat(self) -> None:
         try:

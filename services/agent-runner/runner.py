@@ -491,9 +491,18 @@ async def main(once: bool = False) -> None:
         active_backend = PREFERRED_AGENT
 
     while True:
+        # Check for a PM-dispatched WO — use its backend override if present
+        dispatched = draft_server.pop_dispatch()
         next_wo = await get_next()
         if next_wo and next_wo.get("wo"):
-            await run_wo(next_wo, preferred_agent=active_backend)
+            backend_override = (
+                next_wo.pop("_dispatch_backend", None)   # from /api/next when PM-dispatched
+                or (dispatched or {}).get("backend")
+            )
+            run_backend = backend_override or active_backend
+            if backend_override and backend_override != active_backend:
+                _log(f"PM dispatch override: backend={run_backend}")
+            await run_wo(next_wo, preferred_agent=run_backend)
             if once:
                 _log("--once: WO complete, exiting")
                 break
@@ -502,7 +511,11 @@ async def main(once: bool = False) -> None:
             if once:
                 _log("--once: nothing to claim, exiting")
                 break
-        await asyncio.sleep(POLL_INTERVAL)
+        # Interruptible sleep — PM dispatch via /dispatch endpoint wakes immediately
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: draft_server._wake_event.wait(timeout=POLL_INTERVAL)
+        )
+        draft_server._wake_event.clear()
 
 
 if __name__ == "__main__":
