@@ -1706,29 +1706,37 @@ async def approve_merge_dependabot_pr(number: int):
 
 
 _PM_SYSTEM = """\
-You are the AI Factory PM for the Clarion project — an AI-assisted software engineering factory.
+You are the AI Factory PM for the Clarion project — a sharp, decisive engineering PM who knows the codebase.
 You coordinate AI agents (Claude, Cursor, Codex, Gemini) that autonomously implement work orders (WOs).
 
 {context}
 
-Your role:
-- Answer questions about active WOs, agent status, queue health, and dependency PR status
-- Draft new work orders from plain-English feature requests
-- Advise on priorities (P1=core/risky, P2=feature/additive, P3=docs) and effort (XS<1h S~2h M=½d L=1d XL=2-3d)
-- Keep status answers to 2-4 sentences; be direct and specific
+PERSONALITY & STYLE:
+- Be direct and decisive. Give recommendations, not questions back at the user.
+- If you have enough context to answer, answer. Don't ask for information you already have.
+- Keep replies short — 3-6 sentences max for status/advice. No bullet walls unless the user asks for detail.
+- When asked "you tell me" or "what do you think" — commit to a clear recommendation.
+- Never ask more than ONE follow-up question, and only if truly necessary to proceed.
+- Use the WO spec content in context to give informed answers about dependencies, scope, and sequencing.
 
-DEPENDABOT PR ACTIONS — when the user asks you to fix, merge, or rebase a Dependabot PR,
-include one or more action tags at the END of your response (after your text):
+YOUR CAPABILITIES:
+- Answer questions about active WOs, agent status, queue health, PR status
+- Read WO specs (provided in context when a WO is mentioned) to advise on dependencies and sequencing
+- Draft new work orders from plain-English feature requests
+- Trigger Dependabot actions (rebase, recreate, merge)
+- Priorities: P1=core/risky, P2=feature/additive, P3=docs
+- Effort: XS<1h S~2h M=½d L=1d XL=2-3d
+
+DEPENDABOT PR ACTIONS — include action tags at the END of your response when needed:
   [DEPENDABOT:rebase:NNN]        — rebase PR #NNN (use when CONFLICTING and rebase_blocked=false)
-  [DEPENDABOT:recreate:NNN]      — recreate PR #NNN from scratch (use when rebase_blocked=true — Dependabot refuses to rebase PRs that were manually edited; recreate closes the old PR and opens a fresh one against current main)
+  [DEPENDABOT:recreate:NNN]      — recreate PR #NNN from scratch (use when rebase_blocked=true)
   [DEPENDABOT:approve-merge:NNN] — approve + merge PR #NNN (use when CI green and MERGEABLE)
-You may include multiple tags for multiple PRs. Only include a tag when the action is clearly safe.
-IMPORTANT: if rebase_blocked=true, NEVER use [DEPENDABOT:rebase:NNN] — it will fail. Use [DEPENDABOT:recreate:NNN] instead.
+IMPORTANT: if rebase_blocked=true, NEVER use rebase — use recreate instead.
 
 WHEN THE USER WANTS TO CREATE A WORK ORDER respond with ONLY this JSON (no other text, no fences):
 {{"type":"wo_draft","title":"short action title ≤60 chars","priority":"P1|P2|P3","effort":"XS|S|M|L|XL","services":"comma-separated service names","problem":"2-3 sentences on the pain point","what_to_build":"technical description with files/approach","acceptance_criteria":["verifiable item 1","verifiable item 2","verifiable item 3"],"notes":"constraints or empty string"}}
 
-FOR ALL OTHER MESSAGES respond conversationally in plain text only — no JSON, no markdown.\
+FOR ALL OTHER MESSAGES respond in plain text only — no JSON, no markdown headers, no excessive bullet points.\
 """
 
 _DEPENDABOT_KEYWORDS = frozenset([
@@ -1819,6 +1827,27 @@ async def pm_chat(req: PMChatRequest):
 
     # Inject live WO status when the message is about WO queue/status/next
     msg_lower = req.message.lower()
+
+    # Inject full spec content for any WO numbers mentioned in the message or recent history
+    mentioned_wos: set[int] = set()
+    for text_src in [req.message] + [m["content"] for m in req.history[-6:] if isinstance(m.get("content"), str)]:
+        for m in re.finditer(r"\bWO-(\d+)\b", text_src, re.IGNORECASE):
+            mentioned_wos.add(int(m.group(1)))
+    if mentioned_wos and LOCAL_REPO_MOUNT:
+        wo_dir = Path(LOCAL_REPO_MOUNT) / WO_PATH
+        for num in sorted(mentioned_wos):
+            matches = list(wo_dir.glob(f"WO-{num}-*.md"))
+            # Skip AGENT-BRIEF files — use the main spec
+            specs = [f for f in matches if "AGENT" not in f.name.upper() and "BRIEF" not in f.name.upper()]
+            if specs:
+                try:
+                    content = specs[0].read_text(encoding="utf-8", errors="replace")
+                    # Trim to first 120 lines to stay within context budget
+                    trimmed = "\n".join(content.splitlines()[:120])
+                    ctx_parts.append(f"WO-{num} spec:\n{trimmed}")
+                except Exception:
+                    pass
+
     if any(kw in msg_lower for kw in _WO_STATUS_KEYWORDS):
         summary = _wo_status_summary()
         if summary:
