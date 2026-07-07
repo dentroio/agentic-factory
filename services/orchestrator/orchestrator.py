@@ -1664,6 +1664,56 @@ _DEPENDABOT_KEYWORDS = frozenset([
     "upgrade", "package update", "rebase", "conflicting pr",
 ])
 
+_WO_STATUS_KEYWORDS = frozenset([
+    "wo", "work order", "work orders", "queue", "queued", "next",
+    "open", "pending", "ready", "planned", "in progress", "closed",
+    "what's next", "whats next", "what is next", "status",
+])
+
+
+def _wo_status_summary() -> str:
+    """Build a live WO status summary from local spec files. Fast — reads filesystem only."""
+    if not LOCAL_REPO_MOUNT:
+        return ""
+    specs = _read_local_wo_specs(LOCAL_REPO_MOUNT, WO_PATH, GITHUB_REPO)
+    if not specs:
+        return ""
+
+    buckets: dict[str, list[str]] = {
+        "in_progress": [], "ready": [], "open": [], "planned": [],
+        "deferred": [], "done": [],
+    }
+
+    def _bucket(raw: str) -> str:
+        s = raw.lower()
+        if any(x in s for x in ("in progress", "in_progress", "active", "claimed")):
+            return "in_progress"
+        if "ready" in s:
+            return "ready"
+        if any(x in s for x in ("open", "partial")):
+            return "open"
+        if "planned" in s:
+            return "planned"
+        if any(x in s for x in ("defer", "deferred", "⏸")):
+            return "deferred"
+        return "done"
+
+    for num in sorted(specs):
+        w = specs[num]
+        b = _bucket(w.get("status", ""))
+        label = f"WO-{num}: {w.get('title', '')[:55]} [{w.get('priority','?')}]"
+        buckets[b].append(label)
+
+    lines = []
+    for key, label in [("in_progress", "In Progress"), ("ready", "Ready"),
+                        ("open", "Open / Partial"), ("planned", "Planned")]:
+        if buckets[key]:
+            lines.append(f"{label} ({len(buckets[key])}):")
+            lines.extend(f"  {e}" for e in buckets[key])
+    lines.append(f"Done: {len(buckets['done'])} WOs")
+    lines.append(f"Deferred: {len(buckets['deferred'])} WOs")
+    return "\n".join(lines)
+
 
 @app.post("/api/pm/chat")
 async def pm_chat(req: PMChatRequest):
@@ -1690,8 +1740,22 @@ async def pm_chat(req: PMChatRequest):
     except Exception:
         pass
 
-    # Inject Dependabot PR context when message is about deps/PRs
+    # Inject live WO status when the message is about WO queue/status/next
     msg_lower = req.message.lower()
+    if any(kw in msg_lower for kw in _WO_STATUS_KEYWORDS):
+        summary = _wo_status_summary()
+        if summary:
+            ctx_parts.append("Current WO status (live from spec files):\n" + summary)
+        elif _plan_state:
+            queue = _plan_state.get("queue", [])
+            pending = [w for w in queue if w.get("status") not in ("done", "deferred")]
+            if pending:
+                lines = [f"  {w.get('wo','?')}: {w.get('title','')[:55]} [{w.get('priority','?')}] — {w.get('status','?')}"
+                         for w in pending[:20]]
+                ctx_parts.append("Queued WOs (from PLAN.json):\n" + "\n".join(lines))
+            else:
+                ctx_parts.append("PLAN.json queue: all registered WOs are done. Local spec files not accessible.")
+
     if any(kw in msg_lower for kw in _DEPENDABOT_KEYWORDS):
         try:
             async with httpx.AsyncClient(timeout=10) as _dc:
