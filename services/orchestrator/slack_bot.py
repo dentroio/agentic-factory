@@ -11,9 +11,12 @@ logger = logging.getLogger(__name__)
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8100")
 
-# In-memory conversation history keyed by Slack channel ID
+# In-memory conversation history keyed by thread_ts (or channel for DMs)
 _history: dict[str, list[dict]] = {}
 _MAX_HISTORY = 20
+
+# Threads the bot has already replied in — used to pick up follow-ups without @mention
+_active_threads: set[str] = set()
 
 # Active socket client — replaced on reconnect
 _socket_client = None
@@ -51,11 +54,20 @@ def _make_handler(bot_token: str):
             return
 
         channel = event.get("channel", "")
+        channel_type = event.get("channel_type", "")
         ts = event.get("ts", "")
         thread_ts = event.get("thread_ts") or ts
         text = _strip_mention(event.get("text", "")).strip()
 
         if not text:
+            return
+
+        # For plain channel messages (not @mentions, not DMs), only respond
+        # if this is a follow-up inside a thread the bot has already joined.
+        is_dm = channel_type == "im"
+        is_mention = event_type == "app_mention"
+        is_thread_followup = bool(event.get("thread_ts")) and thread_ts in _active_threads
+        if not (is_dm or is_mention or is_thread_followup):
             return
 
         web = WebClient(token=bot_token)
@@ -65,7 +77,9 @@ def _make_handler(bot_token: str):
         except Exception:
             pass
 
-        history = _history.get(channel, [])
+        # Key history by thread so context carries through the whole conversation
+        history_key = thread_ts
+        history = _history.get(history_key, [])
         reply = ":warning: Factory error — no response from orchestrator."
 
         try:
@@ -79,7 +93,7 @@ def _make_handler(bot_token: str):
 
             history.append({"role": "user", "content": text})
             history.append({"role": "assistant", "content": reply})
-            _history[channel] = history[-_MAX_HISTORY:]
+            _history[history_key] = history[-_MAX_HISTORY:]
         except Exception as e:
             logger.error("[slack_bot] pm/chat error: %s", e)
             reply = f":warning: Factory error: {e}"
@@ -96,6 +110,8 @@ def _make_handler(bot_token: str):
                 text=reply,
                 mrkdwn=True,
             )
+            # Mark this thread as active so follow-up messages (without @mention) are handled
+            _active_threads.add(thread_ts)
         except Exception as e:
             logger.error("[slack_bot] chat_postMessage error: %s", e)
 
