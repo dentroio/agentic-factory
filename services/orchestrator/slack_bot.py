@@ -67,10 +67,10 @@ _WO_LINE_RE = re.compile(
     re.MULTILINE,
 )
 
-# Detects "Want me to dispatch WO-NNN" / "Should I dispatch WO-NNN to cursor" patterns
+# Detects "Want me to [re-]dispatch WO-NNN / it" + optional backend
 _DISPATCH_OFFER_RE = re.compile(
-    r"(?:want me to|should i|shall i|ready to)\s+(?:dispatch|start|run|kick off)\s+"
-    r"(WO-\d+)(?:\s+(?:to|with|using|via)\s+([\w-]+))?",
+    r"(?:want me to|should i|shall i|ready to)\s+(?:re-?)?(?:dispatch|start|run|kick off)\s+"
+    r"(WO-\d+|it|this one|that one)(?:\s+(?:to|with|using|via)\s+([\w-]+))?",
     re.IGNORECASE,
 )
 
@@ -121,8 +121,17 @@ def _dispatch_offer_blocks(text: str) -> list[dict] | None:
     if not m:
         return None
 
-    wo_id = m.group(1).upper()
+    raw_wo = m.group(1)
     backend = (m.group(2) or "claude").lower()
+
+    # Resolve pronouns — scan the full reply for the most recent WO-NNN mention
+    if raw_wo.lower() in ("it", "this one", "that one"):
+        wo_nums = re.findall(r"\bWO-(\d+)\b", text, re.IGNORECASE)
+        if not wo_nums:
+            return None
+        wo_id = f"WO-{wo_nums[-1]}"
+    else:
+        wo_id = raw_wo.upper()
 
     blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": text}},
