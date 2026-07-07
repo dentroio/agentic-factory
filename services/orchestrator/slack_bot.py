@@ -110,9 +110,12 @@ def _make_handler(bot_token: str):
             msg_kwargs: dict = {"channel": channel, "text": reply, "mrkdwn": True}
             if thread_ts:
                 msg_kwargs["thread_ts"] = thread_ts
-            web.chat_postMessage(**msg_kwargs)
-            # Mark this message as active so follow-up replies (without @mention) are handled
+            resp = web.chat_postMessage(**msg_kwargs)
+            # Track both the user's message ts AND the bot's reply ts.
+            # Follow-ups may thread off either one, so we need both.
             _active_threads.add(ts)
+            if resp and resp.get("ts"):
+                _active_threads.add(resp["ts"])
         except Exception as e:
             logger.error("[slack_bot] chat_postMessage error: %s", e)
 
