@@ -67,10 +67,10 @@ def _make_handler(bot_token: str):
         # For plain channel messages (not @mentions, not DMs), only respond
         # if this is a follow-up inside a thread the bot has already joined.
         is_dm = channel_type == "im"
-        is_mention = event_type == "app_mention"
+        is_channel = channel_type in ("channel", "group") or event_type == "app_mention"
         # A follow-up is any reply in a thread the bot has already replied to
         is_thread_followup = bool(event.get("thread_ts")) and event.get("thread_ts") in _active_threads
-        if not (is_dm or is_mention or is_thread_followup):
+        if not (is_dm or is_channel or is_thread_followup):
             return
 
         web = WebClient(token=bot_token)
