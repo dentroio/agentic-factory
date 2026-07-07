@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 import thread as thread_store
 from github_dispatch import trigger_codex_workflow
-from slack_bot import start_slack_bot
+from slack_bot import start_slack_bot, stop_slack_bot, is_connected as slack_is_connected
 from notifications import (
     notify_validation_needed,
     notify_wo_complete,
@@ -189,7 +189,7 @@ async def lifespan(app: FastAPI):
         # Fire first poll in background — store ref so it isn't GC'd
         app.state.initial_poll = asyncio.create_task(poll())
 
-    app.state.slack_bot = start_slack_bot()
+    start_slack_bot(secrets=_load_secrets())
 
     yield
 
@@ -515,6 +515,19 @@ async def notifications_test():
     if not sent:
         raise HTTPException(status_code=422, detail="No notification channel configured — set NTFY_TOPIC or Slack Webhook in Settings → Authentication")
     return {"ok": True}
+
+
+@app.get("/api/slack/status")
+async def slack_status():
+    """Return whether the Slack bot is currently connected."""
+    return {"connected": slack_is_connected()}
+
+
+@app.post("/api/slack/reconnect")
+async def slack_reconnect():
+    """Reconnect the Slack bot using the current secrets store."""
+    started = start_slack_bot(secrets=_load_secrets())
+    return {"ok": True, "connected": started}
 
 
 # ── Thread API ────────────────────────────────────────────────────────────────

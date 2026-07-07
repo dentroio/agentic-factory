@@ -1757,6 +1757,28 @@ async def api_factory_notifications_test():
         return JSONResponse(content={"error": str(e)}, status_code=503)
 
 
+@app.get("/api/factory/slack/status")
+async def api_factory_slack_status():
+    """Proxy Slack bot connection status from orchestrator."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/slack/status")
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse(content={"connected": False, "error": str(e)}, status_code=503)
+
+
+@app.post("/api/factory/slack/reconnect")
+async def api_factory_slack_reconnect():
+    """Trigger Slack bot reconnect via orchestrator."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/slack/reconnect")
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse(content={"ok": False, "error": str(e)}, status_code=503)
+
+
 @app.get("/api/factory/dependabot/prs")
 async def api_factory_dependabot_prs():
     """Proxy Dependabot PR list from orchestrator."""

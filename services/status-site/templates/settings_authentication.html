@@ -201,7 +201,16 @@
         </div>
 
         <div class="border-t border-slate-800/40 pt-4">
-          <p class="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-3">Two-Way Bot (Socket Mode)</p>
+          <div class="flex items-center justify-between mb-3">
+            <p class="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Two-Way Bot (Socket Mode)</p>
+            <div class="flex items-center gap-2">
+              <span id="slack-bot-status" class="text-[10px] font-mono text-slate-600">checking…</span>
+              <button type="button" id="slack-connect-btn" onclick="connectSlackBot()"
+                class="px-3 py-1 text-[10px] font-bold rounded bg-emerald-700 hover:bg-emerald-600 text-white transition-colors">
+                Connect
+              </button>
+            </div>
+          </div>
 
           <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">
             Bot Token <span class="font-sans normal-case text-slate-600">(xoxb-…)</span>
@@ -227,8 +236,8 @@
             placeholder="xapp-…  (leave blank to keep current)"
             class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
           <p class="text-[10px] text-slate-600 mt-1">
+            Save tokens then click <strong class="text-slate-500">Connect</strong> — no container restart needed.
             DM the bot or @mention it in a channel to chat with the factory PM.
-            Requires Socket Mode enabled on your Slack App with <code class="text-slate-500">connections:write</code> scope.
           </p>
         </div>
       </div>
@@ -310,6 +319,58 @@ async function testNtfy() {
   btn.disabled = false;
   setTimeout(() => { status.textContent = ''; }, 5000);
 }
+
+async function refreshSlackStatus() {
+  const el = document.getElementById('slack-bot-status');
+  const btn = document.getElementById('slack-connect-btn');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/factory/slack/status');
+    const d = await r.json();
+    if (d.connected) {
+      el.textContent = '● connected';
+      el.className = 'text-[10px] font-mono text-emerald-400';
+      btn.textContent = 'Reconnect';
+    } else {
+      el.textContent = '○ disconnected';
+      el.className = 'text-[10px] font-mono text-slate-500';
+      btn.textContent = 'Connect';
+    }
+  } catch (e) {
+    el.textContent = 'unreachable';
+    el.className = 'text-[10px] font-mono text-rose-500';
+  }
+}
+
+async function connectSlackBot() {
+  const btn = document.getElementById('slack-connect-btn');
+  const el = document.getElementById('slack-bot-status');
+  btn.disabled = true;
+  btn.textContent = 'connecting…';
+  el.textContent = 'connecting…';
+  el.className = 'text-[10px] font-mono text-slate-400';
+  try {
+    const r = await fetch('/api/factory/slack/reconnect', { method: 'POST' });
+    const d = await r.json();
+    if (d.connected) {
+      el.textContent = '● connected';
+      el.className = 'text-[10px] font-mono text-emerald-400';
+      btn.textContent = 'Reconnect';
+    } else {
+      el.textContent = '○ tokens not set — save first';
+      el.className = 'text-[10px] font-mono text-amber-400';
+      btn.textContent = 'Connect';
+    }
+  } catch (e) {
+    el.textContent = 'error';
+    el.className = 'text-[10px] font-mono text-rose-400';
+    btn.textContent = 'Connect';
+  }
+  btn.disabled = false;
+}
+
+// Check bot status on page load
+refreshSlackStatus();
 </script>
 
 {% endblock %}
