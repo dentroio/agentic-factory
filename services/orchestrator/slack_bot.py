@@ -56,7 +56,9 @@ def _make_handler(bot_token: str):
         channel = event.get("channel", "")
         channel_type = event.get("channel_type", "")
         ts = event.get("ts", "")
-        thread_ts = event.get("thread_ts") or ts
+        # Only thread the reply if the message is already inside a thread.
+        # Top-level @mentions get a direct channel reply so users don't have to open a thread.
+        thread_ts = event.get("thread_ts") or (ts if channel_type == "im" else None)
         text = _strip_mention(event.get("text", "")).strip()
 
         if not text:
@@ -66,7 +68,8 @@ def _make_handler(bot_token: str):
         # if this is a follow-up inside a thread the bot has already joined.
         is_dm = channel_type == "im"
         is_mention = event_type == "app_mention"
-        is_thread_followup = bool(event.get("thread_ts")) and thread_ts in _active_threads
+        # A follow-up is any reply in a thread the bot has already replied to
+        is_thread_followup = bool(event.get("thread_ts")) and event.get("thread_ts") in _active_threads
         if not (is_dm or is_mention or is_thread_followup):
             return
 
@@ -77,8 +80,8 @@ def _make_handler(bot_token: str):
         except Exception:
             pass
 
-        # Key history by thread so context carries through the whole conversation
-        history_key = thread_ts
+        # Key history by thread_ts (or ts for top-level messages) so context carries through
+        history_key = thread_ts or ts
         history = _history.get(history_key, [])
         reply = ":warning: Factory error — no response from orchestrator."
 
@@ -104,14 +107,12 @@ def _make_handler(bot_token: str):
                 pass
 
         try:
-            web.chat_postMessage(
-                channel=channel,
-                thread_ts=thread_ts,
-                text=reply,
-                mrkdwn=True,
-            )
-            # Mark this thread as active so follow-up messages (without @mention) are handled
-            _active_threads.add(thread_ts)
+            msg_kwargs: dict = {"channel": channel, "text": reply, "mrkdwn": True}
+            if thread_ts:
+                msg_kwargs["thread_ts"] = thread_ts
+            web.chat_postMessage(**msg_kwargs)
+            # Mark this message as active so follow-up replies (without @mention) are handled
+            _active_threads.add(ts)
         except Exception as e:
             logger.error("[slack_bot] chat_postMessage error: %s", e)
 
