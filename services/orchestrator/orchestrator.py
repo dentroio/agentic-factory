@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import re
+import sqlite3
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -62,6 +63,7 @@ OUTPUT_PATH = DATA_DIR / "orchestrator.json"
 DISPATCH_STATE_PATH = DATA_DIR / "dispatch_state.json"
 VALIDATIONS_PATH = DATA_DIR / "pending_validations.json"
 WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
+DB_PATH = DATA_DIR / "factory.db"
 
 _last_summary_day: int = -1
 
@@ -91,9 +93,17 @@ _log_subscribers: list[asyncio.Queue] = []  # one Queue per active SSE client
 
 def _load_state() -> None:
     global _dispatch_state, _validations, _held_wos, _factory_paused
-    if DISPATCH_STATE_PATH.exists():
+    _init_db()
+    # Load dispatch state: SQLite primary, JSON fallback (migration path)
+    db_runs = _db_load_all_runs()
+    if db_runs:
+        _dispatch_state = db_runs
+        print(f"[orchestrator] loaded {len(db_runs)} dispatch entries from SQLite")
+    elif DISPATCH_STATE_PATH.exists():
         try:
             _dispatch_state = json.loads(DISPATCH_STATE_PATH.read_text())
+            _db_sync_dispatch()
+            print(f"[orchestrator] migrated {len(_dispatch_state)} dispatch entries JSON → SQLite")
         except Exception:
             _dispatch_state = {}
     if VALIDATIONS_PATH.exists():
@@ -153,7 +163,12 @@ def _pm_memory_summary() -> str:
 
 
 def _save_dispatch() -> None:
-    DISPATCH_STATE_PATH.write_text(json.dumps(_dispatch_state, indent=2))
+    # JSON backup for other processes that may read the volume directly
+    try:
+        DISPATCH_STATE_PATH.write_text(json.dumps(_dispatch_state, indent=2))
+    except Exception as e:
+        print(f"[orchestrator] dispatch JSON backup failed: {e}")
+    _db_sync_dispatch()
 
 
 def _save_held() -> None:
@@ -166,6 +181,99 @@ def _save_validations() -> None:
 
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+# ── SQLite persistence ────────────────────────────────────────────────────────
+
+def _init_db() -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS runs (
+              wo TEXT PRIMARY KEY,
+              slug TEXT DEFAULT '',
+              agent TEXT DEFAULT '',
+              backend TEXT DEFAULT '',
+              workstation TEXT DEFAULT '',
+              claimed_at TEXT,
+              status TEXT DEFAULT 'claimed',
+              step TEXT DEFAULT '',
+              last_seen TEXT,
+              completed_at TEXT,
+              pr_url TEXT DEFAULT '',
+              pr_number INTEGER
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS run_steps (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              wo TEXT NOT NULL,
+              ts TEXT NOT NULL,
+              status TEXT NOT NULL,
+              step TEXT DEFAULT '',
+              agent TEXT DEFAULT ''
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_run_steps_wo ON run_steps(wo)")
+
+
+def _db_load_all_runs() -> dict[str, dict]:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM runs").fetchall()
+            return {row["wo"]: dict(row) for row in rows}
+    except Exception:
+        return {}
+
+
+def _db_sync_dispatch() -> None:
+    """Sync the in-memory _dispatch_state dict to SQLite — called from _save_dispatch()."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            existing = {row[0] for row in conn.execute("SELECT wo FROM runs").fetchall()}
+            for wo_id in existing - set(_dispatch_state.keys()):
+                conn.execute("DELETE FROM runs WHERE wo = ?", (wo_id,))
+            for wo_id, record in _dispatch_state.items():
+                conn.execute("""
+                    INSERT INTO runs
+                      (wo, slug, agent, backend, workstation, claimed_at, status,
+                       step, last_seen, completed_at, pr_url, pr_number)
+                    VALUES
+                      (:wo, :slug, :agent, :backend, :workstation, :claimed_at, :status,
+                       :step, :last_seen, :completed_at, :pr_url, :pr_number)
+                    ON CONFLICT(wo) DO UPDATE SET
+                      slug=excluded.slug, agent=excluded.agent, backend=excluded.backend,
+                      workstation=excluded.workstation, claimed_at=excluded.claimed_at,
+                      status=excluded.status, step=excluded.step,
+                      last_seen=excluded.last_seen, completed_at=excluded.completed_at,
+                      pr_url=excluded.pr_url, pr_number=excluded.pr_number
+                """, {
+                    "wo": wo_id,
+                    "slug": record.get("slug", ""),
+                    "agent": record.get("agent", ""),
+                    "backend": record.get("backend", ""),
+                    "workstation": record.get("workstation", ""),
+                    "claimed_at": record.get("claimed_at"),
+                    "status": record.get("status", "claimed"),
+                    "step": record.get("step", ""),
+                    "last_seen": record.get("last_seen"),
+                    "completed_at": record.get("completed_at"),
+                    "pr_url": record.get("pr_url", ""),
+                    "pr_number": record.get("pr_number"),
+                })
+    except Exception as e:
+        print(f"[db] sync_dispatch failed: {e}")
+
+
+def _db_append_step(wo_id: str, status: str, step: str = "", agent: str = "") -> None:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO run_steps (wo, ts, status, step, agent) VALUES (?, ?, ?, ?, ?)",
+                (wo_id, _utcnow(), status, step, agent),
+            )
+    except Exception as e:
+        print(f"[db] append_step failed for {wo_id}: {e}")
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -181,6 +289,8 @@ class ClaimRequest(BaseModel):
 class CompleteRequest(BaseModel):
     wo: str
     agent: str = ""
+    pr_url: str = ""
+    pr_number: int | None = None
 
 
 class ValidateRequest(BaseModel):
@@ -415,8 +525,10 @@ async def claim_wo(req: ClaimRequest):
         "workstation": req.workstation,
         "claimed_at": _utcnow(),
         "status": "claimed",
+        "pr_url": "",
     }
     _save_dispatch()
+    _db_append_step(wo_id, "claimed", agent=req.agent)
     thread_store.append_message(wo_id, thread_store.system_message(
         f"{wo_id} claimed by **{req.agent}** on `{req.workstation or 'unknown'}`"
     ))
@@ -590,7 +702,12 @@ async def complete_wo(req: CompleteRequest):
         raise HTTPException(status_code=404, detail=f"{wo_id} not in dispatch state")
     _dispatch_state[wo_id]["status"] = "complete"
     _dispatch_state[wo_id]["completed_at"] = _utcnow()
+    if req.pr_url:
+        _dispatch_state[wo_id]["pr_url"] = req.pr_url
+    if req.pr_number:
+        _dispatch_state[wo_id]["pr_number"] = req.pr_number
     _save_dispatch()
+    _db_append_step(wo_id, "complete", step=f"merged by {req.agent}", agent=req.agent)
     # Remove from pending validations
     global _validations
     _validations = [v for v in _validations if v["wo"] != wo_id]
@@ -761,6 +878,22 @@ async def dispatch_codex(req: CodexDispatchRequest):
 async def get_dispatch():
     """Full dispatch state — which agent owns which WO."""
     return _dispatch_state
+
+
+@app.get("/api/runs/{wo_id}/history")
+async def get_run_history(wo_id: str):
+    """Step audit log for a single WO — who did what and when."""
+    wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM run_steps WHERE wo = ? ORDER BY ts",
+                (wo_id,),
+            ).fetchall()
+            return {"wo": wo_id, "steps": [dict(r) for r in rows]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Runner log stream (HTTP push from runner, SSE to browser) ─────────────────
@@ -1116,6 +1249,25 @@ async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient) -> int:
         return 0
 
 
+async def _fetch_recently_merged_wo_prs(client: httpx.AsyncClient) -> dict[int, str]:
+    """Return {wo_number: pr_html_url} for WO PRs merged in the last 14 days."""
+    from datetime import timedelta
+    since = (datetime.now(UTC) - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        prs = await _cached_get(client, f"/repos/{GITHUB_REPO}/pulls",
+                                 {"state": "closed", "per_page": 50, "sort": "updated", "direction": "desc"},
+                                 ttl=300)
+        result: dict[int, str] = {}
+        for p in prs:
+            if p.get("merged_at") and p["merged_at"] >= since:
+                m = re.search(r"WO-(\d+)", p.get("title", ""))
+                if m:
+                    result[int(m.group(1))] = p.get("html_url", "")
+        return result
+    except Exception:
+        return {}
+
+
 async def _fetch_plan(client: httpx.AsyncClient) -> dict | None:
     # Read PLAN.json from local filesystem — no API call
     if LOCAL_REPO_MOUNT:
@@ -1277,6 +1429,7 @@ async def poll() -> None:
         pr_wos_task = _fetch_open_pr_wos(client, GITHUB_REPO)
         merged_task = _fetch_merged_wo_count_this_week(client)
         plan_task = _fetch_plan(client)
+        merged_wo_prs_task = _fetch_recently_merged_wo_prs(client)
 
         # Secondary repo fetches (parallel)
         secondary_tasks = [
@@ -1290,6 +1443,7 @@ async def poll() -> None:
             pr_wos_task,
             merged_task,
             plan_task,
+            merged_wo_prs_task,
             *secondary_tasks,
         )
 
@@ -1298,6 +1452,7 @@ async def poll() -> None:
     pr_wos: set[int] = results[2]
     merged_this_week: int = results[3]
     plan_raw: dict | None = results[4]
+    merged_wo_prs: dict[int, str] = results[5]  # {wo_num: pr_html_url}
 
     # If GitHub returned no specs (rate-limited or network error), preserve the last-good
     # output so the queue doesn't go empty and running WOs keep their position.
@@ -1306,9 +1461,26 @@ async def poll() -> None:
         _orchestrator_output = {**_prev_output, "generated_at": now_str, "stale": True}
         return
 
+    # Auto-reconcile: merged PRs → complete stale dispatch entries
+    reconciled = 0
+    for wo_num, pr_url in merged_wo_prs.items():
+        wo_id = f"WO-{wo_num}"
+        entry = _dispatch_state.get(wo_id, {})
+        if entry and entry.get("status") not in ("complete", "rejected"):
+            entry["status"] = "complete"
+            entry["completed_at"] = _utcnow()
+            entry["step"] = "PR merged"
+            entry["pr_url"] = pr_url
+            _dispatch_state[wo_id] = entry
+            _db_append_step(wo_id, "complete", step="PR merged (auto-reconcile)")
+            reconciled += 1
+    if reconciled:
+        _save_dispatch()
+        print(f"[orchestrator] poll: auto-completed {reconciled} WO(s) from merged PRs")
+
     # Merge secondary specs (secondary repos contribute board visibility only)
     specs: dict[int, dict] = dict(primary_specs)
-    for sec_specs in results[5:]:
+    for sec_specs in results[6:]:
         specs.update(sec_specs)
 
     global _specs_cache
@@ -1870,6 +2042,11 @@ DISPATCH ACTION — emit at the END of your response when the user confirms they
   Only emit this when the user says "yes", "start it", "do it", "go ahead", or similar confirmation.
   Always tell the user which WO and backend you're dispatching before emitting the tag.
 
+WO PR MERGE ACTION — use for WO PRs (non-Dependabot) when CI is green and user asks to merge:
+  [PR:merge:NNN] — squash-merge PR #NNN directly (no approval step — avoids GitHub self-review 422)
+  Example: [PR:merge:308]
+  Use this for all WO PRs. NEVER use DEPENDABOT:approve-merge for WO PRs — it will 422.
+
 DEPENDABOT PR ACTIONS — include action tags at the END of your response when needed:
   [DEPENDABOT:rebase:NNN]        — rebase PR #NNN (use when CONFLICTING and rebase_blocked=false)
   [DEPENDABOT:recreate:NNN]      — recreate PR #NNN from scratch (use when rebase_blocked=true)
@@ -2181,6 +2358,55 @@ async def pm_chat(req: PMChatRequest):
 
     if action_results:
         clean_text = clean_text + "\n\n" + "\n".join(action_results)
+
+    # Parse and execute WO PR merge tags, e.g. [PR:merge:308]
+    # Does NOT attempt a GitHub review (which would 422 as self-review); squash-merges directly.
+    pr_merge_pattern = re.compile(r"\[PR:merge:(\d+)\]")
+    pr_merge_results: list[str] = []
+    for match in pr_merge_pattern.finditer(clean_text):
+        pr_num = int(match.group(1))
+        clean_text = clean_text.replace(match.group(0), "").strip()
+        try:
+            async with httpx.AsyncClient(timeout=15) as _ac:
+                mr = await _ac.put(
+                    f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/merge",
+                    headers=_headers(), json={"merge_method": "squash"},
+                )
+                if mr.status_code in (200, 201):
+                    pr_merge_results.append(f"✅ Merged PR #{pr_num} (squash)")
+                    # Auto-complete the owning WO dispatch entry
+                    try:
+                        async with httpx.AsyncClient(timeout=10) as _pc:
+                            pr_resp = await _pc.get(
+                                f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}",
+                                headers=_headers(),
+                            )
+                            if pr_resp.status_code == 200:
+                                pr_data = pr_resp.json()
+                                pr_html = pr_data.get("html_url", "")
+                                m_wo = re.search(r"WO-(\d+)", pr_data.get("title", ""))
+                                if m_wo:
+                                    wo_match = f"WO-{m_wo.group(1)}"
+                                    if wo_match in _dispatch_state and _dispatch_state[wo_match].get("status") not in ("complete", "rejected"):
+                                        _dispatch_state[wo_match]["status"] = "complete"
+                                        _dispatch_state[wo_match]["completed_at"] = _utcnow()
+                                        _dispatch_state[wo_match]["step"] = f"PR #{pr_num} merged via PM"
+                                        _dispatch_state[wo_match]["pr_url"] = pr_html
+                                        _dispatch_state[wo_match]["pr_number"] = pr_num
+                                        _save_dispatch()
+                                        _db_append_step(wo_match, "complete", step=f"PR #{pr_num} merged via PM")
+                                        print(f"[orchestrator] auto-completed {wo_match} after PM merged PR #{pr_num}")
+                    except Exception as ex:
+                        print(f"[orchestrator] auto-complete after merge PR #{pr_num} failed: {ex}")
+                elif mr.status_code == 405:
+                    pr_merge_results.append(f"⚠️ PR #{pr_num} not mergeable yet — CI may still be running")
+                else:
+                    pr_merge_results.append(f"⚠️ Merge PR #{pr_num} failed ({mr.status_code}: {mr.text[:120]})")
+        except Exception as exc:
+            pr_merge_results.append(f"⚠️ Merge PR #{pr_num} errored: {exc}")
+
+    if pr_merge_results:
+        clean_text = clean_text + "\n\n" + "\n".join(pr_merge_results)
 
     # Parse and execute DISPATCH action tags, e.g. [DISPATCH:WO-375:cursor]
     dispatch_pattern = re.compile(r"\[DISPATCH:(WO-\d+|\d+):([\w-]+)\]")

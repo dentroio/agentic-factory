@@ -358,16 +358,20 @@ def _apply_live_status(
             # Agent has this WO claimed locally (branch not yet on GitHub)
             entry = dispatch_map[num]
             agent_status = entry.get("status", "in_progress")
-            step = entry.get("step", "")
-            if agent_status == "awaiting_human":
-                spec.status = "⏳ Awaiting Review"
-            elif "gate failed" in step:
-                spec.status = f"❌ Gate Failed"
+            # Complete WOs don't override whatever plan/spec status was set above
+            if agent_status == "complete":
+                pass
             else:
-                spec.status = "🔄 In Progress"
-            # Prefer the backend field (actual AI, e.g. "cursor") over the
-            # runner identity (e.g. "claude-runner") for display purposes.
-            spec.agent_name = entry.get("backend") or entry.get("agent", "")
+                step = entry.get("step", "")
+                if agent_status == "awaiting_human":
+                    spec.status = "⏳ Awaiting Review"
+                elif "gate failed" in step:
+                    spec.status = "❌ Gate Failed"
+                else:
+                    spec.status = "🔄 In Progress"
+                # Prefer the backend field (actual AI, e.g. "cursor") over the
+                # runner identity (e.g. "claude-runner") for display purposes.
+                spec.agent_name = entry.get("backend") or entry.get("agent", "")
 
 
 def _board_columns(wos: dict[int, WOSpec]) -> dict[str, list[WOSpec]]:
