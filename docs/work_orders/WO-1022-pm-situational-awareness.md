@@ -3,7 +3,7 @@
 **Created:** 2026-07-09
 **Priority:** P2
 **Effort:** S
-**Status:** Open
+**Status:** ✅ Complete
 **Services:** orchestrator
 **Depends on:** WO-1021 (SQLite queue — provides clean DB query for open WOs)
 **Blocks:** WO-1023

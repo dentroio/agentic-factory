@@ -3,7 +3,7 @@
 **Created:** 2026-07-09
 **Priority:** P1
 **Effort:** M
-**Status:** Open
+**Status:** ✅ Complete
 **Services:** orchestrator, agent-runner
 **Depends on:** WO-1021 (SQLite queue), WO-1022 (PM situational awareness — DOC_MAP injection)
 

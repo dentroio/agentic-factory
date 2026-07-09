@@ -3,7 +3,7 @@
 **Created:** 2026-07-09
 **Priority:** P1
 **Effort:** M
-**Status:** Open
+**Status:** ✅ Complete
 **Services:** orchestrator, status-site
 **Depends on:** —
 **Blocks:** WO-1022, WO-1023
