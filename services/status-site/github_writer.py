@@ -133,30 +133,23 @@ async def next_wo_number(repo: str, wo_path: str, token: str) -> int:
 async def create_wo(
     wo_data: dict, token: str, repo: str, wo_path: str, plan_path: str
 ) -> dict:
-    """Create WO spec + update PLAN.json + open PR. Returns {pr_url, wo_number, branch}."""
+    """Commit WO spec + PLAN.json directly to main. Returns {url, wo_number}."""
     number = wo_data["number"]
     title = wo_data["title"]
     slug = _slugify(title)
     spec_path = f"{wo_path}/WO-{number}-{slug}.md"
-    branch = f"factory/wo-{number}-spec"
 
     spec_md = render_wo_template(wo_data)
 
     async with httpx.AsyncClient(timeout=25) as client:
-        ref = await _get(client, f"/repos/{repo}/git/ref/heads/main", token)
-        base_sha = ref["object"]["sha"]
-
-        await _post(client, f"/repos/{repo}/git/refs", token, {
-            "ref": f"refs/heads/{branch}",
-            "sha": base_sha,
-        })
-
+        # Commit spec file directly to main
         await _put(client, f"/repos/{repo}/contents/{spec_path}", token, {
             "message": f"docs(pm): WO-{number} — {title}",
             "content": base64.b64encode(spec_md.encode()).decode(),
-            "branch": branch,
+            "branch": "main",
         })
 
+        # Update PLAN.json directly on main
         plan_file = await _get(client, f"/repos/{repo}/contents/{plan_path}", token)
         plan = json.loads(base64.b64decode(plan_file["content"]).decode())  # type: ignore[arg-type]
 
@@ -178,22 +171,11 @@ async def create_wo(
             "message": f"docs(pm): add WO-{number} to PLAN.json queue",
             "content": base64.b64encode(json.dumps(plan, indent=2).encode()).decode(),
             "sha": plan_file["sha"],  # type: ignore[index]
-            "branch": branch,
+            "branch": "main",
         })
 
-        pr = await _post(client, f"/repos/{repo}/pulls", token, {
-            "title": f"docs(pm): WO-{number} — {title}",
-            "body": (
-                f"Created via AI Factory Plan Authoring UI.\n\n"
-                f"- `WO-{number}-{slug}.md` spec file added\n"
-                f"- PLAN.json queue entry added\n\n"
-                f"Review and merge to make this WO visible to the orchestrator."
-            ),
-            "head": branch,
-            "base": "main",
-        })
-
-        return {"pr_url": pr["html_url"], "wo_number": number, "branch": branch}
+        wo_url = f"https://github.com/{repo}/blob/main/{spec_path}"
+        return {"url": wo_url, "wo_number": number}
 
 
 async def read_wo_file(wo_id: str, token: str, repo: str, wo_path: str) -> tuple[str, str]:

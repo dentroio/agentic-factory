@@ -1473,8 +1473,8 @@ async def settings_plan_create_wo(request: Request):
 
     try:
         result = await gw.create_wo(wo_data, GITHUB_TOKEN, GITHUB_REPO, WO_PATH, PLAN_PATH)
-        pr_url = result.get("pr_url", "")
-        return RedirectResponse(url=f"/settings/plan?pr_url={pr_url}", status_code=303)
+        wo_url = result.get("url", "")
+        return RedirectResponse(url=f"/settings/plan?wo_url={wo_url}", status_code=303)
     except Exception as e:
         return RedirectResponse(url=f"/settings/plan/wos/new?error={str(e)[:120]}", status_code=303)
 
