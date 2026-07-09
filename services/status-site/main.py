@@ -1558,6 +1558,7 @@ async def delete_phase_proxy(phase_id: str):
         return JSONResponse(content=r.json() if r.content else {}, status_code=r.status_code)
 
 
+
 @app.get("/api/backends")
 async def api_backends():
     """Proxy to orchestrator /api/backends — tells the UI which agents are available."""

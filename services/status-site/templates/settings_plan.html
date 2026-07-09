@@ -82,6 +82,7 @@
     <div class="glass-panel overflow-hidden">
       <div class="px-5 py-3 border-b border-slate-800/40">
         <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Phases</span>
+        <div class="text-[10px] text-slate-600 mt-0.5">Controls when WOs get picked up by agents. WOs in "now" are dispatched first; "backlog" comes later.</div>
       </div>
       <div class="divide-y divide-slate-800/20">
         {% for p in phases %}
@@ -114,6 +115,7 @@
     <div class="glass-panel overflow-hidden">
       <div class="px-5 py-3 border-b border-slate-800/40">
         <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Milestones</span>
+        <div class="text-[10px] text-slate-600 mt-0.5">Delivery gates. WOs tagged to a milestone must all complete before the milestone is declared done.</div>
       </div>
       <div class="divide-y divide-slate-800/20">
         {% for m in milestones %}

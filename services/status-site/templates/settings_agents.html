@@ -92,8 +92,30 @@
     <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
       <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Reviewer Assignments</span>
     </div>
-    <div class="px-5 py-5">
-      <p class="text-xs text-slate-400 mb-4">Each dimension runs a separate AI review pass before human validation is requested. Assign a backend to each reviewer role.</p>
+    <div class="px-5 py-5 space-y-5">
+      <p class="text-xs text-slate-400">Each dimension runs a separate AI review pass before human validation. Reviewers using the same LLM as the coding agent provide weaker guarantees — they may miss the same blind spots.</p>
+
+      {# Force cross-LLM toggle #}
+      {% set force_cross = cfg.get('force_cross_llm_review', true) %}
+      <div class="flex items-start gap-3 p-3.5 rounded-xl border {% if force_cross %}bg-violet-500/8 border-violet-500/20{% else %}bg-slate-900/40 border-slate-800/60{% endif %}">
+        <div class="flex-1">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" name="force_cross_llm_review" value="1"
+                   {% if force_cross %}checked{% endif %}
+                   id="force-cross-toggle"
+                   onchange="document.getElementById('manual-reviewers').style.opacity = this.checked ? '0.35' : '1';
+                             document.getElementById('cross-llm-notice').style.display = this.checked ? 'block' : 'none';"
+                   class="w-4 h-4 rounded border-slate-700 bg-slate-950 text-violet-500 focus:ring-violet-500/30">
+            <span class="text-xs font-bold text-slate-200">Force cross-LLM review</span>
+          </label>
+          <p class="text-[10px] text-slate-400 mt-1 ml-6">Automatically assigns reviewers to backends <em>different</em> from the coding agent. When enabled, manual assignments below are used only as fallback if no alternative backend is available.</p>
+        </div>
+      </div>
+
+      <div id="cross-llm-notice" {% if not force_cross %}style="display:none"{% endif %}
+           class="text-[10px] text-violet-300 bg-violet-900/20 border border-violet-500/20 rounded-lg px-3 py-2">
+        Auto mode: reviewers are rotated across available backends that differ from the execution agent. Manual assignments below are ignored while this is enabled.
+      </div>
 
       {% set reviewer_cfg = cfg.get('reviewers', {}) %}
       {% set reviewer_roles = [
@@ -103,7 +125,9 @@
         ('performance', 'Performance', 'Flags N+1 queries, missing indexes, blocking calls, and memory issues'),
       ] %}
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div id="manual-reviewers" class="grid grid-cols-1 md:grid-cols-2 gap-4 transition-opacity"
+           style="{% if force_cross %}opacity:0.35{% endif %}">
+        <p class="col-span-full text-[10px] font-bold text-slate-500 uppercase tracking-wider">Manual assignments (used when force cross-LLM is off)</p>
         {% for role_key, role_label, role_desc in reviewer_roles %}
         <div>
           <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">{{ role_label }} Reviewer</label>
