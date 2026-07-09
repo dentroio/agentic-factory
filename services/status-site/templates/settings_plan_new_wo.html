@@ -88,6 +88,23 @@
         </div>
       </div>
 
+      {# Blocks Milestones #}
+      {% if milestones %}
+      <div>
+        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Gates Milestone</label>
+        <div class="flex flex-wrap gap-2">
+          {% for ms in milestones %}
+          <label class="flex items-center gap-1.5 cursor-pointer group">
+            <input type="checkbox" name="blocks_milestones" value="{{ ms.id }}"
+              class="w-3.5 h-3.5 rounded border-slate-600 bg-slate-900 text-indigo-500 focus:ring-indigo-500/50 cursor-pointer">
+            <span class="text-xs text-slate-400 group-hover:text-slate-200 transition-colors">{{ ms.label }}</span>
+          </label>
+          {% endfor %}
+        </div>
+        <p class="text-[10px] text-slate-600 mt-1">Check milestones this WO must complete before they can be declared</p>
+      </div>
+      {% endif %}
+
       {# Depends on #}
       <div>
         <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Depends On</label>

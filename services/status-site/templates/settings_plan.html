@@ -10,7 +10,7 @@
       <span class="text-slate-300">Plan</span>
     </div>
     <h1 class="text-xl font-display font-bold text-slate-100">Plan Authoring</h1>
-    <p class="text-xs text-slate-400 mt-1">Create work orders, phases, and milestones. Changes go to GitHub as PRs.</p>
+    <p class="text-xs text-slate-400 mt-1">Create work orders, phases, and milestones. Changes write directly to the local repo.</p>
   </div>
   <a href="/settings/plan/wos/new" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-2">
     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
@@ -85,9 +85,13 @@
       </div>
       <div class="divide-y divide-slate-800/20">
         {% for p in phases %}
-        <div class="px-4 py-2.5">
-          <div class="text-xs font-semibold text-slate-200">{{ p.label }}</div>
-          <div class="text-[10px] text-slate-500 font-mono">{{ p.id }} · {{ p.target_date or '—' }}</div>
+        <div class="px-4 py-2.5 flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <div class="text-xs font-semibold text-slate-200">{{ p.label }}</div>
+            <div class="text-[10px] text-slate-500 font-mono">{{ p.id }} · {{ p.target_date or '—' }}</div>
+          </div>
+          <button onclick="deletePlanItem('phases','{{ p.id }}',this)" title="Delete phase"
+            class="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-slate-700/40 text-slate-600 hover:text-rose-400 hover:border-rose-700/40 transition-colors">✕</button>
         </div>
         {% endfor %}
       </div>
@@ -113,9 +117,14 @@
       </div>
       <div class="divide-y divide-slate-800/20">
         {% for m in milestones %}
-        <div class="px-4 py-2.5">
-          <div class="text-xs font-semibold text-slate-200">{{ m.label }}</div>
-          <div class="text-[10px] text-slate-500 font-mono">{{ m.id }} · {{ m.target_date or '—' }}</div>
+        <div class="px-4 py-2.5 flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <div class="text-xs font-semibold text-slate-200">{{ m.label }}</div>
+            <div class="text-[10px] text-slate-500 font-mono">{{ m.id }} · {{ m.target_date or '—' }}</div>
+            {% if m.description %}<div class="text-[10px] text-slate-600 truncate">{{ m.description }}</div>{% endif %}
+          </div>
+          <button onclick="deletePlanItem('milestones','{{ m.id }}',this)" title="Delete milestone"
+            class="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-slate-700/40 text-slate-600 hover:text-rose-400 hover:border-rose-700/40 transition-colors">✕</button>
         </div>
         {% endfor %}
       </div>
@@ -137,4 +146,26 @@
   </div>
 </div>
 
+<script>
+async function deletePlanItem(type, id, btn) {
+  if (!confirm(`Delete ${type.slice(0,-1)} "${id}"? This cannot be undone.`)) return;
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {
+    const r = await fetch(`/api/${type}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (r.ok) {
+      btn.closest('[class*="px-4"]').remove();
+    } else {
+      const d = await r.json().catch(() => ({}));
+      alert(d.detail || `Delete failed (${r.status})`);
+      btn.disabled = false;
+      btn.textContent = '✕';
+    }
+  } catch(e) {
+    alert('Network error — try again');
+    btn.disabled = false;
+    btn.textContent = '✕';
+  }
+}
+</script>
 {% endblock %}

@@ -1358,6 +1358,7 @@ async def settings_plan_new_wo(request: Request, error: str = ""):
 
     plan = _load_plan_from_orchestrator() or {}
     phases = [{"id": p.get("id", ""), "label": p.get("label", p.get("id", ""))} for p in plan.get("phases", [])]
+    milestones = [{"id": m.get("id", ""), "label": m.get("label", m.get("id", ""))} for m in plan.get("milestones", [])]
 
     return templates.TemplateResponse(request=request, name="settings_plan_new_wo.html", context={
         "site_title": SITE_TITLE,
@@ -1368,6 +1369,7 @@ async def settings_plan_new_wo(request: Request, error: str = ""):
         "description": "",
         "existing_programs": existing_programs,
         "phases": phases,
+        "milestones": milestones,
     })
 
 
@@ -1421,6 +1423,7 @@ async def settings_plan_draft_wo(request: Request):
         existing_programs = sorted({s.program for s in wos.values() if s.program})
         plan = _load_plan_from_orchestrator() or {}
         phases = [{"id": p.get("id", ""), "label": p.get("label", p.get("id", ""))} for p in plan.get("phases", [])]
+        milestones = [{"id": m.get("id", ""), "label": m.get("label", m.get("id", ""))} for m in plan.get("milestones", [])]
         return templates.TemplateResponse(request=request, name="settings_plan_new_wo.html", context={
             "site_title": SITE_TITLE,
             "github_repo": GITHUB_REPO,
@@ -1430,6 +1433,7 @@ async def settings_plan_draft_wo(request: Request):
             "description": description,
             "existing_programs": existing_programs,
             "phases": phases,
+            "milestones": milestones,
         })
 
     ac_text = "\n".join(draft.get("acceptance_criteria", []))
@@ -1467,8 +1471,9 @@ async def settings_plan_create_wo(request: Request):
     depends_raw = str(form.get("depends_on", "")).strip()
     depends_on = [d.strip() for d in depends_raw.split(",") if d.strip()]
 
+    blocks_multi = form.getlist("blocks_milestones") if hasattr(form, "getlist") else []
     blocks_raw = str(form.get("blocks_milestones", "")).strip()
-    blocks = [b.strip() for b in blocks_raw.split(",") if b.strip()]
+    blocks = [b.strip() for b in blocks_multi if b.strip()] or [b.strip() for b in blocks_raw.split(",") if b.strip()]
 
     wo_data = {
         "number": number,
@@ -1535,6 +1540,22 @@ async def settings_plan_create_milestone(request: Request):
         return RedirectResponse(url="/settings/plan?created=milestone", status_code=303)
     except Exception as e:
         return RedirectResponse(url=f"/settings/plan?error={str(e)[:120]}", status_code=303)
+
+
+@app.delete("/api/milestones/{milestone_id}")
+async def delete_milestone_proxy(milestone_id: str):
+    """Proxy DELETE to orchestrator."""
+    async with httpx.AsyncClient(timeout=5) as client:
+        r = await client.delete(f"{ORCHESTRATOR_URL}/api/milestones/{milestone_id}")
+        return JSONResponse(content=r.json() if r.content else {}, status_code=r.status_code)
+
+
+@app.delete("/api/phases/{phase_id}")
+async def delete_phase_proxy(phase_id: str):
+    """Proxy DELETE to orchestrator."""
+    async with httpx.AsyncClient(timeout=5) as client:
+        r = await client.delete(f"{ORCHESTRATOR_URL}/api/phases/{phase_id}")
+        return JSONResponse(content=r.json() if r.content else {}, status_code=r.status_code)
 
 
 @app.get("/api/backends")
