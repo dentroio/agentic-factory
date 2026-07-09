@@ -1744,7 +1744,9 @@ async def api_factory_create_wo(request: Request):
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return JSONResponse(content={"error": "GitHub not configured"}, status_code=503)
     try:
-        result = await gw.create_wo(body, GITHUB_TOKEN, GITHUB_REPO, WO_PATH)
+        if "number" not in body:
+            body["number"] = await gw.next_wo_number(GITHUB_REPO, WO_PATH, GITHUB_TOKEN)
+        result = await gw.create_wo(body, GITHUB_TOKEN, GITHUB_REPO, WO_PATH, PLAN_PATH)
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
