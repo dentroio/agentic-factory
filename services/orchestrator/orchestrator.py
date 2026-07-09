@@ -1012,7 +1012,8 @@ def _parse_depends_on(content: str) -> list[int]:
 def _is_done(status: str) -> bool:
     # Match on status PREFIX only — substring matching causes "conflict advisor v1 done"
     # or "deferred to WO-226" to incorrectly mark a WO as done/deferred.
-    s = status.strip()
+    # Strip markdown bold markers (**) that some legacy spec files use as a prefix.
+    s = status.strip().lstrip("*").strip()
     sl = s.lower()
     return (
         s.startswith("✅") or s.startswith("⏸")

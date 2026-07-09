@@ -31,9 +31,8 @@ class WOSpec:
     @property
     def board_column(self) -> str:
         # Match on what the status STARTS WITH, not substrings anywhere in the text.
-        # This prevents inline mentions like "conflict advisor v1 done" or
-        # "deferred to WO-226" from hijacking the column assignment.
-        s = self.status.strip()
+        # Strip markdown bold markers (**) that some legacy spec files use as a prefix.
+        s = self.status.strip().lstrip("*").strip()
         sl = s.lower()
         if s.startswith("✅") or sl.startswith(("done", "complete", "completed")):
             return "done"
