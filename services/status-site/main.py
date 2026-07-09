@@ -532,6 +532,15 @@ async def pm_dashboard(request: Request):
         total = prog["total"]
         prog["pct"] = round(prog["done"] / total * 100) if total else 0
 
+    # Per-program WO lists grouped by board column for expanded program cards
+    program_wos: dict[str, dict] = defaultdict(lambda: {"open": [], "in_progress": [], "review": [], "blocked": [], "done": [], "deferred": []})
+    for spec in wos.values():
+        prog = spec.program or "Standalone"
+        program_wos[prog][spec.board_column].append(spec)
+    for prog_data in program_wos.values():
+        for col_list in prog_data.values():
+            col_list.sort(key=lambda s: s.number)
+
     # Velocity: WOs merged per week over last 8 weeks
     velocity: list[dict] = []
     now = datetime.now(UTC)
@@ -629,6 +638,7 @@ async def pm_dashboard(request: Request):
         "total_wos": len(wos),
         "done_count": len(columns.get("done", [])),
         "programs": dict(sorted(programs.items())),
+        "program_wos": dict(sorted(program_wos.items())),
         "velocity": velocity,
         "velocity_summary": velocity_summary,
         "blocked_alerts": blocked_alerts,
@@ -716,49 +726,76 @@ async def ci_dashboard(request: Request):
     })
 
 
-def _compute_plan_stats(plan_data: dict) -> dict:
+def _compute_plan_stats(plan_data: dict, wos_spec: dict | None = None) -> dict:
     """
-    Pre-compute milestone and phase progress stats server-side so the
-    template doesn't need Jinja2 tests that aren't available (e.g. 'containing').
-    Uses all_wos (full PLAN.json queue including done/in_progress) for accurate %.
-    Returns an augmented plan_data copy with milestone_stats and phase_stats.
+    Pre-compute milestone and phase progress stats server-side.
+    Uses spec-file board_column (via wos_spec) as the authoritative live status.
+    Falls back to checking whether the WO appears in the open queue.
+    Returns an augmented plan_data copy with milestone_stats, milestone_wos,
+    phase_stats, and phase_wos.
     """
     all_wos = plan_data.get("all_wos") or plan_data.get("queue", [])
+    open_queue_ids = {w["wo"] for w in plan_data.get("queue", [])}
     milestones = plan_data.get("milestones", [])
     phases = plan_data.get("phases", [])
 
-    # Milestone stats: count WOs that block each milestone
+    def _live_status(wo_entry: dict) -> str:
+        """Return authoritative board_column for a queue item."""
+        if wos_spec:
+            try:
+                num = int(re.sub(r"[^0-9]", "", wo_entry.get("wo", "")))
+                spec = wos_spec.get(num)
+                if spec:
+                    return spec.board_column
+            except (ValueError, TypeError):
+                pass
+        # If not in the open/active queue, treat as done
+        wo_id = wo_entry.get("wo", "")
+        return "open" if wo_id in open_queue_ids else "done"
+
+    # Milestone stats + per-milestone WO lists
     milestone_stats: dict[str, dict] = {}
+    milestone_wos: dict[str, dict] = {}
     for ms in milestones:
         ms_id = ms["id"]
-        ms_wos = [w for w in all_wos if ms_id in w.get("blocks_milestones", [])]
-        ms_done = [w for w in ms_wos if w.get("status", "").lower() in {"done", "complete"}]
-        total = len(ms_wos)
-        pct = round(len(ms_done) / total * 100) if total else 0
-        milestone_stats[ms_id] = {
-            "total": total,
-            "done": len(ms_done),
-            "pct": pct,
-        }
+        ms_all = [w for w in all_wos if ms_id in (w.get("blocks_milestones") or [])]
+        done_list, open_list = [], []
+        for w in ms_all:
+            status = _live_status(w)
+            enriched = {**w, "_live_status": status}
+            if status == "done":
+                done_list.append(enriched)
+            else:
+                open_list.append(enriched)
+        total = len(ms_all)
+        pct = round(len(done_list) / total * 100) if total else 0
+        milestone_stats[ms_id] = {"total": total, "done": len(done_list), "pct": pct}
+        milestone_wos[ms_id] = {"done": done_list, "open": open_list}
 
-    # Phase stats: count WOs per phase
+    # Phase stats + per-phase WO lists
     phase_stats: dict[str, dict] = {}
+    phase_wos: dict[str, dict] = {}
     for phase in phases:
         ph_id = phase["id"]
-        ph_wos = [w for w in all_wos if w.get("phase") == ph_id]
-        ph_done = [w for w in ph_wos if w.get("status", "").lower() in {"done", "complete"}]
-        total = len(ph_wos)
-        pct = round(len(ph_done) / total * 100) if total else 0
-        phase_stats[ph_id] = {
-            "total": total,
-            "done": len(ph_done),
-            "pct": pct,
-            "wos": [w["wo"] for w in ph_wos],
-        }
+        ph_all = [w for w in all_wos if w.get("phase") == ph_id]
+        done_list, open_list = [], []
+        for w in ph_all:
+            status = _live_status(w)
+            enriched = {**w, "_live_status": status}
+            if status == "done":
+                done_list.append(enriched)
+            else:
+                open_list.append(enriched)
+        total = len(ph_all)
+        pct = round(len(done_list) / total * 100) if total else 0
+        phase_stats[ph_id] = {"total": total, "done": len(done_list), "pct": pct, "wos": [w["wo"] for w in ph_all]}
+        phase_wos[ph_id] = {"done": done_list, "open": open_list}
 
     result = dict(plan_data)
     result["milestone_stats"] = milestone_stats
+    result["milestone_wos"] = milestone_wos
     result["phase_stats"] = phase_stats
+    result["phase_wos"] = phase_wos
     return result
 
 
@@ -790,7 +827,9 @@ async def plan_dashboard(request: Request):
             raw_plan = None
         plan_source = "github" if raw else "unavailable"
 
-    plan_data = _compute_plan_stats(raw_plan) if raw_plan else None
+    wos_result = await _load_wos()
+    wos, _ = wos_result
+    plan_data = _compute_plan_stats(raw_plan, wos_spec=wos) if raw_plan else None
     orchestrator = _load_orchestrator()
 
     return templates.TemplateResponse(request=request, name="plan.html", context={

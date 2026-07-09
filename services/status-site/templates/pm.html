@@ -4,29 +4,29 @@
 {# ── Header ───────────────────────────────────────────────────────────── #}
 <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-8">
   <div>
-    <h1 class="text-xl font-display font-bold text-slate-100">Project Manager View</h1>
-    <p class="text-xs text-slate-400 mt-1">Operational tracking of work orders, agent dispatch status, and program metrics</p>
+    <h1 class="text-xl font-display font-bold text-slate-100">Project Manager</h1>
+    <p class="text-xs text-slate-400 mt-1">Program health, velocity, and work order status across all initiatives</p>
   </div>
   <div class="flex flex-wrap gap-3">
-    <div class="glass-panel px-4 py-2 text-center min-w-24 border-l-2 border-l-slate-500/50">
-      <div class="text-sm text-slate-400 font-display font-medium uppercase tracking-wider">Total WOs</div>
-      <div class="text-xl font-display font-bold text-slate-200 mt-1">{{ total_wos }}</div>
+    <div class="glass-panel px-4 py-2 text-center min-w-20 border-l-2 border-l-slate-500/50">
+      <div class="text-[10px] text-slate-400 font-display font-medium uppercase tracking-wider">Total</div>
+      <div class="text-xl font-display font-bold text-slate-200 mt-0.5">{{ total_wos }}</div>
     </div>
-    <div class="glass-panel px-4 py-2 text-center min-w-24 border-l-2 border-l-emerald-500/50">
-      <div class="text-sm text-slate-400 font-display font-medium uppercase tracking-wider">Done</div>
-      <div class="text-xl font-display font-bold text-emerald-400 mt-1 text-glow-green">{{ done_count }}</div>
+    <div class="glass-panel px-4 py-2 text-center min-w-20 border-l-2 border-l-emerald-500/50">
+      <div class="text-[10px] text-slate-400 font-display font-medium uppercase tracking-wider">Done</div>
+      <div class="text-xl font-display font-bold text-emerald-400 mt-0.5 text-glow-green">{{ done_count }}</div>
     </div>
-    <div class="glass-panel px-4 py-2 text-center min-w-24 border-l-2 border-l-indigo-500/50">
-      <div class="text-sm text-slate-400 font-display font-medium uppercase tracking-wider">In Progress</div>
-      <div class="text-xl font-display font-bold text-indigo-400 mt-1 text-glow-blue">{{ columns.in_progress | length }}</div>
+    <div class="glass-panel px-4 py-2 text-center min-w-20 border-l-2 border-l-indigo-500/50">
+      <div class="text-[10px] text-slate-400 font-display font-medium uppercase tracking-wider">Active</div>
+      <div class="text-xl font-display font-bold text-indigo-400 mt-0.5 text-glow-blue">{{ columns.in_progress | length }}</div>
     </div>
-    <div class="glass-panel px-4 py-2 text-center min-w-24 border-l-2 border-l-amber-500/50">
-      <div class="text-sm text-slate-400 font-display font-medium uppercase tracking-wider">Open</div>
-      <div class="text-xl font-display font-bold text-amber-400 mt-1">{{ columns.open | length }}</div>
+    <div class="glass-panel px-4 py-2 text-center min-w-20 border-l-2 border-l-amber-500/50">
+      <div class="text-[10px] text-slate-400 font-display font-medium uppercase tracking-wider">Open</div>
+      <div class="text-xl font-display font-bold text-amber-400 mt-0.5">{{ columns.open | length }}</div>
     </div>
-    <div class="glass-panel px-4 py-2 text-center min-w-24 border-l-2 border-l-red-500/50">
-      <div class="text-sm text-slate-400 font-display font-medium uppercase tracking-wider">Blocked</div>
-      <div class="text-xl font-display font-bold text-red-400 mt-1 text-glow-red">{{ columns.blocked | length }}</div>
+    <div class="glass-panel px-4 py-2 text-center min-w-20 border-l-2 border-l-rose-500/50">
+      <div class="text-[10px] text-slate-400 font-display font-medium uppercase tracking-wider">Blocked</div>
+      <div class="text-xl font-display font-bold text-rose-400 mt-0.5 text-glow-red">{{ columns.blocked | length }}</div>
     </div>
   </div>
 </div>
@@ -34,38 +34,36 @@
 {% if not wos_available %}
 <div class="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border bg-amber-500/8 border-amber-500/20 text-amber-300 text-xs">
   <svg class="w-4 h-4 flex-shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-  <span><strong>Work order data temporarily unavailable</strong> — GitHub API returned an error. WO counts show 0; velocity and program data are unaffected.</span>
+  <span><strong>Work order data temporarily unavailable</strong> — GitHub API returned an error. Counts show 0; velocity and program data are unaffected.</span>
 </div>
 {% endif %}
 
 {# ── Blocked items ─────────────────────────────────────────────────────── #}
 {% if blocked_alerts %}
-<div id="blocked-items-panel" class="mb-4 glass-panel overflow-hidden border border-red-500/20 bg-red-500/5">
-  <div class="px-5 py-3.5 bg-red-950/20 border-b border-red-900/30 flex items-center justify-between">
-    <span class="text-xs font-display font-bold text-red-300 uppercase tracking-widest flex items-center gap-2">
-      <span class="w-2 h-2 rounded-full bg-red-500 pulse-dot-red"></span>
-      <span>Blocked Work Items ({{ blocked_alerts | length }})</span>
-    </span>
+<div class="mb-4 glass-panel overflow-hidden border border-rose-500/20 bg-rose-500/5">
+  <div class="px-5 py-3.5 bg-rose-950/20 border-b border-rose-900/30 flex items-center gap-2">
+    <span class="w-2 h-2 rounded-full bg-rose-500 pulse-dot-red flex-shrink-0"></span>
+    <span class="text-xs font-display font-bold text-rose-300 uppercase tracking-widest">Blocked Work Items ({{ blocked_alerts | length }})</span>
   </div>
   <div class="overflow-x-auto">
     <table class="w-full text-xs text-left">
       <thead>
         <tr>
-          <th class="px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider w-20">PR</th>
-          <th class="px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Issue</th>
-          <th class="px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider w-64">Detail</th>
-          <th class="px-5 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider w-40">Detected</th>
+          <th class="px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-20">PR</th>
+          <th class="px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Issue</th>
+          <th class="px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-64">Detail</th>
+          <th class="px-5 py-3 text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-40">Detected</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-800/30">
         {% for alert in blocked_alerts %}
         <tr class="hover:bg-slate-900/20 transition-colors">
-          <td class="px-5 py-3.5 font-mono font-bold text-red-400">
+          <td class="px-5 py-3 font-mono font-bold text-rose-400">
             <a href="https://github.com/{{ github_repo }}/pull/{{ alert.pr_number }}" target="_blank" class="hover:underline">#{{ alert.pr_number }}</a>
           </td>
-          <td class="px-5 py-3.5 text-slate-200">{{ alert.message }}</td>
-          <td class="px-5 py-3.5 text-slate-400 font-mono text-[11px]">{{ alert.detail }}</td>
-          <td class="px-5 py-3.5 text-slate-500 font-mono">{{ alert.first_seen | replace("T", " ") | truncate(16, end="") }} UTC</td>
+          <td class="px-5 py-3 text-slate-200">{{ alert.message }}</td>
+          <td class="px-5 py-3 text-slate-400 font-mono text-[11px]">{{ alert.detail }}</td>
+          <td class="px-5 py-3 text-slate-500 font-mono">{{ alert.first_seen | replace("T", " ") | truncate(16, end="") }} UTC</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -74,19 +72,20 @@
 </div>
 {% endif %}
 
+{# ── Velocity + Active Agents ──────────────────────────────────────────── #}
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
 
-  {# ── Velocity ────────────────────────────────────────────────────────── #}
   <div class="lg:col-span-2 glass-panel p-4 flex flex-col gap-4">
+    {# Velocity bars #}
     <div>
       <div class="flex items-center justify-between mb-3">
-        <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest">WO Velocity (Last 8 Weeks)</h2>
+        <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest">WO Velocity — Last 8 Weeks</h2>
         {% if velocity_summary %}
-        <span class="text-[10px] font-mono text-slate-500">avg <span class="text-indigo-400 font-bold">{{ velocity_summary.avg_per_week }}</span> WOs/week (last 4 wks)</span>
+        <span class="text-[10px] font-mono text-slate-500">avg <span class="text-indigo-400 font-bold">{{ velocity_summary.avg_per_week }}</span>/wk (last 4 wks)</span>
         {% endif %}
       </div>
       {% if velocity %}
-      <div class="space-y-2">
+      <div class="space-y-1.5">
         {% set max_count = velocity | map(attribute='count') | max %}
         {% set safe_max = [max_count, 1] | max %}
         {% for week in velocity %}
@@ -111,7 +110,7 @@
       {% endif %}
     </div>
 
-    {# ── Milestone Projections ──────────────────────────────────────────── #}
+    {# Milestone projections #}
     {% if velocity_summary and velocity_summary.avg_per_week > 0 %}
     <div class="border-t border-slate-800/50 pt-4">
       <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest mb-3">Milestone Projections</h2>
@@ -126,13 +125,10 @@
                 {% elif ms.status == 'close' %}bg-amber-500/10 text-amber-400 border border-amber-500/20
                 {% elif ms.status == 'at_risk' %}bg-rose-500/10 text-rose-400 border border-rose-500/20
                 {% else %}bg-slate-800 text-slate-500 border border-slate-700/20{% endif %}">
-                {% if ms.status == 'on_track' %}on track
-                {% elif ms.status == 'close' %}close
-                {% elif ms.status == 'at_risk' %}at risk
-                {% else %}unknown{% endif %}
+                {% if ms.status == 'on_track' %}on track{% elif ms.status == 'close' %}close{% elif ms.status == 'at_risk' %}at risk{% else %}unknown{% endif %}
               </span>
             </div>
-            <div class="flex items-center gap-3 text-[10px] text-slate-500 font-mono">
+            <div class="flex items-center gap-3 text-[10px] text-slate-500 font-mono flex-wrap">
               <span>{{ ms.remaining_wos }} WOs left</span>
               <span class="text-slate-700">·</span>
               <span>target <span class="text-slate-400">{{ ms.target_date or "none" }}</span></span>
@@ -149,7 +145,7 @@
         </div>
         {% endfor %}
         {% if velocity_summary.projected_done %}
-        <div class="pt-2 border-t border-slate-800/40 flex items-center gap-3 text-[10px] text-slate-500 font-mono">
+        <div class="pt-2 border-t border-slate-800/40 flex items-center gap-3 text-[10px] text-slate-500 font-mono flex-wrap">
           <span class="text-slate-400">All {{ velocity_summary.remaining_open }} open WOs:</span>
           <span class="text-slate-300 font-semibold">projected done {{ velocity_summary.projected_done }}</span>
           <span class="text-slate-600">at {{ velocity_summary.avg_per_week }} WOs/week</span>
@@ -159,31 +155,27 @@
     </div>
     {% elif velocity_summary and velocity_summary.avg_per_week == 0 %}
     <div class="border-t border-slate-800/50 pt-3">
-      <p class="text-[10px] text-slate-600 font-mono">No recent merge activity — projections unavailable.</p>
+      <p class="text-[10px] text-slate-600 font-mono">No recent merge activity — milestone projections unavailable.</p>
     </div>
     {% endif %}
   </div>
 
-  {# ── Active Agents ───────────────────────────────────────────────────── #}
+  {# Active Agents #}
   <div class="glass-panel p-4">
     <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest mb-3">AI Agents in Flight</h2>
     {% if active_agents %}
     <div class="space-y-4">
       {% for b in active_agents %}
       <div class="border-b border-slate-800/40 pb-4 last:border-0 last:pb-0">
-        <div class="flex items-center gap-2 mb-2">
-          <span class="relative flex h-2 w-2">
+        <div class="flex items-center gap-2 mb-1.5">
+          <span class="relative flex h-2 w-2 flex-shrink-0">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-emerald-400"></span>
             <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
           </span>
           <span class="text-xs font-bold text-slate-200 font-display">{{ b.agent_status.agent }}</span>
         </div>
         <div class="text-[11px] text-indigo-400 font-mono font-semibold mb-1">
-          {% if b.wo_number %}
-          <a href="/wo/{{ b.wo_number }}" class="hover:underline">WO-{{ b.wo_number }}</a>
-          {% else %}
-          {{ b.branch }}
-          {% endif %}
+          {% if b.wo_number %}<a href="/wo/{{ b.wo_number }}" class="hover:underline">WO-{{ b.wo_number }}</a>{% else %}{{ b.branch }}{% endif %}
         </div>
         <div class="text-xs text-slate-400 mb-1 leading-relaxed">{{ b.agent_status.step }}</div>
         <div class="text-[10px] text-slate-500 font-mono">Pushed {{ b.last_commit_ago }} ago</div>
@@ -191,148 +183,153 @@
       {% endfor %}
     </div>
     {% else %}
-    <p class="text-xs text-slate-500 text-center py-8">No active agents currently running claims.</p>
+    <p class="text-xs text-slate-500 text-center py-8">No active agents currently running.</p>
     {% endif %}
   </div>
 
 </div>
 
-{# ── Programs + Dispatch (side by side) ───────────────────────────────── #}
-<div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
-
-  {# Programs table #}
-  {% if programs %}
-  <div id="programs-panel" class="glass-panel overflow-hidden flex flex-col">
-    <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex-shrink-0">
-      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Program Trackers ({{ programs | length }})</span>
-    </div>
-    <div class="overflow-y-auto max-h-[320px] overflow-x-auto">
-      <table class="w-full text-xs text-left">
-        <thead class="sticky top-0 bg-slate-950/90 backdrop-blur-sm z-10">
-          <tr>
-            <th class="px-4 py-2.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Program</th>
-            <th class="px-2 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-center w-12">Total</th>
-            <th class="px-2 py-2.5 text-[10px] font-semibold text-emerald-400 uppercase tracking-wider text-center w-12">Done</th>
-            <th class="px-2 py-2.5 text-[10px] font-semibold text-indigo-400 uppercase tracking-wider text-center w-14">Active</th>
-            <th class="px-2 py-2.5 text-[10px] font-semibold text-rose-400 uppercase tracking-wider text-center w-14">Blocked</th>
-            <th class="px-2 py-2.5 text-[10px] font-semibold text-slate-600 uppercase tracking-wider text-center w-14">Deferred</th>
-            <th class="px-4 py-2.5 text-[10px] font-semibold text-slate-400 tracking-wider w-32">Progress</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-800/30">
-          {% for prog_name, prog in programs.items() %}
-          <tr class="hover:bg-slate-900/20 transition-colors">
-            <td class="px-4 py-2.5 font-display font-semibold text-slate-200 text-[11px] leading-tight max-w-[200px]">{{ prog_name }}</td>
-            <td class="px-2 py-2.5 text-center text-slate-400 font-mono text-[10px]">{{ prog.total }}</td>
-            <td class="px-2 py-2.5 text-center text-emerald-400 font-mono font-bold text-[10px]">{{ prog.done }}</td>
-            <td class="px-2 py-2.5 text-center font-mono text-[10px]">
-              <span class="{% if (prog.in_progress + prog.in_review) > 0 %}text-indigo-400{% else %}text-slate-600{% endif %}">
-                {{ prog.in_progress + prog.in_review }}
-              </span>
-            </td>
-            <td class="px-2 py-2.5 text-center font-mono font-bold text-[10px]">
-              <span class="{% if prog.blocked > 0 %}text-rose-400{% else %}text-slate-600{% endif %}">{{ prog.blocked }}</span>
-            </td>
-            <td class="px-2 py-2.5 text-center font-mono text-[10px]">
-              <span class="{% if prog.deferred > 0 %}text-slate-500{% else %}text-slate-800{% endif %}">{{ prog.deferred if prog.deferred > 0 else '—' }}</span>
-            </td>
-            <td class="px-4 py-2.5">
-              <div class="flex items-center gap-2">
-                <div class="flex-1 bg-slate-950/60 border border-slate-900 rounded-full h-1.5 overflow-hidden">
-                  <div class="bg-gradient-to-r from-emerald-500 to-teal-400 h-1.5 rounded-full" style="width:{{ prog.pct }}%"></div>
-                </div>
-                <span class="text-[9px] text-slate-500 font-mono w-8 text-right">{{ prog.pct }}%</span>
+{# ── Programs ─────────────────────────────────────────────────────────── #}
+{% if program_wos %}
+<div class="mb-4">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Programs ({{ program_wos | length }})</h2>
+    <span class="text-[10px] text-slate-600 font-mono">click a program to expand</span>
+  </div>
+  <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+    {% for prog_name, pw in program_wos.items() %}
+    {% set prog = programs[prog_name] if prog_name in programs else {"total": 0, "done": 0, "in_progress": 0, "in_review": 0, "open": 0, "blocked": 0, "deferred": 0, "pct": 0} %}
+    {% set active_count = (pw.in_progress | length) + (pw.review | length) %}
+    <details class="glass-panel overflow-hidden group" {% if active_count > 0 %}open{% endif %}>
+      <summary class="px-5 py-4 cursor-pointer list-none hover:bg-slate-900/20 transition-colors">
+        <div class="flex items-start gap-3">
+          <svg class="w-3.5 h-3.5 text-slate-600 mt-0.5 transition-transform group-open:rotate-90 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-3 mb-2">
+              <span class="text-sm font-display font-semibold text-slate-200 truncate">{{ prog_name }}</span>
+              <div class="flex items-center gap-2 flex-shrink-0 text-[10px] font-mono">
+                {% if pw.blocked | length > 0 %}
+                <span class="text-rose-400 font-bold">{{ pw.blocked | length }} blocked</span>
+                {% endif %}
+                {% if active_count > 0 %}
+                <span class="text-indigo-400">{{ active_count }} active</span>
+                {% endif %}
+                <span class="text-slate-500">{{ prog.total }} total</span>
               </div>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-  {% endif %}
-
-  {# Dispatch advisory (orchestrator) #}
-  <div class="flex flex-col gap-4">
-    {% if orchestrator %}
-    <div class="glass-panel overflow-hidden border border-indigo-500/20 bg-indigo-500/5 flex-1">
-      <div class="px-5 py-3.5 bg-indigo-950/20 border-b border-indigo-900/30 flex items-center justify-between">
-        <span class="text-xs font-display font-bold text-indigo-300 uppercase tracking-widest flex items-center gap-2">
-          <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
-          <span>Next Up ({{ orchestrator.dispatch_queue | length }})</span>
-        </span>
-        <span class="text-[10px] font-mono text-indigo-400">max {{ orchestrator.max_parallel_wos }} concurrent</span>
-      </div>
-      {% if orchestrator.dispatch_queue %}
-      <div class="divide-y divide-slate-800/30 max-h-[140px] overflow-y-auto">
-        {% for item in orchestrator.dispatch_queue %}
-        <div class="flex items-center gap-3 px-5 py-2.5 hover:bg-slate-900/20">
-          <span class="text-[9px] font-bold rounded font-mono px-2 py-0.5
-            {% if item.priority == 'P0' %}badge-glass-p0
-            {% elif item.priority == 'P1' %}badge-glass-p1
-            {% elif item.priority == 'P2' %}badge-glass-p2
-            {% else %}badge-glass-p3{% endif %}">
-            {{ item.priority }}
-          </span>
-          <a href="/wo/{{ item.wo }}" class="text-xs font-bold text-indigo-400 hover:underline font-mono">WO-{{ item.wo }}</a>
-          <span class="text-xs text-slate-300 truncate flex-1 leading-snug">{{ item.title }}</span>
-          {% if item.effort %}<span class="text-[10px] text-slate-500 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">{{ item.effort }}</span>{% endif %}
-        </div>
-        {% endfor %}
-      </div>
-      {% else %}
-      <p class="px-5 py-4 text-xs text-slate-500 text-center">No work orders currently cleared for dispatch.</p>
-      {% endif %}
-    </div>
-
-    <div class="glass-panel overflow-hidden flex-1">
-      <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
-        <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Waiting on Dependencies ({{ orchestrator.holding_queue | length }})</span>
-      </div>
-      {% if orchestrator.holding_queue %}
-      <div class="divide-y divide-slate-800/30 max-h-[130px] overflow-y-auto">
-        {% for item in orchestrator.holding_queue %}
-        <div class="px-5 py-2.5 hover:bg-slate-900/20 transition-colors">
-          <div class="flex items-center gap-3 mb-0.5">
-            <a href="/wo/{{ item.wo }}" class="text-xs font-bold font-mono text-slate-400 hover:text-indigo-400 hover:underline">WO-{{ item.wo }}</a>
-            <span class="text-xs text-slate-200 truncate flex-1 font-medium">{{ item.title }}</span>
+            </div>
+            <div class="flex items-center gap-2.5">
+              <div class="flex-1 bg-slate-950/60 border border-slate-900 rounded-full h-1.5 overflow-hidden">
+                <div class="bg-gradient-to-r from-emerald-500 to-teal-400 h-1.5 rounded-full transition-all duration-500" style="width:{{ prog.pct }}%"></div>
+              </div>
+              <span class="text-[10px] text-slate-500 font-mono w-16 text-right">{{ prog.done }}/{{ prog.total }} done ({{ prog.pct }}%)</span>
+            </div>
           </div>
-          <div class="text-[10px] text-slate-500 font-mono">{{ item.reason }}</div>
         </div>
-        {% endfor %}
-      </div>
-      {% else %}
-      <p class="px-5 py-4 text-xs text-slate-500 text-center">Holding queue is empty.</p>
-      {% endif %}
-    </div>
+      </summary>
 
-    {% if orchestrator.recommendations %}
-    <div class="glass-panel p-4 border border-amber-500/20 bg-amber-500/5">
-      <div class="text-xs font-display font-bold text-amber-300 mb-2 uppercase tracking-wider flex items-center gap-2">
-        <span>⚠</span><span>Orchestrator Recommendations</span>
-      </div>
-      <ul class="space-y-1.5">
-        {% for r in orchestrator.recommendations %}
-        <li class="text-xs text-slate-300 flex items-start gap-2"><span class="text-amber-500">•</span><span>{{ r }}</span></li>
-        {% endfor %}
-      </ul>
-    </div>
-    {% endif %}
+      <div class="border-t border-slate-800/50 divide-y divide-slate-800/20">
 
-    {% else %}
-    <div class="glass-panel p-5 text-xs text-slate-500 text-center flex items-center justify-center h-full min-h-[120px]">
-      Orchestrator offline — dispatch data unavailable.
-    </div>
-    {% endif %}
+        {# Blocked #}
+        {% if pw.blocked %}
+        <div class="px-5 py-3">
+          <div class="text-[9px] font-bold uppercase tracking-widest text-rose-500 mb-2">Blocked ({{ pw.blocked | length }})</div>
+          <div class="space-y-1.5">
+            {% for spec in pw.blocked %}
+            <div class="flex items-center gap-2.5 py-1">
+              <span class="w-2 h-2 rounded-full bg-rose-500 flex-shrink-0"></span>
+              <a href="/wo/{{ spec.number }}" class="text-[11px] font-mono font-bold text-slate-500 hover:text-indigo-400 hover:underline flex-shrink-0">WO-{{ spec.number }}</a>
+              <span class="text-[11px] text-slate-300 truncate flex-1">{{ spec.title }}</span>
+              <span class="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded flex-shrink-0 {{ spec.priority_class }}">{{ spec.priority }}</span>
+              <span class="text-[10px] text-slate-600 font-mono w-6 text-center">{{ spec.effort or "—" }}</span>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        {# In Progress + Review #}
+        {% if pw.in_progress or pw.review %}
+        <div class="px-5 py-3">
+          <div class="text-[9px] font-bold uppercase tracking-widest text-indigo-400 mb-2">Active ({{ active_count }})</div>
+          <div class="space-y-1.5">
+            {% for spec in pw.in_progress %}
+            <div class="flex items-center gap-2.5 py-1">
+              <span class="w-2 h-2 rounded-full bg-indigo-400 animate-pulse flex-shrink-0"></span>
+              <a href="/wo/{{ spec.number }}" class="text-[11px] font-mono font-bold text-slate-500 hover:text-indigo-400 hover:underline flex-shrink-0">WO-{{ spec.number }}</a>
+              <span class="text-[11px] text-slate-300 truncate flex-1">{{ spec.title }}</span>
+              <span class="text-[9px] text-indigo-400 font-mono flex-shrink-0">in progress</span>
+              <span class="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded flex-shrink-0 {{ spec.priority_class }}">{{ spec.priority }}</span>
+            </div>
+            {% endfor %}
+            {% for spec in pw.review %}
+            <div class="flex items-center gap-2.5 py-1">
+              <span class="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0"></span>
+              <a href="/wo/{{ spec.number }}" class="text-[11px] font-mono font-bold text-slate-500 hover:text-indigo-400 hover:underline flex-shrink-0">WO-{{ spec.number }}</a>
+              <span class="text-[11px] text-slate-300 truncate flex-1">{{ spec.title }}</span>
+              <span class="text-[9px] text-amber-400 font-mono flex-shrink-0">in review</span>
+              <span class="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded flex-shrink-0 {{ spec.priority_class }}">{{ spec.priority }}</span>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        {# Open #}
+        {% if pw.open %}
+        <div class="px-5 py-3">
+          <div class="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-2">Open ({{ pw.open | length }})</div>
+          <div class="space-y-1">
+            {% for spec in pw.open %}
+            <div class="flex items-center gap-2.5 py-0.5">
+              <span class="w-3.5 h-3.5 rounded-full border-2 border-slate-700 flex-shrink-0"></span>
+              <a href="/wo/{{ spec.number }}" class="text-[11px] font-mono font-bold text-slate-500 hover:text-indigo-400 hover:underline flex-shrink-0">WO-{{ spec.number }}</a>
+              <span class="text-[11px] text-slate-400 truncate flex-1">{{ spec.title }}</span>
+              <span class="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded flex-shrink-0 {{ spec.priority_class }}">{{ spec.priority }}</span>
+              <span class="text-[10px] text-slate-600 font-mono w-6 text-center">{{ spec.effort or "—" }}</span>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        {# Done (collapsed) #}
+        {% if pw.done %}
+        <details class="px-5 py-3 group/done">
+          <summary class="cursor-pointer list-none text-[9px] font-bold uppercase tracking-widest text-emerald-700 hover:text-emerald-500 transition-colors flex items-center gap-1.5">
+            <svg class="w-3 h-3 transition-transform group-open/done:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            Done ({{ pw.done | length }})
+          </summary>
+          <div class="mt-2 space-y-1">
+            {% for spec in pw.done %}
+            <div class="flex items-center gap-2.5 py-0.5 opacity-50">
+              <span class="text-emerald-600 text-[11px] flex-shrink-0 w-3.5 text-center">✓</span>
+              <a href="/wo/{{ spec.number }}" class="text-[11px] font-mono text-slate-600 hover:text-slate-400 flex-shrink-0">WO-{{ spec.number }}</a>
+              <span class="text-[11px] text-slate-600 truncate flex-1 line-through decoration-slate-700">{{ spec.title }}</span>
+            </div>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+
+        {# Deferred #}
+        {% if pw.deferred %}
+        <div class="px-5 py-2 border-t border-slate-900/60">
+          <span class="text-[9px] text-slate-700 font-mono uppercase tracking-widest">{{ pw.deferred | length }} deferred</span>
+        </div>
+        {% endif %}
+
+      </div>
+    </details>
+    {% endfor %}
   </div>
-
 </div>
+{% endif %}
 
 {# ── Open WO table ─────────────────────────────────────────────────────── #}
-<div id="open-wos-panel" class="glass-panel overflow-hidden">
+<div class="glass-panel overflow-hidden">
   <div class="px-5 py-3 bg-slate-900/40 border-b border-slate-800/80">
     <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">
-      Open Work Orders ({{ (columns.open | length) + (columns.in_progress | length) + (columns.review | length) + (columns.blocked | length) }})
+      All Open Work Orders ({{ (columns.open | length) + (columns.in_progress | length) + (columns.review | length) + (columns.blocked | length) }})
     </span>
   </div>
   <div class="overflow-x-auto max-h-[360px] overflow-y-auto">
@@ -368,7 +365,7 @@
           </td>
           <td class="px-5 py-3">
             <span class="text-[11px] font-semibold
-              {% if spec.board_column == 'blocked' %}text-red-400 text-glow-red
+              {% if spec.board_column == 'blocked' %}text-rose-400 text-glow-red
               {% elif spec.board_column == 'in_progress' %}text-indigo-400 text-glow-blue
               {% elif spec.board_column == 'review' %}text-amber-400 text-glow-amber
               {% else %}text-slate-400{% endif %}">
