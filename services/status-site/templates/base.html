@@ -3,7 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="refresh" content="{{ refresh_seconds }}">
+  {% if refresh_seconds %}<script>
+    (function(){
+      var _refreshMs = {{ refresh_seconds }} * 1000;
+      setTimeout(function tick() {
+        var panel = document.getElementById('pm-side-panel');
+        if (panel && panel.classList.contains('pm-open')) {
+          setTimeout(tick, 10000);
+        } else {
+          location.reload();
+        }
+      }, _refreshMs);
+    })();
+  </script>{% endif %}
   <title>{% if pending_validations is defined and pending_validations %}({{ pending_validations | length }}) {% endif %}{% block page_title %}{{ site_title }}{% endblock %}</title>
   <meta name="description" content="Dentro AI Factory live status dashboard. Real-time insights into work orders, active branches, PR progress, and CI/CD health.">
   <script src="https://cdn.tailwindcss.com"></script>
