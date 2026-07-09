@@ -1,10 +1,10 @@
-# WO-374 — Slack Two-Way Bot: PM Chat via Slack Socket Mode
+# WO-1015 — Slack Two-Way Bot: PM Chat via Slack Socket Mode
 
 **Status:** ✅ Complete (2026-07-07)
 **Priority:** P2
 **Effort:** S
 **Services:** orchestrator
-**Depends on:** WO-366
+**Depends on:** WO-1007
 
 ---
 
@@ -57,7 +57,7 @@ Both added to `docker-compose.status.yml` and `.env.example`.
 ## One-Time Slack App Setup
 
 > You only need to do this once per Slack workspace. Uses your existing Slack App
-> (created for the Incoming Webhooks in WO-366).
+> (created for the Incoming Webhooks in WO-1007).
 
 1. **Enable Socket Mode**
    - api.slack.com/apps → your Factory app → **Socket Mode** → toggle On

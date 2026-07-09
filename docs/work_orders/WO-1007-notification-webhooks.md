@@ -1,4 +1,4 @@
-# WO-366 — Push Notifications: ntfy.sh + Slack for Factory Events
+# WO-1007 — Push Notifications: ntfy.sh + Slack for Factory Events
 
 **Status:** ✅ Complete (extended 2026-07-07)
 **Priority:** P1

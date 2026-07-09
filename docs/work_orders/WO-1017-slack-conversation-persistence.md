@@ -1,10 +1,10 @@
-# WO-376 — Slack Conversation Persistence
+# WO-1017 — Slack Conversation Persistence
 
 **Status:** ✅ Done
 **Priority:** P2
 **Effort:** S
 **Services:** orchestrator
-**Depends on:** WO-374
+**Depends on:** WO-1015
 
 ---
 

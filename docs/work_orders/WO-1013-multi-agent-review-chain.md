@@ -1,10 +1,10 @@
-# WO-372 — Multi-Agent Review Chain: Peer Code Review Before Human Validation
+# WO-1013 — Multi-Agent Review Chain: Peer Code Review Before Human Validation
 
 **Status:** ✅ Done
 **Priority:** P2
 **Effort:** L
 **Services:** agent-runner
-**Depends on:** WO-368 (WO thread), WO-369 (agent thread awareness), WO-371 (quality gate)
+**Depends on:** WO-1009 (WO thread), WO-1010 (agent thread awareness), WO-1012 (quality gate)
 
 ---
 

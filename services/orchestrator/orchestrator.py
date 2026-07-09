@@ -1479,9 +1479,12 @@ async def poll() -> None:
         print(f"[orchestrator] poll: auto-completed {reconciled} WO(s) from merged PRs")
 
     # Merge secondary specs (secondary repos contribute board visibility only)
+    # Never overwrite primary-repo specs — WO numbers can collide across repos
     specs: dict[int, dict] = dict(primary_specs)
     for sec_specs in results[6:]:
-        specs.update(sec_specs)
+        for num, spec in sec_specs.items():
+            if num not in specs:
+                specs[num] = spec
 
     global _specs_cache
     _specs_cache = dict(specs)  # snapshot for PM chat context injection

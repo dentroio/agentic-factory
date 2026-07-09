@@ -1,4 +1,4 @@
-# WO-368 — WO Thread: Conversational Collaboration Layer
+# WO-1009 — WO Thread: Conversational Collaboration Layer
 
 **Status:** ✅ Complete
 **Priority:** P1

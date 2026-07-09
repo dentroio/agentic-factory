@@ -1,10 +1,10 @@
-# WO-378 — Slack Block Kit Rich Messages & Action Buttons
+# WO-1019 — Slack Block Kit Rich Messages & Action Buttons
 
 **Status:** ✅ Done
 **Priority:** P2
 **Effort:** S
 **Services:** orchestrator
-**Depends on:** WO-375
+**Depends on:** WO-1016
 
 ---
 

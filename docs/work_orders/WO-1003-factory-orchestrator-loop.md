@@ -1,11 +1,11 @@
-# WO-356 — Factory Orchestrator Loop
+# WO-1003 — Factory Orchestrator Loop
 
 **Status:** ✅ Complete (2026-07-01 — dentroio/agentic-factory merged)
 **Priority:** P2
 **Repo:** `dentroio/agentic-factory`
 **Service:** `services/orchestrator/`
 **Estimated effort:** 4–6 hours
-**Depends on:** WO-349 (status site), WO-354 (PR watchdog)
+**Depends on:** WO-349 (status site), WO-1001 (PR watchdog)
 
 ---
 
@@ -62,7 +62,7 @@ WO spec files may declare dependencies in their frontmatter or in a `**Depends o
 
 ```
 WO-351 depends on WO-349  →  WO-351 cannot be dispatched until WO-349 is Done
-WO-355 depends on WO-354  →  WO-355 cannot be dispatched until WO-354 is Done
+WO-1002 depends on WO-1001  →  WO-1002 cannot be dispatched until WO-1001 is Done
 ```
 
 If a WO has no `Depends on:` field, it is treated as independent and can be dispatched any time it is Open.
@@ -106,7 +106,7 @@ Circular dependency detection: if A→B→A, flag both as `blocked:circular-depe
       "title": "Factory Status Dashboard v2",
       "dependencies_met": false,
       "blocked_by": [354],
-      "reason": "Waiting on WO-354 (not yet Done)"
+      "reason": "Waiting on WO-1001 (not yet Done)"
     }
   ],
   "active_work": [
@@ -122,7 +122,7 @@ Circular dependency detection: if A→B→A, flag both as `blocked:circular-depe
     }
   ],
   "recommendations": [
-    "WO-354 is ready to start — no dependencies, P2 priority",
+    "WO-1001 is ready to start — no dependencies, P2 priority",
     "Both runners currently busy — wait before dispatching new work",
     "WO-204 (pytest-asyncio) CI has been failing 127m — needs human review"
   ]
@@ -141,14 +141,14 @@ When `DAILY_SUMMARY_HOUR` is set (e.g., `9` for 9am UTC), the orchestrator posts
 **Board:** 12 Open · 2 In Progress · 6 In Review · 1 Blocked
 
 **Ready to start:**
-- WO-354 (P2): Factory PR Watchdog Service
-- WO-356 (P2): Factory Orchestrator Loop
+- WO-1001 (P2): Factory PR Watchdog Service
+- WO-1003 (P2): Factory Orchestrator Loop
 
 **In Progress:**
 - WO-352 (P2): Frontend ESLint 10 upgrade — claude-code, implementing (2h 5m)
 
 **Blocked:**
-- WO-355 depends on WO-354 (not yet complete)
+- WO-1002 depends on WO-1001 (not yet complete)
 
 **CI Health:** 6 PRs healthy · 1 failing (127m) · 2 runners busy
 
@@ -222,9 +222,9 @@ volumes:
 
 ---
 
-## Status site integration (WO-355 prerequisite)
+## Status site integration (WO-1002 prerequisite)
 
-The orchestrator's output feeds two new panels in the status site (implemented in WO-355):
+The orchestrator's output feeds two new panels in the status site (implemented in WO-1002):
 
 **Dispatch Queue panel** (visible on `/` and `/pm`):
 - Shows `dispatch_queue` items in priority order: WO number, title, P-level, "ready" badge
@@ -245,7 +245,7 @@ The orchestrator can share `github_client.py` from the status site service. Eith
 ## Acceptance criteria
 
 - [ ] `orchestrator.json` is written within `POLL_INTERVAL` seconds of startup
-- [ ] Dependency resolution correctly blocks WO-355 when WO-354 is not Done
+- [ ] Dependency resolution correctly blocks WO-1002 when WO-1001 is not Done
 - [ ] `dispatch_queue` only contains WOs whose dependencies are all met
 - [ ] `board_summary` counts match WO spec statuses
 - [ ] Daily summary posts to configured issue number on schedule (when configured)

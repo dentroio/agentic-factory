@@ -1,17 +1,17 @@
-# WO-355 — Factory Status Dashboard v2 (Audience-Aware, Enriched)
+# WO-1002 — Factory Status Dashboard v2 (Audience-Aware, Enriched)
 
 **Status:** ✅ Complete (2026-07-01 — dentroio/agentic-factory merged)
 **Priority:** P2
 **Repo:** `dentroio/agentic-factory`
 **Service:** `services/status-site/` (enhancement to WO-349)
 **Estimated effort:** 5–7 hours
-**Depends on:** WO-349 (base status site), WO-354 (PR watchdog — alert panel)
+**Depends on:** WO-349 (base status site), WO-1001 (PR watchdog — alert panel)
 
 ---
 
 ## Problem
 
-The current status site (WO-349) is functional but sparse. It shows four panels of raw data with minimal structure. It doesn't distinguish between what a project manager needs (WO progress, velocity, blockers) and what a CI/CD engineer needs (runner state, queue depth, CI timing, flaky tests). Alerts from the PR watchdog (WO-354) need a home. And the WO board kanban is text-only with no visual weight to indicate urgency, age, or ownership.
+The current status site (WO-349) is functional but sparse. It shows four panels of raw data with minimal structure. It doesn't distinguish between what a project manager needs (WO progress, velocity, blockers) and what a CI/CD engineer needs (runner state, queue depth, CI timing, flaky tests). Alerts from the PR watchdog (WO-1001) need a home. And the WO board kanban is text-only with no visual weight to indicate urgency, age, or ownership.
 
 ---
 
@@ -141,7 +141,7 @@ ASCII bar chart. Computed from merged PR timestamps.
 | Agent | WO | Step | Started | Duration |
 |-------|-----|------|---------|----------|
 | claude-code | WO-349 | done | 2h ago | 35m |
-| claude-code | WO-354 | planning | 8m ago | 8m |
+| claude-code | WO-1001 | planning | 8m ago | 8m |
 
 ---
 

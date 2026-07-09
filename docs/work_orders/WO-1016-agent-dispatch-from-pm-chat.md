@@ -1,10 +1,10 @@
-# WO-375 — Agent Dispatch from PM Chat
+# WO-1016 — Agent Dispatch from PM Chat
 
 **Status:** ✅ Done
 **Priority:** P1
 **Effort:** M
 **Services:** orchestrator
-**Depends on:** WO-374
+**Depends on:** WO-1015
 
 ---
 

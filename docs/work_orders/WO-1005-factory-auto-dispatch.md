@@ -1,16 +1,16 @@
-# WO-359 — Factory Auto-Dispatch
+# WO-1005 — Factory Auto-Dispatch
 
 **Status:** ✅ Complete
 **Priority:** P1
 **Repo:** `dentroio/agentic-factory`
 **Estimated effort:** S (3–4 hours)
-**Depends on:** WO-358 (plan store + `/api/plan/next` endpoint)
+**Depends on:** WO-1004 (plan store + `/api/plan/next` endpoint)
 
 ---
 
 ## Background
 
-WO-358 built `/api/plan/next` — the factory now knows what to work on next. WO-359 closes the loop: when the orchestrator detects that no WO is in progress and the queue is non-empty, it automatically dispatches the next WO to an agent.
+WO-1004 built `/api/plan/next` — the factory now knows what to work on next. WO-1005 closes the loop: when the orchestrator detects that no WO is in progress and the queue is non-empty, it automatically dispatches the next WO to an agent.
 
 ## What Needs to Happen
 

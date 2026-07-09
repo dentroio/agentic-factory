@@ -1,4 +1,4 @@
-# WO-371 — Quality Gate: Mandatory CI + Security Before Human Review
+# WO-1012 — Quality Gate: Mandatory CI + Security Before Human Review
 
 **Status:** ✅ Complete
 **Priority:** P1

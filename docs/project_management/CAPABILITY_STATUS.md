@@ -21,50 +21,50 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 | Capability | Status | Notes | WO |
 |------------|--------|-------|----|
-| Overview tab — branch/PR/WO cards | ✅ | Dark glassmorphism design | WO-355 |
-| PM View — velocity bar chart, active agents, program roll-up | ✅ | 8-week velocity history | WO-355 |
-| Engineering tab — CI health, run history, pass rate | ✅ | | WO-355 |
-| Plan tab — milestone cards, phase progress, priority queue | ✅ | Phase-filterable queue | WO-358 |
-| WO detail page (`/wo/<n>`) | ✅ | Structured spec view + thread panel | WO-355, WO-368 |
-| Velocity projection + milestone on-track/at-risk badges | ✅ | Avg of last 4 weeks | WO-360 |
-| Dark / light mode toggle | ✅ | Persisted in localStorage | WO-355 |
-| Auto-refresh (configurable interval) | ✅ | Default 60 s | WO-355 |
-| Settings UI — multi-repo project management | ✅ | Named Docker volume backed | WO-357 |
-| Tab badge showing pending validation count | ✅ | `(N) AI Factory` in title | WO-368 |
-| Plan Authoring UI (`/settings/plan`) | ✅ | Create WOs, phases, milestones → GitHub PR | WO-373 |
-| WO creation form with auto-numbered WO | ✅ | Dynamic acceptance criteria list | WO-373 |
-| Oryntra annotation image rendering in thread | ✅ | Inline with click-to-zoom, source URL | WO-370 |
-| CORS proxy for browser extension posting | ✅ | `/api/proxy/thread/{wo}/messages` | WO-370 |
+| Overview tab — branch/PR/WO cards | ✅ | Dark glassmorphism design | WO-1002 |
+| PM View — velocity bar chart, active agents, program roll-up | ✅ | 8-week velocity history | WO-1002 |
+| Engineering tab — CI health, run history, pass rate | ✅ | | WO-1002 |
+| Plan tab — milestone cards, phase progress, priority queue | ✅ | Phase-filterable queue | WO-1004 |
+| WO detail page (`/wo/<n>`) | ✅ | Structured spec view + thread panel | WO-1002, WO-1009 |
+| Velocity projection + milestone on-track/at-risk badges | ✅ | Avg of last 4 weeks | WO-1006 |
+| Dark / light mode toggle | ✅ | Persisted in localStorage | WO-1002 |
+| Auto-refresh (configurable interval) | ✅ | Default 60 s | WO-1002 |
+| Settings UI — multi-repo project management | ✅ | Named Docker volume backed | WO-1004 |
+| Tab badge showing pending validation count | ✅ | `(N) AI Factory` in title | WO-1009 |
+| Plan Authoring UI (`/settings/plan`) | ✅ | Create WOs, phases, milestones → GitHub PR | WO-1014 |
+| WO creation form with auto-numbered WO | ✅ | Dynamic acceptance criteria list | WO-1014 |
+| Oryntra annotation image rendering in thread | ✅ | Inline with click-to-zoom, source URL | WO-1011 |
+| CORS proxy for browser extension posting | ✅ | `/api/proxy/thread/{wo}/messages` | WO-1011 |
 
 ## Dimension 2: PR Watchdog (pr-watchdog)
 
 | Capability | Status | Notes | WO |
 |------------|--------|-------|----|
-| Stale PR detection (configurable age threshold) | ✅ | Default 7 days warn / 14 ancient | WO-354 |
-| CI failure / stuck run alerts | ✅ | Threshold-based | WO-354 |
-| Review-requested stale detection | ✅ | | WO-354 |
-| Queue depth warning | ✅ | Configurable threshold | WO-354 |
-| Blocked items panel in PM View | ✅ | Links to GitHub PRs | WO-354 |
-| Auto-comment on blocked PRs | 🟡 | Disabled by default (`POST_COMMENTS=false`) | WO-354 |
+| Stale PR detection (configurable age threshold) | ✅ | Default 7 days warn / 14 ancient | WO-1001 |
+| CI failure / stuck run alerts | ✅ | Threshold-based | WO-1001 |
+| Review-requested stale detection | ✅ | | WO-1001 |
+| Queue depth warning | ✅ | Configurable threshold | WO-1001 |
+| Blocked items panel in PM View | ✅ | Links to GitHub PRs | WO-1001 |
+| Auto-comment on blocked PRs | 🟡 | Disabled by default (`POST_COMMENTS=false`) | WO-1001 |
 
 ## Dimension 3: Orchestrator + Agent Dispatch (orchestrator, port 8100)
 
 | Capability | Status | Notes | WO |
 |------------|--------|-------|----|
-| PLAN.json ingestion + priority queue computation | ✅ | Reads from GitHub repo | WO-358 |
-| Phase / milestone stats (`milestone_stats`, `phase_stats`) | ✅ | | WO-358 |
-| Next WO selection (respects pins, status, dependencies) | ✅ | | WO-358 |
-| REST API — `/api/next`, `/api/claim`, `/api/checkin`, `/api/validate` | ✅ | FastAPI + APScheduler | WO-359 |
-| Agent claim / check-in / release lifecycle | ✅ | JSON state on `/data` volume | WO-359 |
-| Human validation queue (`/api/validate`) with quality gate enforcement | ✅ | Returns 422 if ci_passed=false or security_passed=false | WO-371 |
-| WO thread storage (`/api/thread/{wo}/messages`) | ✅ | Per-WO JSON files on `/data/threads/` | WO-368 |
-| SSE stream endpoint (`/api/thread/{wo}/stream`) | ✅ | 2 s poll + keepalive | WO-368 |
-| Thread summary endpoint (`/api/threads`) | ✅ | | WO-368 |
-| System messages auto-posted on state transitions | ✅ | claim, validate, approve, reject, complete | WO-368 |
-| Image message storage and serving | ✅ | Saves base64 to `/data/threads/images/`; serves via `/api/thread/{wo}/images/{filename}` | WO-370 |
-| Codex GitHub Actions dispatch (`/api/dispatch-codex`) | ✅ | Pre-claim + rollback on 502 | WO-367 |
-| ntfy.sh + Slack push notifications | ✅ | 5 events: WO review needed, WO complete, agent error, Dependabot merged, Dependabot conflict. Topic auto-generated by setup; managed via Settings → Authentication. `POST /api/notifications/test` to verify. | WO-366 |
-| Daily summary posting to GitHub issue | 🟡 | Optional; needs `SUMMARY_ISSUE_NUMBER` env var | WO-356 |
+| PLAN.json ingestion + priority queue computation | ✅ | Reads from GitHub repo | WO-1004 |
+| Phase / milestone stats (`milestone_stats`, `phase_stats`) | ✅ | | WO-1004 |
+| Next WO selection (respects pins, status, dependencies) | ✅ | | WO-1004 |
+| REST API — `/api/next`, `/api/claim`, `/api/checkin`, `/api/validate` | ✅ | FastAPI + APScheduler | WO-1005 |
+| Agent claim / check-in / release lifecycle | ✅ | JSON state on `/data` volume | WO-1005 |
+| Human validation queue (`/api/validate`) with quality gate enforcement | ✅ | Returns 422 if ci_passed=false or security_passed=false | WO-1012 |
+| WO thread storage (`/api/thread/{wo}/messages`) | ✅ | Per-WO JSON files on `/data/threads/` | WO-1009 |
+| SSE stream endpoint (`/api/thread/{wo}/stream`) | ✅ | 2 s poll + keepalive | WO-1009 |
+| Thread summary endpoint (`/api/threads`) | ✅ | | WO-1009 |
+| System messages auto-posted on state transitions | ✅ | claim, validate, approve, reject, complete | WO-1009 |
+| Image message storage and serving | ✅ | Saves base64 to `/data/threads/images/`; serves via `/api/thread/{wo}/images/{filename}` | WO-1011 |
+| Codex GitHub Actions dispatch (`/api/dispatch-codex`) | ✅ | Pre-claim + rollback on 502 | WO-1008 |
+| ntfy.sh + Slack push notifications | ✅ | 5 events: WO review needed, WO complete, agent error, Dependabot merged, Dependabot conflict. Topic auto-generated by setup; managed via Settings → Authentication. `POST /api/notifications/test` to verify. | WO-1007 |
+| Daily summary posting to GitHub issue | 🟡 | Optional; needs `SUMMARY_ISSUE_NUMBER` env var | WO-1003 |
 | Multi-repo orchestration | 🔵 | Currently single-repo per instance | — |
 
 ## Dimension 4: Agent Runner (agent-runner, opt-in profile)
@@ -75,16 +75,16 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Claim → checkin → validate → complete lifecycle | ✅ | Polls orchestrator every 60 s | WO-365 |
 | GitHub WO spec fetch for prompt building | ✅ | `fetch_wo_markdown()` reads from GitHub API | WO-365 |
 | Configurable worktree path per WO | ✅ | `WORKTREE_BASE` env var | WO-365 |
-| Quality gate: `make ci-local` + bandit + semgrep | ✅ | Runs in parallel; blocking on failure | WO-371 |
+| Quality gate: `make ci-local` + bandit + semgrep | ✅ | Runs in parallel; blocking on failure | WO-1012 |
 | Quality gate: JS/TS security scan | ✅ | eslint-plugin-security or regex fallback | fix/factory-quality-alignment |
 | Semgrep threshold: ERROR only (not WARNING) | ✅ | Prevents false-positive blocks | fix/factory-quality-alignment |
-| Multi-agent peer review chain | ✅ | 4 reviewers (security, architecture, correctness, performance) for all non-P3 WOs | WO-372 |
-| Priority-tiered review chain | ✅ | P3=none, P2/P1/P0=all 4 reviewers | WO-372, fix/ |
+| Multi-agent peer review chain | ✅ | 4 reviewers (security, architecture, correctness, performance) for all non-P3 WOs | WO-1013 |
+| Priority-tiered review chain | ✅ | P3=none, P2/P1/P0=all 4 reviewers | WO-1013, fix/ |
 | Reviewer backends: OpenAI API for Codex `ask()` | ✅ | No longer calls `codex exec` during review | fix/factory-quality-alignment |
 | Reviewer backends: fallback chain for Cursor `ask()` | ✅ | OpenAI API → Claude CLI; never calls Cursor CLI | fix/factory-quality-alignment |
-| Thread monitor during agent run | ✅ | Polls every 15 s; Q&A non-blocking | WO-369 |
-| Thread Q&A while awaiting approval | ✅ | Questions answered via `backend.ask()` | WO-369 |
-| Mid-task directive injection | ✅ | Directives queued via `backend.inject()` | WO-369 |
+| Thread monitor during agent run | ✅ | Polls every 15 s; Q&A non-blocking | WO-1010 |
+| Thread Q&A while awaiting approval | ✅ | Questions answered via `backend.ask()` | WO-1010 |
+| Mid-task directive injection | ✅ | Directives queued via `backend.inject()` | WO-1010 |
 | Agent mandate: PERFORMANCE section | ✅ | No blocking I/O, no unbounded queries, no N+1 | fix/factory-quality-alignment |
 | Agent mandate: CODE QUALITY section | ✅ | Error paths, function focus, pattern adherence | fix/factory-quality-alignment |
 
@@ -99,7 +99,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Self-healing CI (auto-update behind-main branches) | ✅ | | — |
 | `.agents/` entry point for Google Antigravity / Gemini | ✅ | Skills + workflows subdirs | — |
 | Docker Compose single-command deploy | ✅ | `docker compose -f docker-compose.status.yml up -d` | — |
-| Codex workflow dispatch (`.github/workflows/codex-dispatch.yml`) | ✅ | Triggered via `/api/dispatch-codex` | WO-367 |
+| Codex workflow dispatch (`.github/workflows/codex-dispatch.yml`) | ✅ | Triggered via `/api/dispatch-codex` | WO-1008 |
 
 ## Dimension 6: Oryntra Chrome Extension (dentroio/Oryntra)
 
@@ -130,19 +130,19 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Date | Capability | WO / Fix |
 |------|------------|----|
 | 2026-07-04 | Agent quality+security+optimization alignment (semgrep threshold, JS scan, performance mandate, backend ask() fixes) | fix/factory-quality-alignment |
-| 2026-07-04 | Oryntra Chrome extension + orchestrator image storage/serving + status site CORS proxy | WO-370 |
-| 2026-07-04 | Multi-agent peer review chain (4 reviewers, env-configurable backends) | WO-372 |
-| 2026-07-04 | Plan Authoring UI — create WOs/phases/milestones → GitHub PR | WO-373 |
-| 2026-07-04 | Agent thread awareness — mid-task Q&A + directive injection | WO-369 |
-| 2026-07-04 | WO Thread — per-WO conversation, SSE stream, system messages | WO-368 |
-| 2026-07-04 | Codex GitHub Actions dispatch path | WO-367 |
-| 2026-07-07 | ntfy: full event coverage (WO complete, error, Dependabot), Settings UI, auto-generated topic, URL-encoded headers | WO-366 |
-| 2026-07-04 | ntfy.sh + Slack notifications on human review request (initial) | WO-366 |
-| 2026-07-03 | Quality gate — CI + bandit + semgrep; `/api/validate` returns 422 on failure | WO-371 |
+| 2026-07-04 | Oryntra Chrome extension + orchestrator image storage/serving + status site CORS proxy | WO-1011 |
+| 2026-07-04 | Multi-agent peer review chain (4 reviewers, env-configurable backends) | WO-1013 |
+| 2026-07-04 | Plan Authoring UI — create WOs/phases/milestones → GitHub PR | WO-1014 |
+| 2026-07-04 | Agent thread awareness — mid-task Q&A + directive injection | WO-1010 |
+| 2026-07-04 | WO Thread — per-WO conversation, SSE stream, system messages | WO-1009 |
+| 2026-07-04 | Codex GitHub Actions dispatch path | WO-1008 |
+| 2026-07-07 | ntfy: full event coverage (WO complete, error, Dependabot), Settings UI, auto-generated topic, URL-encoded headers | WO-1007 |
+| 2026-07-04 | ntfy.sh + Slack notifications on human review request (initial) | WO-1007 |
+| 2026-07-03 | Quality gate — CI + bandit + semgrep; `/api/validate` returns 422 on failure | WO-1012 |
 | 2026-06-27 | Agent runner — multi-backend autonomous WO execution | WO-365 |
-| 2026-07-02 | Velocity projection + milestone on-track badges | WO-360 |
-| 2026-07-02 | Orchestrator REST API (claim/checkin/validate) | WO-359 |
-| 2026-07-02 | PLAN.json plan store + priority queue | WO-358 |
-| 2026-07-01 | Orchestrator polling loop + daily summary | WO-356 |
-| 2026-06-30 | Status site v2 — dark design system, all views | WO-355 |
-| 2026-06-30 | PR Watchdog service | WO-354 |
+| 2026-07-02 | Velocity projection + milestone on-track badges | WO-1006 |
+| 2026-07-02 | Orchestrator REST API (claim/checkin/validate) | WO-1005 |
+| 2026-07-02 | PLAN.json plan store + priority queue | WO-1004 |
+| 2026-07-01 | Orchestrator polling loop + daily summary | WO-1003 |
+| 2026-06-30 | Status site v2 — dark design system, all views | WO-1002 |
+| 2026-06-30 | PR Watchdog service | WO-1001 |

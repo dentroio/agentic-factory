@@ -1,10 +1,10 @@
-# WO-377 — PLAN.json Auto-Sync from WO Spec Files
+# WO-1018 — PLAN.json Auto-Sync from WO Spec Files
 
 **Status:** ✅ Done
 **Priority:** P2
 **Effort:** S
 **Services:** orchestrator
-**Depends on:** WO-358
+**Depends on:** WO-1004
 
 ---
 

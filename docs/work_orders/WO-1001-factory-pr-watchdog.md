@@ -1,4 +1,4 @@
-# WO-354 — Factory PR Watchdog Service
+# WO-1001 — Factory PR Watchdog Service
 
 **Status:** ✅ Complete (2026-07-01 — dentroio/agentic-factory merged)
 **Priority:** P2

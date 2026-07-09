@@ -1,11 +1,11 @@
-# WO-358 — Factory Plan Store + Priority Queue
+# WO-1004 — Factory Plan Store + Priority Queue
 
 **Status:** ✅ Complete
 **Priority:** P1
 **Repo:** `dentroio/agentic-factory`
 **Service:** `services/status-site/` + `services/orchestrator/`
 **Estimated effort:** 2–3 days
-**Depends on:** WO-356 (orchestrator loop)
+**Depends on:** WO-1003 (orchestrator loop)
 **Design:** See `docs/factory/PLAN.json` (schema defined by this WO)
 
 ---
@@ -156,7 +156,7 @@ New tab "Plan" in the factory dashboard navigation. Layout:
 │  ┌───────────────────────────────────────────────────────┐  │
 │  │ → WO-343  UI Documentation Audit          P2  S  open │  │
 │  │   WO-337  Operate Nav Alignment           P2  S  open │  │
-│  │   WO-358  Factory Plan Store              P1  M  open │  │ ← this WO
+│  │   WO-1004  Factory Plan Store              P1  M  open │  │ ← this WO
 │  │   WO-338  Settings Nav Alignment          P2  S  open │  │
 │  │   WO-344  Investor Docs                   P1  M  open │  │
 │  │   ...                                                  │  │

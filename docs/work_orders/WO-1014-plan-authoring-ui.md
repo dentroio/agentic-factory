@@ -1,10 +1,10 @@
-# WO-373 — Plan Authoring UI: Create WOs, Phases, and Milestones from the Status Site
+# WO-1014 — Plan Authoring UI: Create WOs, Phases, and Milestones from the Status Site
 
 **Status:** ✅ Done
 **Priority:** P2
 **Effort:** M
 **Services:** status-site, orchestrator
-**Depends on:** WO-358 (plan store), WO-359 (orchestrator REST API)
+**Depends on:** WO-1004 (plan store), WO-1005 (orchestrator REST API)
 
 ---
 

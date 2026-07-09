@@ -1,16 +1,16 @@
-# WO-360 — Factory Velocity + Milestone Projection
+# WO-1006 — Factory Velocity + Milestone Projection
 
 **Status:** ✅ Complete
 **Priority:** P2
 **Repo:** `dentroio/agentic-factory`
 **Estimated effort:** M (4–6 hours)
-**Depends on:** WO-358 (PLAN.json + velocity.json), WO-359 (dispatch — provides cycle time data)
+**Depends on:** WO-1004 (PLAN.json + velocity.json), WO-1005 (dispatch — provides cycle time data)
 
 ---
 
 ## Background
 
-The factory knows what to work on (WO-358) and how to start it (WO-359). WO-360 answers "are we on track?" — computing rolling velocity, calibrating effort estimates, and projecting milestone dates.
+The factory knows what to work on (WO-1004) and how to start it (WO-1005). WO-1006 answers "are we on track?" — computing rolling velocity, calibrating effort estimates, and projecting milestone dates.
 
 ## What Needs to Happen
 

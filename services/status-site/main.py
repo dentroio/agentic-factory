@@ -173,7 +173,7 @@ async def _load_wos() -> tuple[dict[int, WOSpec], bool]:
             if isinstance(content, Exception):
                 continue
             spec = parse_wo_file(content, f["name"], repo=repo)
-            if spec:
+            if spec and spec.number not in results:  # never overwrite primary-repo WOs
                 results[spec.number] = spec
 
     return results, True

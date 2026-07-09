@@ -1,11 +1,11 @@
-# WO-370 — Oryntra Integration: Visual UI Feedback via Thread
+# WO-1011 — Oryntra Integration: Visual UI Feedback via Thread
 
 **Status:** ✅ Done
 **Priority:** P2
 **Effort:** M
 **Services:** orchestrator + status-site + Oryntra (Chrome extension)
 **Repos:** `dentroio/agentic-factory`, `dentroio/Oryntra`
-**Depends on:** WO-368 (WO thread)
+**Depends on:** WO-1009 (WO thread)
 
 ---
 

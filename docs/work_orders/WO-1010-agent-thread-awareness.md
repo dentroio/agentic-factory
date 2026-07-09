@@ -1,16 +1,16 @@
-# WO-369 — Agent Thread Awareness: Mid-Work Conversation
+# WO-1010 — Agent Thread Awareness: Mid-Work Conversation
 
 **Status:** ✅ Complete
 **Priority:** P1
 **Effort:** M (1 day)
 **Services:** agent-runner
-**Depends on:** WO-368, WO-365
+**Depends on:** WO-1009, WO-365
 
 ---
 
 ## Problem
 
-WO-368 built the thread infrastructure and human-facing UI. But the agent runner didn't read the thread — it fired a prompt, worked until done, then called `/api/validate`. Human messages posted mid-task were invisible to the agent.
+WO-1009 built the thread infrastructure and human-facing UI. But the agent runner didn't read the thread — it fired a prompt, worked until done, then called `/api/validate`. Human messages posted mid-task were invisible to the agent.
 
 ---
 

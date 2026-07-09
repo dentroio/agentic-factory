@@ -1,10 +1,10 @@
-# WO-367 — Codex GitHub Actions Dispatch: Cloud Agent Path
+# WO-1008 — Codex GitHub Actions Dispatch: Cloud Agent Path
 
 **Status:** ✅ Complete
 **Priority:** P2
 **Effort:** M (1 day)
 **Services:** orchestrator (new endpoint + module)
-**Depends on:** WO-365, WO-366
+**Depends on:** WO-365, WO-1007
 
 ---
 

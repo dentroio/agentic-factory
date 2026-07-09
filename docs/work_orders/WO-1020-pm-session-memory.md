@@ -1,10 +1,10 @@
-# WO-379 — PM Session Memory Across Conversations
+# WO-1020 — PM Session Memory Across Conversations
 
 **Status:** ✅ Done
 **Priority:** P2
 **Effort:** S
 **Services:** orchestrator
-**Depends on:** WO-376
+**Depends on:** WO-1017
 
 ---
 
