@@ -1,0 +1,199 @@
+# =============================================================================
+# dependabot-wo-bridge.yml — Dependabot Breaking Change → WO
+#
+# When Dependabot opens a PR that bumps a dependency and CI fails, the bump
+# is a breaking change — not a simple version update. A plain merge would
+# break the build, so the PR should be closed and replaced with a WO that
+# does the proper migration.
+#
+# This workflow detects that scenario and converts it automatically:
+#   Dependabot PR → CI fails → this workflow creates a 'new-wo' issue
+#   → planning-agent.yml drafts a WO spec → human reviews and merges
+#   → agent picks up the WO and does the migration
+#
+# Simple Dependabot bumps where CI passes are ignored — those merge normally
+# via auto-merge without any WO needed.
+#
+# Setup:
+#   1. Ensure a 'new-wo' label exists in this repo (Settings → Labels)
+#   2. Ensure 'dependencies' and 'breaking-change' labels exist (optional but useful)
+#   3. planning-agent.yml must be present — it handles the 'new-wo' trigger
+# =============================================================================
+
+name: Dependabot → WO Bridge
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: read
+
+jobs:
+  bridge:
+    name: Convert failing Dependabot PR to WO issue
+    runs-on: ubuntu-latest
+    # Only act when CI failed on a Dependabot branch
+    if: |
+      github.event.workflow_run.conclusion == 'failure' &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+
+    steps:
+      - name: Find Dependabot PR for this run
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const headBranch = '${{ github.event.workflow_run.head_branch }}';
+            const headRepo = '${{ github.event.workflow_run.head_repository.full_name }}';
+
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${headRepo.split('/')[0]}:${headBranch}`,
+            });
+
+            if (prs.data.length === 0) {
+              console.log('No open PR found for this branch — skipping');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            const pr = prs.data[0];
+
+            if (pr.user.login !== 'dependabot[bot]') {
+              console.log(`PR author is ${pr.user.login}, not dependabot — skipping`);
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            core.setOutput('skip', 'false');
+            core.setOutput('pr_number', String(pr.number));
+            core.setOutput('pr_title', pr.title);
+            core.setOutput('pr_url', pr.html_url);
+            core.setOutput('pr_body', (pr.body || '').slice(0, 3000));
+
+      - name: Check for duplicate WO issue
+        id: dedup
+        if: steps.pr.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = '${{ steps.pr.outputs.pr_number }}';
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'new-wo',
+              per_page: 100,
+            });
+
+            const duplicate = issues.find(i => i.body && i.body.includes(`#${prNumber}`));
+            if (duplicate) {
+              console.log(`WO issue already exists for PR #${prNumber}: #${duplicate.number} — skipping`);
+              core.setOutput('skip', 'true');
+            } else {
+              core.setOutput('skip', 'false');
+            }
+
+      - name: Create WO issue
+        id: issue
+        if: steps.pr.outputs.skip != 'true' && steps.dedup.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prTitle = `${{ steps.pr.outputs.pr_title }}`;
+            const prUrl = `${{ steps.pr.outputs.pr_url }}`;
+            const prNumber = `${{ steps.pr.outputs.pr_number }}`;
+            const prBody = `${{ steps.pr.outputs.pr_body }}`;
+            const branch = `${{ github.event.workflow_run.head_branch }}`;
+
+            // Extract ecosystem and package hint from branch name
+            // e.g. dependabot/npm_and_yarn/recharts-3.9.0 → npm: recharts
+            const parts = branch.replace('dependabot/', '').split('/');
+            const ecosystem = parts[0] || 'dependency';
+            const packageHint = parts.slice(1).join('/') || 'unknown package';
+
+            const issueTitle = `Breaking dependency upgrade needs migration: ${prTitle}`;
+
+            const issueBody = [
+              `## Summary`,
+              ``,
+              `Dependabot PR #${prNumber} bumped a **${ecosystem}** dependency but CI failed.`,
+              `This is a breaking change — a plain merge would break the build.`,
+              `The Dependabot PR should be **closed** and replaced with a WO that does the full migration.`,
+              ``,
+              `**Dependabot PR:** ${prUrl}`,
+              `**Package hint:** \`${packageHint}\``,
+              ``,
+              `## Dependabot PR Description`,
+              ``,
+              prBody || '_No description provided._',
+              ``,
+              `## Expected WO Scope`,
+              ``,
+              `- Close PR #${prNumber} (the version bump alone is not sufficient)`,
+              `- Identify all breaking API / type changes introduced by the new version`,
+              `- Update every affected file to use the new API`,
+              `- Confirm CI passes with the upgraded version pinned`,
+              `- Add a changelog note if this is user-visible`,
+              ``,
+              `---`,
+              `_Auto-created by the Dependabot → WO bridge when CI failed on PR #${prNumber}._`,
+            ].join('\n');
+
+            // Ensure required labels exist before using them
+            const labelsToApply = ['new-wo'];
+            for (const label of ['dependencies', 'breaking-change']) {
+              try {
+                await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label,
+                });
+                labelsToApply.push(label);
+              } catch (_) {
+                // label doesn't exist — skip it rather than failing
+              }
+            }
+
+            const { data: issue } = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: issueTitle,
+              body: issueBody,
+              labels: labelsToApply,
+            });
+
+            console.log(`WO issue created: ${issue.html_url}`);
+            core.setOutput('issue_url', issue.html_url);
+            core.setOutput('issue_number', String(issue.number));
+
+      - name: Comment on Dependabot PR
+        if: steps.pr.outputs.skip != 'true' && steps.dedup.outputs.skip != 'true' && steps.issue.outputs.issue_url != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = parseInt('${{ steps.pr.outputs.pr_number }}');
+            const issueUrl = '${{ steps.issue.outputs.issue_url }}';
+            const issueNumber = '${{ steps.issue.outputs.issue_number }}';
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: [
+                `⚠️ **CI failed — this upgrade has breaking changes.**`,
+                ``,
+                `A plain merge of this PR would break the build. A migration WO has been created instead:`,
+                `**Issue #${issueNumber}:** ${issueUrl}`,
+                ``,
+                `The planning agent will draft a WO spec from that issue. Once implemented and merged, this PR can be closed.`,
+              ].join('\n'),
+            });
