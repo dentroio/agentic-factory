@@ -436,7 +436,7 @@
             <div class="px-4 py-2.5 border-t border-slate-800/60 flex gap-2">
               <button onclick="publishWO(this, ${JSON.stringify(draft).replace(/"/g,'&quot;')})"
                 class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition-all">
-                Publish to GitHub
+                Create WO
               </button>
               <button onclick="this.closest('.pm-msg-assistant').remove()"
                 class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition-all">
@@ -523,7 +523,7 @@
 
     /* ── Publish WO ──────────────────────────────────────────────────── */
     window.publishWO = async function(btn, draft) {
-      btn.textContent = 'Publishing…';
+      btn.textContent = 'Creating…';
       btn.disabled = true;
       try {
         const r = await fetch('/api/factory/wos', {
@@ -536,7 +536,7 @@
           btn.closest('.overflow-hidden').innerHTML = `<div class="px-4 py-3 flex items-center gap-3">
             <span class="text-emerald-400">✅</span>
             <div>
-              <div class="text-sm font-semibold text-slate-200">Work order published</div>
+              <div class="text-sm font-semibold text-slate-200">Work order created</div>
               <a href="${data.pr_url || data.url}" target="_blank" class="text-xs text-indigo-400 hover:underline">View WO-${data.wo_number} →</a>
             </div></div>`;
           toggleWOHints(false);

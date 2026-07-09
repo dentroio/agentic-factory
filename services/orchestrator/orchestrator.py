@@ -14,7 +14,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import thread as thread_store
@@ -250,6 +250,14 @@ def _init_db() -> None:
               description TEXT DEFAULT ''
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS programs (
+              id          TEXT PRIMARY KEY,
+              label       TEXT NOT NULL,
+              description TEXT DEFAULT '',
+              added_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
 
 
 def _db_load_all_runs() -> dict[str, dict]:
@@ -354,6 +362,32 @@ def _db_get_milestones() -> list[dict]:
             return [dict(r) for r in rows]
     except Exception:
         return []
+
+
+def _db_get_programs() -> list[dict]:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute("SELECT id, label, description, added_at FROM programs ORDER BY label").fetchall()
+        return [{"id": r[0], "label": r[1], "description": r[2], "added_at": r[3]} for r in rows]
+    except Exception:
+        return []
+
+
+def _db_upsert_program(id_: str, label: str, description: str = "") -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO programs (id, label, description) VALUES (?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET label=excluded.label, description=excluded.description",
+            (id_, label, description),
+        )
+        conn.commit()
+
+
+def _db_delete_program(id_: str) -> bool:
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.execute("DELETE FROM programs WHERE id = ?", (id_,))
+        conn.commit()
+    return cur.rowcount > 0
 
 
 def _db_get_queue_wo_ids() -> set[str]:
@@ -655,6 +689,17 @@ class MilestoneRequest(BaseModel):
 class MilestoneUpdateRequest(BaseModel):
     label: str | None = None
     target_date: str | None = None
+    description: str | None = None
+
+
+class ProgramCreate(BaseModel):
+    id: str
+    label: str
+    description: str = ""
+
+
+class ProgramUpdate(BaseModel):
+    label: str | None = None
     description: str | None = None
 
 
@@ -1473,6 +1518,40 @@ async def delete_milestone(milestone_id: str):
     return {"ok": True, "id": milestone_id}
 
 
+# ── Programs CRUD endpoints ───────────────────────────────────────────────────
+
+@app.get("/api/programs")
+async def list_programs():
+    return JSONResponse(content=_db_get_programs())
+
+
+@app.post("/api/programs", status_code=201)
+async def create_program(req: ProgramCreate):
+    existing = [p for p in _db_get_programs() if p["id"] == req.id]
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Program '{req.id}' already exists")
+    _db_upsert_program(req.id, req.label, req.description)
+    return {"ok": True, "program_id": req.id}
+
+
+@app.put("/api/programs/{program_id}")
+async def update_program(program_id: str, req: ProgramUpdate):
+    existing = next((p for p in _db_get_programs() if p["id"] == program_id), None)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Program '{program_id}' not found")
+    label = req.label if req.label is not None else existing["label"]
+    description = req.description if req.description is not None else existing["description"]
+    _db_upsert_program(program_id, label, description)
+    return {"ok": True}
+
+
+@app.delete("/api/programs/{program_id}")
+async def delete_program(program_id: str):
+    if not _db_delete_program(program_id):
+        raise HTTPException(status_code=404, detail=f"Program '{program_id}' not found")
+    return {"ok": True}
+
+
 # ── Runner log stream (HTTP push from runner, SSE to browser) ─────────────────
 
 class LogLine(BaseModel):
@@ -2172,6 +2251,7 @@ async def poll() -> None:
             "deferred": [],
             "milestones": _db_get_milestones(),
             "phases": _db_get_phases(),
+            "programs": _db_get_programs(),
         },
         "runner_capacity": {
             "total": watchdog.get("summary", {}).get("runners_online", 0) if watchdog else 0,
@@ -2705,8 +2785,29 @@ YOUR CAPABILITIES:
 - Draft new work orders from plain-English feature requests
 - Trigger Dependabot actions (rebase, recreate, merge)
 - Dispatch WOs directly to an agent backend
+- Create and delete Programs, Phases, and Milestones
 - Priorities: P1=core/risky, P2=feature/additive, P3=docs
 - Effort: XS<1h S~2h M=½d L=1d XL=2-3d
+
+PLANNING STRUCTURE — these three concepts organize work:
+  Program  — what initiative a WO belongs to (e.g. "Launch Program"). Pure label; assign when creating a WO.
+  Phase    — when a WO gets dispatched. "now" phase runs first, then "backlog". Controls dispatch order.
+  Milestone — a delivery gate. WOs that block a milestone must all complete before it's declared done.
+
+PLAN MANAGEMENT ACTIONS — emit at the END of your response after telling the user what you're creating/deleting:
+  [CREATE_PROGRAM:id|label|description]
+  [CREATE_PHASE:id|label|target_date]
+  [CREATE_MILESTONE:id|label|target_date|description]
+  [DELETE_PROGRAM:id]
+  [DELETE_PHASE:id]
+  [DELETE_MILESTONE:id]
+
+  Rules for IDs: lowercase, hyphens only, no spaces (e.g. "launch-program", "q3-2026", "v1-beta")
+  target_date format: YYYY-MM-DD or empty string
+  description: plain text, no pipes allowed
+  Example: User says "Create a program for security work"
+    → Reply: "Creating a Security Hardening program for compliance-focused work."
+    → Tag: [CREATE_PROGRAM:security-hardening|Security Hardening|Compliance and security posture improvements]
 
 DISPATCH ACTION — emit at the END of your response when the user confirms they want to start a WO:
   [DISPATCH:WO-NNN:backend]  — claim WO-NNN and dispatch to backend (claude, cursor, codex, gemini)
@@ -3132,6 +3233,57 @@ async def pm_chat(req: PMChatRequest):
 
     if dispatch_results:
         clean_text = clean_text + "\n\n" + "\n".join(dispatch_results)
+
+    # Parse and execute plan management actions: CREATE/DELETE for programs, phases, milestones
+    plan_action_pattern = re.compile(
+        r"\[(CREATE_PROGRAM|CREATE_PHASE|CREATE_MILESTONE|DELETE_PROGRAM|DELETE_PHASE|DELETE_MILESTONE):([^\]]+)\]"
+    )
+    plan_action_results: list[str] = []
+    for match in plan_action_pattern.finditer(clean_text):
+        action = match.group(1)
+        args = match.group(2).split("|")
+        clean_text = clean_text.replace(match.group(0), "").strip()
+        try:
+            if action == "CREATE_PROGRAM":
+                id_ = args[0].strip()
+                label = args[1].strip() if len(args) > 1 else id_
+                desc = args[2].strip() if len(args) > 2 else ""
+                _db_upsert_program(id_, label, desc)
+                plan_action_results.append(f"✅ Program created: **{label}**")
+            elif action == "CREATE_PHASE":
+                id_ = args[0].strip()
+                label = args[1].strip() if len(args) > 1 else id_
+                target_date = args[2].strip() if len(args) > 2 else ""
+                _db_upsert_phase({"id": id_, "label": label, "target_date": target_date})
+                plan_action_results.append(f"✅ Phase created: **{label}**")
+            elif action == "CREATE_MILESTONE":
+                id_ = args[0].strip()
+                label = args[1].strip() if len(args) > 1 else id_
+                target_date = args[2].strip() if len(args) > 2 else ""
+                desc = args[3].strip() if len(args) > 3 else ""
+                _db_upsert_milestone({"id": id_, "label": label, "target_date": target_date, "description": desc})
+                plan_action_results.append(f"✅ Milestone created: **{label}**")
+            elif action == "DELETE_PROGRAM":
+                id_ = args[0].strip()
+                ok = _db_delete_program(id_)
+                plan_action_results.append(f"✅ Program deleted: {id_}" if ok else f"⚠️ Program '{id_}' not found")
+            elif action == "DELETE_PHASE":
+                id_ = args[0].strip()
+                with _db_connect() as conn:
+                    cur = conn.execute("DELETE FROM phases WHERE id = ?", (id_,))
+                    conn.commit()
+                plan_action_results.append(f"✅ Phase deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Phase '{id_}' not found")
+            elif action == "DELETE_MILESTONE":
+                id_ = args[0].strip()
+                with _db_connect() as conn:
+                    cur = conn.execute("DELETE FROM milestones WHERE id = ?", (id_,))
+                    conn.commit()
+                plan_action_results.append(f"✅ Milestone deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Milestone '{id_}' not found")
+        except Exception as exc:
+            plan_action_results.append(f"⚠️ {action} failed: {exc}")
+
+    if plan_action_results:
+        clean_text = clean_text + "\n\n" + "\n".join(plan_action_results)
 
     return {"type": "text", "reply": clean_text.strip(), "wo_draft": None}
 
