@@ -20,7 +20,7 @@ services:
       - orchestrator-data:/orchestrator:ro
       - factory-config:/config
       - ${HOME}/Library/Logs/factory-agent:/var/log/factory-agent:ro
-      - ${LOCAL_REPO_PATH}:/repos/primary:ro
+      - ${LOCAL_REPO_PATH}:/repos/primary
     restart: unless-stopped
     depends_on:
       - pr-watchdog
@@ -97,7 +97,7 @@ services:
     volumes:
       - orchestrator-data:/data
       - watchdog-data:/watchdog:ro
-      - ${LOCAL_REPO_PATH}:/repos/primary:ro
+      - ${LOCAL_REPO_PATH}:/repos/primary
     restart: unless-stopped
 
 volumes:

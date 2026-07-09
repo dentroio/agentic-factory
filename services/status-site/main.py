@@ -280,39 +280,6 @@ async def _load_ci_health() -> dict:
     return {"runs": recent, "pass_rate": pass_rate, "error": False}
 
 
-def _apply_plan_status(wos: dict[int, WOSpec]) -> None:
-    """Overlay PLAN.json statuses onto WOSpecs so done/deferred WOs show
-    correctly even when their spec file header still says Open.
-
-    Live data (branch/PR/dispatch) applied afterward by _apply_live_status()
-    will always win over this overlay.
-    """
-    plan = _load_plan_from_orchestrator()
-    if not plan:
-        return
-    # Collect all WOs from queue + deferred sections
-    all_entries: list[dict] = list(plan.get("all_wos") or plan.get("queue", []))
-    all_entries.extend(plan.get("deferred", []))
-
-    done_words = {"done", "complete", "superseded", "abandoned"}
-    deferred_entries = {e.get("wo") for e in plan.get("deferred", [])}
-    for entry in all_entries:
-        wo_str = entry.get("wo", "")
-        status = entry.get("status", "").lower()
-        try:
-            num = int(re.sub(r"[^0-9]", "", wo_str))
-        except (ValueError, TypeError):
-            continue
-        if num not in wos:
-            continue
-        spec = wos[num]
-        if any(w in status for w in done_words):
-            spec.status = "✅ Done"
-        elif "deferred" in status or wo_str in deferred_entries:
-            spec.status = "⏸ Deferred"
-        elif "progress" in status:
-            spec.status = "🔄 In Progress"
-
 
 def _apply_live_status(
     wos: dict[int, WOSpec],
@@ -423,7 +390,6 @@ async def dashboard(request: Request):
     )
     wos, wos_available = wos_result
 
-    _apply_plan_status(wos)
     _apply_live_status(wos, branches, prs, dispatch)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
@@ -547,7 +513,6 @@ async def pm_dashboard(request: Request):
         _pm_dispatch(),
     )
     wos, wos_available = wos_result
-    _apply_plan_status(wos)
     _apply_live_status(wos, branches, prs, dispatch)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
@@ -597,7 +562,18 @@ async def pm_dashboard(request: Request):
         for ms in plan_data.get("milestones", []):
             ms_id = ms["id"]
             ms_wos = [w for w in all_plan_wos if ms_id in w.get("blocks_milestones", [])]
-            remaining = sum(1 for w in ms_wos if w.get("status", "open").lower() not in {"done", "complete"})
+            # Use spec file board_column as the authority — not stale PLAN.json status fields.
+            def _wo_num(wo_str: str) -> int | None:
+                try:
+                    return int(re.sub(r"[^0-9]", "", wo_str))
+                except (ValueError, TypeError):
+                    return None
+            remaining = sum(
+                1 for w in ms_wos
+                if (n := _wo_num(w.get("wo", ""))) is None
+                or n not in wos
+                or wos[n].board_column not in ("done", "deferred")
+            )
             weeks_needed = remaining / avg_velocity
             proj_date = (now + timedelta(weeks=weeks_needed)).date()
             target_str = ms.get("target_date")
@@ -1338,7 +1314,6 @@ async def settings_plan_new_wo(request: Request, error: str = ""):
             pass
 
     wos, _ = await _load_wos()
-    _apply_plan_status(wos)
     existing_programs = sorted({s.program for s in wos.values() if s.program})
 
     plan = _load_plan_from_orchestrator() or {}
@@ -1403,7 +1378,6 @@ async def settings_plan_draft_wo(request: Request):
 
     if error or not draft:
         wos, _ = await _load_wos()
-        _apply_plan_status(wos)
         existing_programs = sorted({s.program for s in wos.values() if s.program})
         plan = _load_plan_from_orchestrator() or {}
         phases = [{"id": p.get("id", ""), "label": p.get("label", p.get("id", ""))} for p in plan.get("phases", [])]

@@ -30,16 +30,20 @@ class WOSpec:
 
     @property
     def board_column(self) -> str:
-        s = self.status.lower()
-        if "done" in s or "complete" in s or "✅" in self.status:
+        # Match on what the status STARTS WITH, not substrings anywhere in the text.
+        # This prevents inline mentions like "conflict advisor v1 done" or
+        # "deferred to WO-226" from hijacking the column assignment.
+        s = self.status.strip()
+        sl = s.lower()
+        if s.startswith("✅") or sl.startswith(("done", "complete", "completed")):
             return "done"
-        if "deferred" in s or "⏸" in self.status:
+        if s.startswith("⏸") or sl.startswith("deferred"):
             return "deferred"
-        if "review" in s or "👀" in self.status:
+        if s.startswith(("👀", "⏳")) or sl.startswith(("review", "in review", "awaiting")):
             return "review"
-        if "progress" in s or "🔄" in self.status:
+        if s.startswith("🔄") or sl.startswith(("in progress", "progress")):
             return "in_progress"
-        if "blocked" in s or "🔴" in self.status:
+        if s.startswith(("🔴", "❌")) or sl.startswith("blocked"):
             return "blocked"
         return "open"
 

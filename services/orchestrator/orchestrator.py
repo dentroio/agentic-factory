@@ -1010,13 +1010,19 @@ def _parse_depends_on(content: str) -> list[int]:
 
 
 def _is_done(status: str) -> bool:
-    s = status.lower()
-    return "done" in s or "complete" in s or "✅" in status or "deferred" in s or "superseded" in s or "abandoned" in s
+    # Match on status PREFIX only — substring matching causes "conflict advisor v1 done"
+    # or "deferred to WO-226" to incorrectly mark a WO as done/deferred.
+    s = status.strip()
+    sl = s.lower()
+    return (
+        s.startswith("✅") or s.startswith("⏸")
+        or sl.startswith(("done", "complete", "completed", "deferred", "superseded", "abandoned"))
+    )
 
 
 def _is_blocked(status: str) -> bool:
-    s = status.lower()
-    return "blocked" in s or "🔴" in s
+    s = status.strip()
+    return s.startswith(("🔴", "❌")) or s.lower().startswith("blocked")
 
 
 # ── GitHub data fetchers ──────────────────────────────────────────────────────
@@ -1512,20 +1518,20 @@ async def poll() -> None:
         {num: s for num, s in specs.items() if num in primary_open_wos}, done_wos,
     )
 
-    # WO-377: build runtime overlay — spec-file WOs not registered in PLAN.json
+    # Build runtime overlay — spec-file WOs not registered in PLAN.json queue.
+    # Uses prefix-based _is_done() so inline text like "deferred to WO-226" or
+    # "conflict advisor v1 done" does NOT cause a WO to be excluded from the overlay.
     global _plan_overlay
     plan_registered: set[str] = set()
     if plan_raw:
-        for w in plan_raw.get("queue", []) + plan_raw.get("deferred", []):
+        for w in plan_raw.get("queue", []):
             plan_registered.add(str(w.get("wo", "")))
-    _actionable_statuses = {"ready", "open", "partial", "planned"}
     _plan_overlay = []
     for num, spec in sorted(specs.items()):
         wo_id = f"WO-{num}"
         if wo_id in plan_registered:
             continue
-        status_raw = spec.get("status", "").lower()
-        if not any(s in status_raw for s in _actionable_statuses):
+        if _is_done(spec.get("status", "")) or _is_blocked(spec.get("status", "")):
             continue
         if spec.get("repo", GITHUB_REPO) != GITHUB_REPO:
             continue  # secondary-repo WOs board-visible only, not dispatchable
@@ -1534,7 +1540,7 @@ async def poll() -> None:
             "title": spec.get("title", wo_id),
             "priority": spec.get("priority", "P2"),
             "effort": spec.get("effort", ""),
-            "status": spec.get("status", "ready"),
+            "status": spec.get("status", "open"),
             "_overlay": True,
         })
 
