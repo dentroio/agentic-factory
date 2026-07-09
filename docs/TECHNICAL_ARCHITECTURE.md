@@ -166,30 +166,32 @@ A FastAPI + Jinja2 server (port 8099) that renders the live dashboard, provides 
 
 ### Plan Authoring (`services/status-site/github_writer.py`)
 
-`github_writer.py` handles all GitHub write operations from the factory UI. It authenticates with `GITHUB_TOKEN` and performs operations against the configured repository.
+`github_writer.py` handles all write operations from the factory UI. It operates in two modes depending on whether `LOCAL_REPO_MOUNT` is set:
 
-**Functions:**
+**Local mode** (`LOCAL_REPO_MOUNT` set — the default for the Docker Compose stack): Writes directly to the filesystem at the mount path. The target repo is mounted at `/repos/primary` (writable). WO spec files and PLAN.json are written to disk immediately — no git commit, no PR, no round-trip. The orchestrator's next poll cycle picks them up instantly. This is the correct mode for the agentic-factory running alongside a local Clarion checkout.
+
+**Remote mode** (no `LOCAL_REPO_MOUNT`): Falls back to the GitHub API — creates files on a branch and opens a PR. Useful for cloud deployments where no local repo mount is available.
 
 | Function | What it does |
 |----------|-------------|
-| `next_wo_number()` | Lists `WO_PATH` directory, extracts WO numbers, returns max + 1 |
+| `next_wo_number()` | Scans local filesystem glob (local mode) or GitHub API (remote mode), returns max WO number + 1 |
 | `render_wo_template()` | Generates the standard WO markdown spec from structured data |
-| `create_wo()` | Creates a spec file + PLAN.json entry on a branch, opens a PR |
-| `read_wo_file()` | Fetches raw markdown content for an existing WO spec |
-| `edit_wo()` | Updates an existing WO spec file on a new branch, opens a PR |
-| `add_phase()` | Adds a phase to PLAN.json on a branch, opens a PR |
-| `add_milestone()` | Adds a milestone to PLAN.json on a branch, opens a PR |
+| `create_wo()` | Writes spec file + PLAN.json entry; local mode = immediate disk write, remote mode = PR |
+| `read_wo_file()` | Reads raw markdown from local filesystem or GitHub API |
+| `edit_wo()` | Updates an existing WO spec file |
+| `add_phase()` | Adds a phase to PLAN.json |
+| `add_milestone()` | Adds a milestone to PLAN.json |
 
-**WO creation flow:**
-1. User describes the desired feature in a single textarea on the New WO page.
+**WO creation flow (local mode):**
+1. User describes the desired feature in the New WO textarea.
 2. User selects which AI backend generates the structured spec.
-3. Status site POSTs to orchestrator `/api/plan/draft` with the description and backend choice.
-4. Orchestrator routes to Anthropic SDK (for `claude-api`) or proxies to agent-runner draft server (for subscription CLIs).
+3. Status site POSTs to orchestrator `/api/plan/draft`.
+4. Orchestrator routes to Anthropic SDK (`claude-api`) or proxies to the agent-runner draft server (subscription CLIs).
 5. AI returns a JSON object with `title`, `priority`, `effort`, `services`, `problem`, `what_to_build`, `acceptance_criteria`, `notes`.
 6. Status site renders the review form with all fields pre-filled and editable.
-7. User reviews, edits, and clicks Open PR.
-8. `github_writer.create_wo()` creates the spec file, updates PLAN.json, opens the PR.
-9. After the PR merges, the orchestrator picks up the WO on its next poll cycle.
+7. User reviews, edits, and clicks Save.
+8. `github_writer.create_wo()` writes the spec file and updates PLAN.json directly on disk.
+9. The orchestrator picks up the new WO on its next poll cycle — typically within 5 minutes.
 
 ---
 
@@ -285,14 +287,39 @@ Four AI reviewers run sequentially for every non-P3 WO. Each reviewer receives:
 
 Each reviewer outputs zero or more `FINDING: {...}` JSON blocks. The chain stops early if any finding exceeds the reviewer's blocking severity threshold.
 
-| Reviewer | Backend env var | Blocks on |
-|----------|----------------|-----------|
-| security | `SECURITY_REVIEWER_BACKEND` | CRITICAL, HIGH |
-| architecture | `ARCH_REVIEWER_BACKEND` | CRITICAL |
-| correctness | `CORRECTNESS_REVIEWER_BACKEND` | CRITICAL, HIGH |
-| performance | `PERF_REVIEWER_BACKEND` | CRITICAL |
+| Reviewer | Blocks on |
+|----------|-----------|
+| security | CRITICAL, HIGH |
+| architecture | CRITICAL |
+| correctness | CRITICAL, HIGH |
+| performance | CRITICAL |
 
-Default backend for all reviewers is `claude`. Reviewer `ask()` calls go through the standard backend interface — they use the same subscription CLI as the main agent.
+**Backend assignment is live — not static.** At the start of each review chain run, `_fetch_agent_config()` calls `GET /api/config` on the orchestrator to read the current agent configuration. This means reviewer backend changes made in the Settings UI take effect on the next WO without any container restart.
+
+**Force cross-LLM review (`force_cross_llm_review`).** When this flag is `true` (the default) and more than one backend is available, `_assign_reviewer_backends()` automatically rotates reviewers across backends that differ from the coding agent. Example: if Cursor wrote the code and Claude + Codex are available, the four reviewers get assigned Claude/Codex/Claude/Codex in rotation. This prevents the same model from reviewing its own output. If only one backend is available, it is used for all reviewers regardless of the flag.
+
+When `force_cross_llm_review` is `false`, reviewer backends are assigned from the manual per-reviewer settings configured in Settings → Agents.
+
+Configure via Settings → Agents → Reviewer Assignments. The toggle and per-reviewer dropdowns are wired to `PUT /api/config` on the orchestrator, which persists to `/data/agent_config.json` on the data volume.
+
+---
+
+### Agent Configuration (`/data/agent_config.json`)
+
+Runtime agent settings are stored in `/data/agent_config.json` on the orchestrator's data volume and exposed via `GET /PUT /api/config`. This file is the authoritative source for settings that affect agent behavior — not environment variables, which require container restarts to change.
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `preferred` | `"claude"` | Which AI backend executes WOs |
+| `name` | `"factory-agent"` | Display name shown in the dashboard |
+| `timeout` | `7200` | Max seconds before a WO run is forcibly stopped |
+| `force_cross_llm_review` | `true` | Auto-assign reviewers to different LLMs from the coding agent |
+| `reviewers.security` | `"claude"` | Manual reviewer backend (used when `force_cross_llm_review` is false) |
+| `reviewers.architecture` | `"claude"` | Same |
+| `reviewers.correctness` | `"claude"` | Same |
+| `reviewers.performance` | `"claude"` | Same |
+
+All fields are editable from **Settings → Agents** in the dashboard. Changes take effect on the next WO the runner picks up — no container restart needed.
 
 ---
 
