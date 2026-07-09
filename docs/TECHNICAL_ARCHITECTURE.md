@@ -8,7 +8,7 @@ The factory has two complementary layers:
 
 2. **Runtime Docker layer** — a local Docker Compose stack that provides the live orchestrator, status dashboard, autonomous agent runner, and collaboration tools. This layer dispatches work, monitors agents in real time, manages credentials, and receives screenshots and annotations from browser extensions.
 
-Both layers share the same `PLAN.json` state and `docs/factory/` work order specs in the target repository.
+Both layers share the same WO spec files in `docs/project_management/work_orders/` of the target repository. The dispatch queue, phases, and milestones are stored in the orchestrator's SQLite database (`/data/factory.db`) — not in a git-tracked file — so they stay current automatically as WOs complete.
 
 ---
 
@@ -69,14 +69,28 @@ The orchestrator is a FastAPI application (APScheduler polling loop, port 8100) 
 | `/api/pm/dispatch` | POST | Directly dispatch a WO from PM chat; sets a priority slot in `/api/next` and wakes the runner via the draft server `/dispatch` endpoint |
 | `/api/pm/memory` | GET | Return the current PM session memory (`/data/pm_memory.json`) |
 | `/api/pm/memory` | POST | Write a key/value pair to PM memory (keys: `preferred_backend`, `decision`, `dispatched`) |
+| `/api/queue` | GET | List all queue entries ordered by position |
+| `/api/queue` | POST | Add a WO to the dispatch queue |
+| `/api/queue/{wo}` | GET | Get a single queue entry (includes `docs_required` field) |
+| `/api/queue/{wo}` | PUT | Update priority, effort, phase, notes, pin, blocks_milestones for a queued WO |
+| `/api/queue/{wo}` | DELETE | Remove a WO from the queue |
+| `/api/queue/{wo}/position` | PUT | Reorder — accepts `{position: N}` or `{before: "WO-NNN"}` |
+| `/api/phases` | GET | List all phases ordered by position |
+| `/api/phases` | POST | Create a phase |
+| `/api/phases/{id}` | PUT | Update a phase |
+| `/api/phases/{id}` | DELETE | Delete a phase |
+| `/api/milestones` | GET | List all milestones |
+| `/api/milestones` | POST | Create a milestone |
+| `/api/milestones/{id}` | PUT | Update a milestone |
+| `/api/milestones/{id}` | DELETE | Delete a milestone |
 
 **Secrets vault:** Credentials are stored at `/data/secrets.json` inside the orchestrator's Docker volume. They persist across restarts. The `GET /api/secrets` endpoint returns a boolean presence map — it never returns actual values. Set credentials via the factory dashboard (Settings → Authentication) or directly via `PUT /api/secrets`.
 
 **Hold/unhold queue:** The hold list is persisted at `/data/held_wos.json`. When `get_next()` is called, any WO in the hold set is skipped. Hold state survives container restarts.
 
-**SECONDARY_REPOS:** Set `SECONDARY_REPOS=owner/repo:path/to/wos` (comma-separated for multiple) to have the orchestrator poll additional GitHub repositories for WO specs. Secondary specs are merged into the board view and into the PM assistant's context (`_wo_status_summary()`), but they are **not dispatchable** — the dispatch queue only pulls from the primary repo's PLAN.json.
+**SECONDARY_REPOS:** Set `SECONDARY_REPOS=owner/repo:path/to/wos` (comma-separated for multiple) to have the orchestrator poll additional GitHub repositories for WO specs. Secondary specs are merged into the board view and into the PM assistant's context (`_wo_status_summary()`), but they are **not dispatchable** — the dispatch queue only pulls from the primary repo's DB queue.
 
-**PLAN overlay:** During each poll cycle the orchestrator computes a `_plan_overlay` — spec-file WOs from the primary repo that have an actionable status (Ready/Open/Planned) but are absent from PLAN.json. These are appended to `/api/next`'s queue at runtime, making spec-file-only WOs visible and dispatchable without requiring a PLAN.json entry.
+**PLAN overlay:** During each poll cycle the orchestrator computes a `_plan_overlay` — spec-file WOs from the primary repo that have an actionable status (Ready/Open/Planned) but are absent from the DB queue. These are appended to `/api/next`'s queue at runtime, making spec-file-only WOs visible and dispatchable without requiring a queue DB entry.
 
 **PM memory:** `/api/pm/memory` persists lightweight PM session state to `/data/pm_memory.json`. Tracked keys: `preferred_backend` (last chosen backend), `decision` (notable PM decisions), `dispatched` (WO IDs dispatched this session). The PM assistant reads this at the start of each chat turn to maintain continuity across container restarts.
 
@@ -87,6 +101,8 @@ The orchestrator is a FastAPI application (APScheduler polling loop, port 8100) 
 **Quality gate enforcement:** `/api/validate` rejects (HTTP 422) any call where `ci_passed=false` or `security_passed=false`. This is a hard gate — agents cannot request human review for broken code.
 
 **Draft routing:** `POST /api/plan/draft` accepts `{description, next_wo_num, backend}`. If `backend=claude-api`, it calls the Anthropic SDK directly using the key from the secrets vault. For all other backends (`claude`, `cursor`, `codex`, `gemini`), it proxies the request to the agent-runner draft server at `http://host.docker.internal:8101/api/draft` — so subscription CLI credentials never need to be in Docker.
+
+**PM situational brief:** Before calling the LLM for any WO draft, the orchestrator builds a `_pm_situational_brief()` — a ≤5,500-character context block injected into the system prompt containing: currently open WOs with priority and effort, the top 10 queue entries in order, active phases and milestone target dates, and a condensed version of `DOC_MAP.json` triggers (when `LOCAL_REPO_MOUNT` is set). This allows the PM agent to set priority, effort, and `depends_on` relative to what is already in flight rather than drafting blind. The same queue-order and milestone context is also injected into PM chat turns.
 
 **Notification hooks:** The orchestrator fires `notifications.py` on key lifecycle events, posting to ntfy.sh and Slack Block Kit webhooks in parallel if `NTFY_TOPIC` / `SLACK_WEBHOOK_URL` are configured (secrets vault or env vars). Both channels are no-ops if absent. Events: WO needs human review (high priority), WO complete (default), agent error/gave up (high), Dependabot PR merged (low), Dependabot conflict auto-rebased (low). `NTFY_SERVER` defaults to `https://ntfy.sh`; override to point at a self-hosted ntfy instance. Topics are auto-generated as `factory-{14 random alphanumeric chars}` by `make agent-setup` and managed via `Settings → Authentication`. `GET /api/notifications/config` returns the current topic and server (non-sensitive — needed by the Settings UI to display the subscribe URL). `POST /api/notifications/test` sends a test ping.
 
@@ -168,29 +184,30 @@ A FastAPI + Jinja2 server (port 8099) that renders the live dashboard, provides 
 
 `github_writer.py` handles all write operations from the factory UI. It operates in two modes depending on whether `LOCAL_REPO_MOUNT` is set:
 
-**Local mode** (`LOCAL_REPO_MOUNT` set — the default for the Docker Compose stack): Writes directly to the filesystem at the mount path. The target repo is mounted at `/repos/primary` (writable). WO spec files and PLAN.json are written to disk immediately — no git commit, no PR, no round-trip. The orchestrator's next poll cycle picks them up instantly. This is the correct mode for the agentic-factory running alongside a local Clarion checkout.
+**Local mode** (`LOCAL_REPO_MOUNT` set — the default for the Docker Compose stack): Writes the WO spec file directly to the filesystem at the mount path. The target repo is mounted at `/repos/primary` (writable). WO spec files are written to disk immediately — no git commit, no PR, no round-trip. Queue registration goes to the orchestrator DB via `POST /api/queue`. The orchestrator's next poll cycle picks up the spec instantly.
 
-**Remote mode** (no `LOCAL_REPO_MOUNT`): Falls back to the GitHub API — creates files on a branch and opens a PR. Useful for cloud deployments where no local repo mount is available.
+**Remote mode** (no `LOCAL_REPO_MOUNT`): Falls back to the GitHub API — creates the spec file on `main` via the Contents API, then calls `POST /api/queue` to register the WO in the DB. No PLAN.json write occurs in either mode.
 
 | Function | What it does |
 |----------|-------------|
 | `next_wo_number()` | Scans local filesystem glob (local mode) or GitHub API (remote mode), returns max WO number + 1 |
 | `render_wo_template()` | Generates the standard WO markdown spec from structured data |
-| `create_wo()` | Writes spec file + PLAN.json entry; local mode = immediate disk write, remote mode = PR |
+| `_parse_docs_required()` | Extracts `## Documentation Required` checklist items from a rendered spec; stored in `docs_required` column of the queue table |
+| `create_wo()` | Writes spec file; then calls `_register_in_queue()` to POST to `/api/queue` (both modes) |
 | `read_wo_file()` | Reads raw markdown from local filesystem or GitHub API |
 | `edit_wo()` | Updates an existing WO spec file |
-| `add_phase()` | Adds a phase to PLAN.json |
-| `add_milestone()` | Adds a milestone to PLAN.json |
+| `add_phase()` | POSTs to orchestrator `POST /api/phases` — writes to DB, not PLAN.json |
+| `add_milestone()` | POSTs to orchestrator `POST /api/milestones` — writes to DB, not PLAN.json |
 
 **WO creation flow (local mode):**
 1. User describes the desired feature in the New WO textarea.
 2. User selects which AI backend generates the structured spec.
 3. Status site POSTs to orchestrator `/api/plan/draft`.
-4. Orchestrator routes to Anthropic SDK (`claude-api`) or proxies to the agent-runner draft server (subscription CLIs).
-5. AI returns a JSON object with `title`, `priority`, `effort`, `services`, `problem`, `what_to_build`, `acceptance_criteria`, `notes`.
+4. Orchestrator builds the PM situational brief and injects it into the system prompt, then routes to Anthropic SDK (`claude-api`) or proxies to the agent-runner draft server (subscription CLIs).
+5. AI returns a JSON object with `title`, `priority`, `effort`, `services`, `problem`, `what_to_build`, `acceptance_criteria`, `notes`. Because the brief included open WOs and queue order, priority and `depends_on` are set relative to what is already in flight.
 6. Status site renders the review form with all fields pre-filled and editable.
 7. User reviews, edits, and clicks Save.
-8. `github_writer.create_wo()` writes the spec file and updates PLAN.json directly on disk.
+8. `github_writer.create_wo()` writes the spec file to disk and calls `POST /api/queue` to register the WO in the DB. Any `## Documentation Required` items in the spec are parsed and stored in `docs_required`.
 9. The orchestrator picks up the new WO on its next poll cycle — typically within 5 minutes.
 
 ---
@@ -250,11 +267,12 @@ Quality gate (quality_gate.py — runs in parallel):
     │
     ▼ (gate passes)
 Peer review chain (review_chain.py):
-    ├── security reviewer  (blocking on CRITICAL/HIGH)
+    ├── security reviewer      (blocking on CRITICAL/HIGH)
     ├── architecture reviewer  (blocking on CRITICAL)
-    ├── correctness reviewer  (blocking on CRITICAL/HIGH)
-    └── performance reviewer  (blocking on CRITICAL)
-    │   All 4 run for P0/P1/P2; none for P3
+    ├── correctness reviewer   (blocking on CRITICAL/HIGH)
+    ├── performance reviewer   (blocking on CRITICAL)
+    └── documentation reviewer (blocking on HIGH — only when docs_required non-empty)
+    │   Main 4 run for P0/P1/P2; none for P3
     │
     ▼ (all reviewers sign off)
 POST /api/validate (accepted — orchestrator queues for human review)
@@ -274,25 +292,31 @@ MANDATORY QUALITY, SECURITY & OPTIMIZATION REQUIREMENTS
 4. CODE QUALITY — follow existing patterns, no premature abstractions,
                   handle all error paths, functions ≤ ~40 lines
 5. Quality gate runs before validate is accepted. No bypass.
+6. DOCUMENTATION MANDATE — if the WO spec has a Documentation Required section,
+   every listed file must be updated before calling POST /api/validate.
+   The documentation reviewer will block the chain for any missing updates.
 ```
 
 ---
 
 ### Peer Review Chain (`services/agent-runner/review_chain.py`)
 
-Four AI reviewers run sequentially for every non-P3 WO. Each reviewer receives:
+Five AI reviewers run sequentially for every non-P3 WO. Each reviewer receives:
 - The WO spec (problem statement + acceptance criteria)
 - The full git diff (`HEAD~1..HEAD`)
 - Findings from previous reviewers (so later reviewers know what was already flagged)
 
 Each reviewer outputs zero or more `FINDING: {...}` JSON blocks. The chain stops early if any finding exceeds the reviewer's blocking severity threshold.
 
-| Reviewer | Blocks on |
-|----------|-----------|
-| security | CRITICAL, HIGH |
-| architecture | CRITICAL |
-| correctness | CRITICAL, HIGH |
-| performance | CRITICAL |
+| Reviewer | Blocks on | Notes |
+|----------|-----------|-------|
+| security | CRITICAL, HIGH | Always runs for P0/P1/P2 |
+| architecture | CRITICAL | Always runs for P0/P1/P2 |
+| correctness | CRITICAL, HIGH | Always runs for P0/P1/P2 |
+| performance | CRITICAL | Always runs for P0/P1/P2 |
+| documentation | HIGH | Runs after the main chain only when `docs_required` is non-empty |
+
+**Documentation reviewer:** When a WO spec has a `## Documentation Required` section, those items are stored in the `docs_required` column of the `queue` table. The runner fetches `docs_required` from `GET /api/queue/{wo}` before the review chain and passes it to `run_review_chain()`. If non-empty, a fifth reviewer checks whether the diff contains updates to each specified file. Missing updates produce `HIGH` findings that block the chain — the agent must update the required docs before human validation is requested. If `docs_required` is empty the documentation reviewer is skipped entirely.
 
 **Backend assignment is live — not static.** At the start of each review chain run, `_fetch_agent_config()` calls `GET /api/config` on the orchestrator to read the current agent configuration. This means reviewer backend changes made in the Settings UI take effect on the next WO without any container restart.
 
@@ -320,6 +344,56 @@ Runtime agent settings are stored in `/data/agent_config.json` on the orchestrat
 | `reviewers.performance` | `"claude"` | Same |
 
 All fields are editable from **Settings → Agents** in the dashboard. Changes take effect on the next WO the runner picks up — no container restart needed.
+
+---
+
+### Queue Database (`/data/factory.db`)
+
+The orchestrator stores dispatch state, queue order, phases, and milestones in a SQLite database at `/data/factory.db` on the data volume. This persists across container restarts.
+
+**Tables:**
+
+`runs` — active and completed WO dispatch records (pre-existing):
+```
+wo TEXT PRIMARY KEY, slug, agent, backend, workstation, claimed_at,
+status, step, last_seen, completed_at, pr_url, pr_number
+```
+
+`run_steps` — audit log of every status transition per WO (pre-existing):
+```
+id AUTOINCREMENT, wo TEXT, ts TEXT, status TEXT, step TEXT, agent TEXT
+```
+
+`queue` — the WO dispatch priority queue (source of truth for `/api/next`):
+```
+wo TEXT PRIMARY KEY     — e.g. "WO-374"
+title TEXT              — display title
+phase TEXT              — phase ID this WO belongs to
+priority TEXT           — P0 | P1 | P2 | P3
+effort TEXT             — XS | S | M | L | XL
+position INTEGER        — sort order; lower = higher priority
+pin INTEGER             — 0 | 1; pinned WOs float to the top
+blocks_milestones TEXT  — JSON array of milestone IDs this WO gates
+depends_on TEXT         — JSON array of WO IDs that must complete first
+notes TEXT              — free-text notes
+docs_required TEXT      — JSON array of {item, completed} from WO's "## Documentation Required"
+added_at TEXT           — ISO timestamp of queue registration
+```
+
+`phases` — sprints or planning phases:
+```
+id TEXT PRIMARY KEY, label TEXT, target_date TEXT,
+milestone_id TEXT, parallel INTEGER, description TEXT, position INTEGER
+```
+
+`milestones` — named delivery targets that phases contribute to:
+```
+id TEXT PRIMARY KEY, label TEXT, target_date TEXT, description TEXT
+```
+
+**Migration:** On first boot after the queue tables are created, the orchestrator runs a one-time import from `PLAN.json` if the file exists at `LOCAL_REPO_MOUNT/PLAN_PATH`. A sentinel file `/data/.plan_migrated` prevents the import from running twice. After migration, `PLAN.json` is no longer written or read — the DB is the single source of truth.
+
+**Auto-cleanup:** At the end of each poll cycle, WOs whose spec files have a done status (✅ Complete, ⏸ Deferred, etc.) are automatically deleted from the `queue` table. This keeps the queue current without manual housekeeping.
 
 ---
 
