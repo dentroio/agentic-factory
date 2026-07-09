@@ -402,8 +402,23 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
          "issue": f["issue_text"], "fix": ""}
         for f in gate.get("bandit_findings", [])
     ]
+
+    # Fetch docs_required from the orchestrator queue DB
+    docs_required: list[dict] = []
+    try:
+        import json as _json
+        async with _httpx.AsyncClient(timeout=5) as _qc:
+            _qr = await _qc.get(f"{ORCHESTRATOR_URL}/api/queue/{wo_id}")
+            if _qr.status_code == 200:
+                _entry = _qr.json()
+                raw = _entry.get("docs_required", "[]")
+                docs_required = _json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        pass
+
     review_passed, all_findings = await run_review_chain(
-        wo_spec, diff, monitor, security_findings
+        wo_spec, diff, monitor, security_findings,
+        coding_backend=preferred_agent, docs_required=docs_required or None,
     )
 
     # Collect ask_calls from review chain findings

@@ -1052,6 +1052,7 @@ async def settings_agents_save(request: Request):
         "preferred": str(form.get("preferred", "claude")).strip(),
         "name": str(form.get("name", "factory-agent")).strip(),
         "timeout": int(form.get("timeout", "7200")),
+        "force_cross_llm_review": form.get("force_cross_llm_review") == "1",
         "reviewers": {
             "security": str(form.get("reviewer_security", "claude")).strip(),
             "architecture": str(form.get("reviewer_architecture", "claude")).strip(),
@@ -1471,7 +1472,7 @@ async def settings_plan_create_phase(request: Request):
         result = await gw.add_phase(phase_data, GITHUB_TOKEN, GITHUB_REPO, PLAN_PATH)
         if "error" in result:
             return RedirectResponse(url=f"/settings/plan?error={result['error']}", status_code=303)
-        return RedirectResponse(url=f"/settings/plan?pr_url={result['pr_url']}", status_code=303)
+        return RedirectResponse(url="/settings/plan?created=phase", status_code=303)
     except Exception as e:
         return RedirectResponse(url=f"/settings/plan?error={str(e)[:120]}", status_code=303)
 
@@ -1492,7 +1493,7 @@ async def settings_plan_create_milestone(request: Request):
         result = await gw.add_milestone(milestone_data, GITHUB_TOKEN, GITHUB_REPO, PLAN_PATH)
         if "error" in result:
             return RedirectResponse(url=f"/settings/plan?error={result['error']}", status_code=303)
-        return RedirectResponse(url=f"/settings/plan?pr_url={result['pr_url']}", status_code=303)
+        return RedirectResponse(url="/settings/plan?created=milestone", status_code=303)
     except Exception as e:
         return RedirectResponse(url=f"/settings/plan?error={str(e)[:120]}", status_code=303)
 

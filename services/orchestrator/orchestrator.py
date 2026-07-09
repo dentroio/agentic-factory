@@ -94,6 +94,7 @@ _log_subscribers: list[asyncio.Queue] = []  # one Queue per active SSE client
 def _load_state() -> None:
     global _dispatch_state, _validations, _held_wos, _factory_paused
     _init_db()
+    _migrate_plan_json_to_db()
     # Load dispatch state: SQLite primary, JSON fallback (migration path)
     db_runs = _db_load_all_runs()
     if db_runs:
@@ -214,6 +215,41 @@ def _init_db() -> None:
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_run_steps_wo ON run_steps(wo)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS queue (
+              wo          TEXT PRIMARY KEY,
+              title       TEXT NOT NULL,
+              phase       TEXT DEFAULT '',
+              priority    TEXT NOT NULL DEFAULT 'P2',
+              effort      TEXT DEFAULT '',
+              position    INTEGER NOT NULL DEFAULT 9999,
+              pin         INTEGER NOT NULL DEFAULT 0,
+              blocks_milestones TEXT DEFAULT '[]',
+              depends_on  TEXT DEFAULT '[]',
+              notes       TEXT DEFAULT '',
+              docs_required TEXT DEFAULT '[]',
+              added_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS phases (
+              id          TEXT PRIMARY KEY,
+              label       TEXT NOT NULL,
+              target_date TEXT DEFAULT '',
+              milestone_id TEXT,
+              parallel    INTEGER NOT NULL DEFAULT 0,
+              description TEXT DEFAULT '',
+              position    INTEGER NOT NULL DEFAULT 9999
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS milestones (
+              id          TEXT PRIMARY KEY,
+              label       TEXT NOT NULL,
+              target_date TEXT DEFAULT '',
+              description TEXT DEFAULT ''
+            )
+        """)
 
 
 def _db_load_all_runs() -> dict[str, dict]:
@@ -276,6 +312,243 @@ def _db_append_step(wo_id: str, status: str, step: str = "", agent: str = "") ->
         print(f"[db] append_step failed for {wo_id}: {e}")
 
 
+# ── Queue / phases / milestones DB helpers ────────────────────────────────────
+
+def _db_get_queue() -> list[dict]:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM queue ORDER BY position ASC, added_at ASC").fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                d["pin"] = bool(d.get("pin", 0))
+                d["blocks_milestones"] = json.loads(d.get("blocks_milestones") or "[]")
+                d["depends_on"] = json.loads(d.get("depends_on") or "[]")
+                result.append(d)
+            return result
+    except Exception:
+        return []
+
+
+def _db_get_phases() -> list[dict]:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM phases ORDER BY position ASC").fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                d["parallel"] = bool(d.get("parallel", 0))
+                result.append(d)
+            return result
+    except Exception:
+        return []
+
+
+def _db_get_milestones() -> list[dict]:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM milestones").fetchall()
+            return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def _db_get_queue_wo_ids() -> set[str]:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute("SELECT wo FROM queue").fetchall()
+            return {row[0] for row in rows}
+    except Exception:
+        return set()
+
+
+def _db_build_plan_dict() -> dict:
+    """Build a dict compatible with plan_engine.next_wo() / sorted_queue() from DB tables."""
+    return {
+        "phases": _db_get_phases(),
+        "queue": _db_get_queue(),
+    }
+
+
+def _db_remove_done_wos(done_wo_ids: set[str]) -> int:
+    if not done_wo_ids:
+        return 0
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            placeholders = ",".join("?" * len(done_wo_ids))
+            cur = conn.execute(f"DELETE FROM queue WHERE wo IN ({placeholders})", list(done_wo_ids))
+            conn.commit()
+            return cur.rowcount
+    except Exception as e:
+        print(f"[db] remove_done_wos failed: {e}")
+        return 0
+
+
+def _db_upsert_queue_entry(entry: dict) -> None:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            max_pos = conn.execute("SELECT COALESCE(MAX(position), 0) FROM queue").fetchone()[0]
+            conn.execute("""
+                INSERT INTO queue
+                  (wo, title, phase, priority, effort, position, pin,
+                   blocks_milestones, depends_on, notes, docs_required)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(wo) DO UPDATE SET
+                  title=excluded.title, phase=excluded.phase, priority=excluded.priority,
+                  effort=excluded.effort, pin=excluded.pin,
+                  blocks_milestones=excluded.blocks_milestones,
+                  depends_on=excluded.depends_on, notes=excluded.notes,
+                  docs_required=excluded.docs_required
+            """, (
+                entry["wo"],
+                entry.get("title", entry["wo"]),
+                entry.get("phase", ""),
+                entry.get("priority", "P2"),
+                entry.get("effort", ""),
+                entry.get("position", max_pos + 10),
+                1 if entry.get("pin") else 0,
+                json.dumps(entry.get("blocks_milestones", [])),
+                json.dumps(entry.get("depends_on", [])),
+                entry.get("notes", ""),
+                entry.get("docs_required", "[]"),
+            ))
+            conn.commit()
+    except Exception as e:
+        print(f"[db] upsert_queue_entry failed for {entry.get('wo')}: {e}")
+
+
+def _db_upsert_phase(phase: dict) -> None:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            max_pos = conn.execute("SELECT COALESCE(MAX(position), 0) FROM phases").fetchone()[0]
+            conn.execute("""
+                INSERT INTO phases (id, label, target_date, milestone_id, parallel, description, position)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  label=excluded.label, target_date=excluded.target_date,
+                  milestone_id=excluded.milestone_id, parallel=excluded.parallel,
+                  description=excluded.description
+            """, (
+                phase["id"],
+                phase.get("label", phase["id"]),
+                phase.get("target_date", ""),
+                phase.get("milestone_id") or phase.get("milestone"),
+                1 if phase.get("parallel") else 0,
+                phase.get("description", ""),
+                phase.get("position", max_pos + 10),
+            ))
+            conn.commit()
+    except Exception as e:
+        print(f"[db] upsert_phase failed for {phase.get('id')}: {e}")
+
+
+def _db_upsert_milestone(milestone: dict) -> None:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+                INSERT INTO milestones (id, label, target_date, description)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  label=excluded.label, target_date=excluded.target_date,
+                  description=excluded.description
+            """, (
+                milestone["id"],
+                milestone.get("label", milestone["id"]),
+                milestone.get("target_date", ""),
+                milestone.get("description", ""),
+            ))
+            conn.commit()
+    except Exception as e:
+        print(f"[db] upsert_milestone failed for {milestone.get('id')}: {e}")
+
+
+def _migrate_plan_json_to_db() -> None:
+    """One-time import of PLAN.json into the queue/phases/milestones tables. Idempotent."""
+    sentinel = DATA_DIR / ".plan_migrated"
+    if sentinel.exists():
+        return
+
+    plan_file: Path | None = None
+    if LOCAL_REPO_MOUNT:
+        candidate = Path(LOCAL_REPO_MOUNT) / PLAN_PATH
+        if candidate.exists():
+            plan_file = candidate
+
+    if plan_file is None:
+        sentinel.touch()
+        return
+
+    try:
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[orchestrator] PLAN.json migration parse failed: {e}")
+        sentinel.touch()
+        return
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            existing_count = conn.execute("SELECT COUNT(*) FROM queue").fetchone()[0]
+            if existing_count > 0:
+                sentinel.touch()
+                return
+
+            for i, w in enumerate(plan.get("queue", [])):
+                conn.execute("""
+                    INSERT OR IGNORE INTO queue
+                      (wo, title, phase, priority, effort, position, pin,
+                       blocks_milestones, depends_on, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    w["wo"],
+                    w.get("title", w["wo"]),
+                    w.get("phase", ""),
+                    w.get("priority", "P2"),
+                    w.get("effort", ""),
+                    (i + 1) * 10,
+                    1 if w.get("pin") else 0,
+                    json.dumps(w.get("blocks_milestones", [])),
+                    json.dumps(w.get("depends_on", [])),
+                    w.get("notes", ""),
+                ))
+
+            for i, p in enumerate(plan.get("phases", [])):
+                conn.execute("""
+                    INSERT OR IGNORE INTO phases
+                      (id, label, target_date, milestone_id, parallel, description, position)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    p["id"],
+                    p.get("label", p["id"]),
+                    p.get("target_date", ""),
+                    p.get("milestone") or p.get("milestone_id"),
+                    1 if p.get("parallel") else 0,
+                    p.get("description", ""),
+                    (i + 1) * 10,
+                ))
+
+            for m in plan.get("milestones", []):
+                conn.execute("""
+                    INSERT OR IGNORE INTO milestones (id, label, target_date, description)
+                    VALUES (?, ?, ?, ?)
+                """, (
+                    m["id"],
+                    m.get("label", m["id"]),
+                    m.get("target_date", ""),
+                    m.get("description", ""),
+                ))
+
+            conn.commit()
+        print(f"[orchestrator] PLAN.json migrated to SQLite — {len(plan.get('queue', []))} queue entries, "
+              f"{len(plan.get('phases', []))} phases, {len(plan.get('milestones', []))} milestones")
+    except Exception as e:
+        print(f"[orchestrator] PLAN.json migration to DB failed: {e}")
+
+    sentinel.touch()
+
+
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 class ClaimRequest(BaseModel):
@@ -324,6 +597,65 @@ class ThreadMessage(BaseModel):
 class ValidationDecision(BaseModel):
     decided_by: str
     notes: str = ""
+
+
+class QueueEntryRequest(BaseModel):
+    wo: str
+    title: str
+    phase: str = ""
+    priority: str = "P2"
+    effort: str = ""
+    pin: bool = False
+    blocks_milestones: list[str] = []
+    depends_on: list[str] = []
+    notes: str = ""
+    docs_required: str = "[]"
+
+
+class QueueUpdateRequest(BaseModel):
+    title: str | None = None
+    phase: str | None = None
+    priority: str | None = None
+    effort: str | None = None
+    pin: bool | None = None
+    blocks_milestones: list[str] | None = None
+    depends_on: list[str] | None = None
+    notes: str | None = None
+
+
+class QueuePositionRequest(BaseModel):
+    position: int | None = None
+    before: str | None = None  # "WO-NNN" — insert before this WO
+
+
+class PhaseRequest(BaseModel):
+    id: str
+    label: str
+    target_date: str = ""
+    milestone_id: str | None = None
+    parallel: bool = False
+    description: str = ""
+
+
+class PhaseUpdateRequest(BaseModel):
+    label: str | None = None
+    target_date: str | None = None
+    milestone_id: str | None = None
+    parallel: bool | None = None
+    description: str | None = None
+
+
+class MilestoneRequest(BaseModel):
+    id: str
+    label: str
+    target_date: str = ""
+    description: str = ""
+
+
+class MilestoneUpdateRequest(BaseModel):
+    label: str | None = None
+    target_date: str | None = None
+    description: str | None = None
 
 
 # ── FastAPI app + lifespan ────────────────────────────────────────────────────
@@ -896,6 +1228,251 @@ async def get_run_history(wo_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Queue CRUD endpoints ──────────────────────────────────────────────────────
+
+@app.get("/api/queue")
+async def list_queue():
+    """Return all queue entries ordered by position."""
+    return _db_get_queue()
+
+
+@app.get("/api/queue/{wo_id}")
+async def get_queue_entry(wo_id: str):
+    wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM queue WHERE wo = ?", (wo_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"{wo_id} not in queue")
+            d = dict(row)
+            d["pin"] = bool(d.get("pin", 0))
+            d["blocks_milestones"] = json.loads(d.get("blocks_milestones") or "[]")
+            d["depends_on"] = json.loads(d.get("depends_on") or "[]")
+            return d
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/queue")
+async def add_to_queue(req: QueueEntryRequest):
+    """Add a WO to the dispatch queue."""
+    _db_upsert_queue_entry({
+        "wo": req.wo,
+        "title": req.title,
+        "phase": req.phase,
+        "priority": req.priority,
+        "effort": req.effort,
+        "pin": req.pin,
+        "blocks_milestones": req.blocks_milestones,
+        "depends_on": req.depends_on,
+        "notes": req.notes,
+        "docs_required": req.docs_required,
+    })
+    return {"ok": True, "wo": req.wo}
+
+
+@app.put("/api/queue/{wo_id}")
+async def update_queue_entry(wo_id: str, req: QueueUpdateRequest):
+    """Update metadata for a queue entry (priority, effort, phase, notes, pin, blocks_milestones)."""
+    wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute("SELECT * FROM queue WHERE wo = ?", (wo_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"{wo_id} not in queue")
+            updates: list[str] = []
+            params: list = []
+            if req.title is not None:
+                updates.append("title=?"); params.append(req.title)
+            if req.phase is not None:
+                updates.append("phase=?"); params.append(req.phase)
+            if req.priority is not None:
+                updates.append("priority=?"); params.append(req.priority)
+            if req.effort is not None:
+                updates.append("effort=?"); params.append(req.effort)
+            if req.pin is not None:
+                updates.append("pin=?"); params.append(1 if req.pin else 0)
+            if req.blocks_milestones is not None:
+                updates.append("blocks_milestones=?"); params.append(json.dumps(req.blocks_milestones))
+            if req.depends_on is not None:
+                updates.append("depends_on=?"); params.append(json.dumps(req.depends_on))
+            if req.notes is not None:
+                updates.append("notes=?"); params.append(req.notes)
+            if not updates:
+                return {"ok": True, "wo": wo_id}
+            params.append(wo_id)
+            conn.execute(f"UPDATE queue SET {', '.join(updates)} WHERE wo = ?", params)
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "wo": wo_id}
+
+
+@app.put("/api/queue/{wo_id}/position")
+async def reorder_queue_entry(wo_id: str, req: QueuePositionRequest):
+    """Reorder a queue entry. Pass position (absolute int) or before (WO ID to insert before)."""
+    wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            if req.before:
+                before_id = req.before.upper() if req.before.upper().startswith("WO-") else f"WO-{req.before}"
+                before_pos = conn.execute("SELECT position FROM queue WHERE wo = ?", (before_id,)).fetchone()
+                if not before_pos:
+                    raise HTTPException(status_code=404, detail=f"{before_id} not in queue")
+                new_pos = before_pos[0] - 1
+            elif req.position is not None:
+                new_pos = req.position
+            else:
+                raise HTTPException(status_code=400, detail="Provide position or before")
+            conn.execute("UPDATE queue SET position = ? WHERE wo = ?", (new_pos, wo_id))
+            conn.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "wo": wo_id}
+
+
+@app.delete("/api/queue/{wo_id}")
+async def remove_from_queue(wo_id: str):
+    """Remove a WO from the dispatch queue."""
+    wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("DELETE FROM queue WHERE wo = ?", (wo_id,))
+            conn.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "wo": wo_id}
+
+
+# ── Phases CRUD endpoints ─────────────────────────────────────────────────────
+
+@app.get("/api/phases")
+async def list_phases():
+    return _db_get_phases()
+
+
+@app.post("/api/phases")
+async def create_phase(req: PhaseRequest):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            existing = conn.execute("SELECT id FROM phases WHERE id = ?", (req.id,)).fetchone()
+            if existing:
+                raise HTTPException(status_code=409, detail=f"Phase '{req.id}' already exists")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    _db_upsert_phase(req.model_dump())
+    return {"ok": True, "id": req.id}
+
+
+@app.put("/api/phases/{phase_id}")
+async def update_phase(phase_id: str, req: PhaseUpdateRequest):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute("SELECT * FROM phases WHERE id = ?", (phase_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Phase '{phase_id}' not found")
+            updates: list[str] = []
+            params: list = []
+            if req.label is not None:
+                updates.append("label=?"); params.append(req.label)
+            if req.target_date is not None:
+                updates.append("target_date=?"); params.append(req.target_date)
+            if req.milestone_id is not None:
+                updates.append("milestone_id=?"); params.append(req.milestone_id)
+            if req.parallel is not None:
+                updates.append("parallel=?"); params.append(1 if req.parallel else 0)
+            if req.description is not None:
+                updates.append("description=?"); params.append(req.description)
+            if updates:
+                params.append(phase_id)
+                conn.execute(f"UPDATE phases SET {', '.join(updates)} WHERE id = ?", params)
+                conn.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "id": phase_id}
+
+
+@app.delete("/api/phases/{phase_id}")
+async def delete_phase(phase_id: str):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("DELETE FROM phases WHERE id = ?", (phase_id,))
+            conn.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "id": phase_id}
+
+
+# ── Milestones CRUD endpoints ─────────────────────────────────────────────────
+
+@app.get("/api/milestones")
+async def list_milestones():
+    return _db_get_milestones()
+
+
+@app.post("/api/milestones")
+async def create_milestone(req: MilestoneRequest):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            existing = conn.execute("SELECT id FROM milestones WHERE id = ?", (req.id,)).fetchone()
+            if existing:
+                raise HTTPException(status_code=409, detail=f"Milestone '{req.id}' already exists")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    _db_upsert_milestone(req.model_dump())
+    return {"ok": True, "id": req.id}
+
+
+@app.put("/api/milestones/{milestone_id}")
+async def update_milestone(milestone_id: str, req: MilestoneUpdateRequest):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute("SELECT * FROM milestones WHERE id = ?", (milestone_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Milestone '{milestone_id}' not found")
+            updates: list[str] = []
+            params: list = []
+            if req.label is not None:
+                updates.append("label=?"); params.append(req.label)
+            if req.target_date is not None:
+                updates.append("target_date=?"); params.append(req.target_date)
+            if req.description is not None:
+                updates.append("description=?"); params.append(req.description)
+            if updates:
+                params.append(milestone_id)
+                conn.execute(f"UPDATE milestones SET {', '.join(updates)} WHERE id = ?", params)
+                conn.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "id": milestone_id}
+
+
+@app.delete("/api/milestones/{milestone_id}")
+async def delete_milestone(milestone_id: str):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("DELETE FROM milestones WHERE id = ?", (milestone_id,))
+            conn.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "id": milestone_id}
+
+
 # ── Runner log stream (HTTP push from runner, SSE to browser) ─────────────────
 
 class LogLine(BaseModel):
@@ -1435,7 +2012,6 @@ async def poll() -> None:
         active_branches_task = _fetch_active_branches(client, GITHUB_REPO)
         pr_wos_task = _fetch_open_pr_wos(client, GITHUB_REPO)
         merged_task = _fetch_merged_wo_count_this_week(client)
-        plan_task = _fetch_plan(client)
         merged_wo_prs_task = _fetch_recently_merged_wo_prs(client)
 
         # Secondary repo fetches (parallel)
@@ -1449,7 +2025,6 @@ async def poll() -> None:
             active_branches_task,
             pr_wos_task,
             merged_task,
-            plan_task,
             merged_wo_prs_task,
             *secondary_tasks,
         )
@@ -1458,8 +2033,7 @@ async def poll() -> None:
     active_branch_wos: set[int] = results[1]
     pr_wos: set[int] = results[2]
     merged_this_week: int = results[3]
-    plan_raw: dict | None = results[4]
-    merged_wo_prs: dict[int, str] = results[5]  # {wo_num: pr_html_url}
+    merged_wo_prs: dict[int, str] = results[4]  # {wo_num: pr_html_url}
 
     # If GitHub returned no specs (rate-limited or network error), preserve the last-good
     # output so the queue doesn't go empty and running WOs keep their position.
@@ -1488,7 +2062,7 @@ async def poll() -> None:
     # Merge secondary specs (secondary repos contribute board visibility only)
     # Never overwrite primary-repo specs — WO numbers can collide across repos
     specs: dict[int, dict] = dict(primary_specs)
-    for sec_specs in results[6:]:
+    for sec_specs in results[5:]:
         for num, spec in sec_specs.items():
             if num not in specs:
                 specs[num] = spec
@@ -1507,26 +2081,22 @@ async def poll() -> None:
     # Plan engine only operates on primary repo WOs
     primary_open_wos = {num for num in open_wos if specs[num].get("repo", GITHUB_REPO) == GITHUB_REPO}
 
-    plan_next: dict | None = None
-    plan_queue_sorted: list[dict] = []
-    if plan_raw:
-        wo_statuses = _build_wo_statuses(primary_specs, active_branch_wos, pr_wos,
-                                         {n for n in done_wos if n in primary_specs})
-        plan_next = next_wo(plan_raw, wo_statuses)
-        plan_queue_sorted = sorted_queue(plan_raw, wo_statuses)
+    # Build plan dict from DB (queue / phases / milestones)
+    plan_dict = _db_build_plan_dict()
+    wo_statuses = _build_wo_statuses(primary_specs, active_branch_wos, pr_wos,
+                                     {n for n in done_wos if n in primary_specs})
+    plan_next = next_wo(plan_dict, wo_statuses) if plan_dict.get("queue") else None
+    plan_queue_sorted = sorted_queue(plan_dict, wo_statuses)
 
     dispatch_queue, holding_queue, cycle_warnings = _resolve_dependencies(
         {num: s for num, s in specs.items() if num in primary_open_wos}, done_wos,
     )
 
-    # Build runtime overlay — spec-file WOs not registered in PLAN.json queue.
+    # Build runtime overlay — spec-file WOs not registered in the DB queue.
     # Uses prefix-based _is_done() so inline text like "deferred to WO-226" or
     # "conflict advisor v1 done" does NOT cause a WO to be excluded from the overlay.
     global _plan_overlay
-    plan_registered: set[str] = set()
-    if plan_raw:
-        for w in plan_raw.get("queue", []):
-            plan_registered.add(str(w.get("wo", "")))
+    plan_registered = _db_get_queue_wo_ids()
     _plan_overlay = []
     for num, spec in sorted(specs.items()):
         wo_id = f"WO-{num}"
@@ -1582,20 +2152,26 @@ async def poll() -> None:
     # Pending validations count for status site banner
     pending_validations = [v for v in _validations if v.get("status") == "pending"]
 
+    # Auto-cleanup: remove done WOs from the DB queue so it stays current
+    done_wo_ids = {f"WO-{n}" for n in done_wos if specs.get(n, {}).get("repo", GITHUB_REPO) == GITHUB_REPO}
+    removed = _db_remove_done_wos(done_wo_ids)
+    if removed:
+        print(f"[orchestrator] poll: removed {removed} completed WO(s) from queue")
+
     _orchestrator_output = {
         "generated_at": now_str,
         "poll_interval_seconds": POLL_INTERVAL,
         "max_parallel_wos": MAX_PARALLEL_WOS,
         "pending_validations": len(pending_validations),
         "plan": {
-            "loaded": plan_raw is not None,
-            "last_updated": plan_raw.get("last_updated") if plan_raw else None,
+            "loaded": True,
+            "last_updated": None,
             "next": plan_next,
-            "queue": plan_queue_sorted + _plan_overlay,  # overlay appended; PLAN.json items take priority
-            "all_wos": plan_raw.get("queue", []) if plan_raw else [],
-            "deferred": plan_raw.get("deferred", []) if plan_raw else [],
-            "milestones": plan_raw.get("milestones", []) if plan_raw else [],
-            "phases": plan_raw.get("phases", []) if plan_raw else [],
+            "queue": plan_queue_sorted + _plan_overlay,
+            "all_wos": _db_get_queue(),
+            "deferred": [],
+            "milestones": _db_get_milestones(),
+            "phases": _db_get_phases(),
         },
         "runner_capacity": {
             "total": watchdog.get("summary", {}).get("runners_online", 0) if watchdog else 0,
@@ -1636,6 +2212,7 @@ _DEFAULT_AGENT_CONFIG = {
     "preferred": "claude",
     "name": "factory-agent",
     "timeout": 7200,
+    "force_cross_llm_review": True,
     "reviewers": {
         "security": "claude",
         "architecture": "claude",
@@ -1826,7 +2403,7 @@ def _get_anthropic_key() -> str:
     """Read ANTHROPIC_API_KEY from env first, then secrets volume (set via UI)."""
     return os.getenv("ANTHROPIC_API_KEY") or _load_secrets().get("ANTHROPIC_API_KEY", "")
 
-_DRAFT_SYSTEM = (
+_DRAFT_SYSTEM_BASE = (
     "You are a software engineering planning agent. Convert a plain-English feature request "
     "into a structured Work Order spec.\n\n"
     "Return ONLY valid JSON (no markdown fences, no preamble) with these exact keys:\n"
@@ -1842,6 +2419,89 @@ _DRAFT_SYSTEM = (
     "P2=additive features/UI (auto-merge allowed), P3=docs only (direct to main).\n"
     "Effort: XS<1h | S~2h | M=half day | L=full day | XL=2-3 days"
 )
+
+
+def _pm_situational_brief() -> str:
+    """Build a ≤6000-char context brief for injection into PM draft/chat prompts."""
+    lines: list[str] = []
+
+    # Open WOs from spec cache
+    if _specs_cache:
+        open_wos = sorted(
+            [(num, spec) for num, spec in _specs_cache.items()
+             if not _is_done(spec.get("status", "")) and not _is_blocked(spec.get("status", ""))],
+            key=lambda x: x[0],
+        )
+        if open_wos:
+            lines.append("CURRENTLY OPEN WORK ORDERS:")
+            for num, spec in open_wos[:15]:
+                pri = spec.get("priority", "?")
+                effort = spec.get("effort", "?")
+                title = spec.get("title", f"WO-{num}")[:55]
+                lines.append(f"  WO-{num} [{pri}/{effort}]: {title}")
+        else:
+            lines.append("CURRENTLY OPEN WORK ORDERS: none")
+
+    # Queue order from DB
+    queue = _db_get_queue()
+    if queue:
+        lines.append("")
+        lines.append("PRIORITY QUEUE (next 10):")
+        for i, entry in enumerate(queue[:10], 1):
+            lines.append(f"  {i}. {entry['wo']}: {entry.get('title','')[:50]} [{entry.get('priority','?')}/{entry.get('effort','?')}]")
+
+    # Phases and milestones
+    phases = _db_get_phases()
+    milestones = _db_get_milestones()
+    if phases or milestones:
+        lines.append("")
+        lines.append("PHASES AND MILESTONES:")
+        for p in phases:
+            ms_tag = f" → milestone {p['milestone_id']}" if p.get("milestone_id") else ""
+            date_tag = f" (target {p['target_date']})" if p.get("target_date") else ""
+            lines.append(f"  Phase {p['id']}: {p['label']}{date_tag}{ms_tag}")
+        for m in milestones:
+            lines.append(f"  Milestone {m['id']}: {m['label']} — {m.get('target_date','TBD')}")
+
+    # DOC_MAP summary
+    if LOCAL_REPO_MOUNT:
+        doc_map_path = Path(LOCAL_REPO_MOUNT) / "docs/factory/DOC_MAP.json"
+        if doc_map_path.exists():
+            try:
+                doc_map = json.loads(doc_map_path.read_text(encoding="utf-8"))
+                triggers = doc_map.get("triggers", [])
+                if triggers:
+                    lines.append("")
+                    lines.append("DOCUMENTATION REQUIREMENTS (from DOC_MAP.json):")
+                    lines.append("When the WO involves one of the following, add a 'Documentation Required' section:")
+                    for t in triggers:
+                        docs = ", ".join(d["file"].split("/")[-1] for d in t.get("docs_required", []))
+                        lines.append(f"  [{t['id']}] {t['label']} → update: {docs}")
+            except Exception:
+                pass
+
+    brief = "\n".join(lines)
+    if len(brief) > 5500:
+        brief = brief[:5500] + "\n[...truncated]"
+    return brief
+
+
+def _build_draft_system(brief: str) -> str:
+    """Build the full PM draft system prompt with situational context injected."""
+    if not brief:
+        return _DRAFT_SYSTEM_BASE
+    return (
+        _DRAFT_SYSTEM_BASE
+        + f"\n\n=== CURRENT FACTORY STATE ===\n{brief}\n\n"
+        "Use this context to:\n"
+        "- Set priority relative to existing open WOs (avoid creating a P1 if there are already 3 open P1s)\n"
+        "- Set effort relative to similar WOs already in the queue\n"
+        "- Set depends_on based on related open WOs listed above\n"
+        "- Avoid duplicating work already in progress or recently shipped\n"
+        "- Suggest an appropriate phase based on active phases above\n"
+        "- If triggers from the Documentation Requirements section apply, add a "
+        "'## Documentation Required' section listing the specific files to update"
+    )
 
 
 class DraftRequest(BaseModel):
@@ -1914,10 +2574,11 @@ async def plan_draft(req: DraftRequest):
             if req.depends_on:
                 hints.append(f"Depends on: {req.depends_on}")
             hint_block = ("\n\nUser-provided hints (respect these in your output):\n" + "\n".join(hints)) if hints else ""
+            draft_system = _build_draft_system(_pm_situational_brief())
             msg = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=1024,
-                system=_DRAFT_SYSTEM,
+                system=draft_system,
                 messages=[{
                     "role": "user",
                     "content": f"WO number: {req.next_wo_num:03d}\n\nRequest:\n{req.description}{hint_block}",
@@ -1949,6 +2610,7 @@ async def plan_draft(req: DraftRequest):
                     "phase": req.phase,
                     "effort": req.effort,
                     "depends_on": req.depends_on,
+                    "situational_brief": _pm_situational_brief(),
                 },
             )
             if r.status_code == 200:
@@ -2230,6 +2892,17 @@ async def pm_chat(req: PMChatRequest):
                 ctx_parts.append("Open Dependabot PRs: none")
         except Exception:
             pass
+
+    # Inject queue order + milestones into PM chat (condensed brief — no DOC_MAP)
+    queue_snapshot = _db_get_queue()
+    if queue_snapshot:
+        lines = [f"  {i}. {e['wo']}: {e.get('title','')[:50]} [{e.get('priority','?')}]"
+                 for i, e in enumerate(queue_snapshot[:10], 1)]
+        ctx_parts.append("Priority queue (top 10):\n" + "\n".join(lines))
+    milestones_snapshot = _db_get_milestones()
+    if milestones_snapshot:
+        lines = [f"  {m['id']}: {m['label']} — {m.get('target_date','TBD')}" for m in milestones_snapshot]
+        ctx_parts.append("Milestones:\n" + "\n".join(lines))
 
     mem_summary = _pm_memory_summary()
     if mem_summary:

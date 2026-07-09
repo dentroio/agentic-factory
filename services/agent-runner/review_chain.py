@@ -4,8 +4,11 @@ import json
 import os
 import re
 
+import httpx
 from backends import get_backend
 from thread_monitor import ThreadMonitor
+
+ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -17,6 +20,24 @@ REVIEW_CHAIN: dict[str, list[str]] = {
     "P1": ["security", "architecture", "correctness", "performance"],
     "P0": ["security", "architecture", "correctness", "performance"],
 }
+
+DOC_REVIEWER_PROMPT = """You are a documentation completeness reviewer.
+
+You have been given:
+- The WO specification's Documentation Required checklist: {docs_required}
+- A git diff of all changes made
+
+Your ONLY job: for each item in the Documentation Required list, check whether the diff contains
+a meaningful update to the specified file or section.
+
+For each item NOT addressed in the diff, output on its own line:
+FINDING: {{"severity": "HIGH", "file": "{file_placeholder}", "line": 0, "issue": "Documentation Required item not completed: {item_placeholder}", "fix": "Update the file as specified in the WO Documentation Required section"}}
+
+If all items are addressed, or if Documentation Required is empty, output exactly:
+VERDICT: LGTM — all documentation requirements fulfilled.
+
+Do not flag stylistic issues. Only flag missing updates for items explicitly listed in Documentation Required.
+"""
 
 SECURITY_REVIEWER_PROMPT = """You are a security code reviewer performing an adversarial review.
 
@@ -111,26 +132,88 @@ VERDICT: LGTM — no performance issues found.
 
 REVIEWER_CONFIG: dict[str, dict] = {
     "security": {
-        "backend": os.getenv("SECURITY_REVIEWER_BACKEND", "cursor"),
         "prompt_template": SECURITY_REVIEWER_PROMPT,
         "blocking_severities": {"CRITICAL", "HIGH"},
     },
     "architecture": {
-        "backend": os.getenv("ARCH_REVIEWER_BACKEND", "cursor"),
         "prompt_template": ARCH_REVIEWER_PROMPT,
         "blocking_severities": {"CRITICAL"},
     },
     "correctness": {
-        "backend": os.getenv("CORRECTNESS_REVIEWER_BACKEND", "cursor"),
         "prompt_template": CORRECTNESS_REVIEWER_PROMPT,
         "blocking_severities": {"CRITICAL", "HIGH"},
     },
     "performance": {
-        "backend": os.getenv("PERF_REVIEWER_BACKEND", "cursor"),
         "prompt_template": PERF_REVIEWER_PROMPT,
         "blocking_severities": {"CRITICAL"},
     },
+    "documentation": {
+        "prompt_template": DOC_REVIEWER_PROMPT,
+        "blocking_severities": {"HIGH"},
+    },
 }
+
+# ---------------------------------------------------------------------------
+# Config — fetched live from orchestrator so UI changes take effect immediately
+# ---------------------------------------------------------------------------
+
+_DEFAULT_REVIEWER_BACKENDS = {
+    "security": "claude",
+    "architecture": "claude",
+    "correctness": "claude",
+    "performance": "claude",
+    "documentation": "claude",
+}
+
+
+async def _fetch_agent_config() -> dict:
+    """Fetch live agent config from orchestrator. Falls back to env vars on failure."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/config")
+            if r.status_code == 200:
+                return r.json()
+    except Exception:
+        pass
+    return {
+        "preferred": os.getenv("PREFERRED_AGENT", "claude"),
+        "force_cross_llm_review": True,
+        "reviewers": {
+            k: os.getenv(f"{k.upper()}_REVIEWER_BACKEND", v)
+            for k, v in _DEFAULT_REVIEWER_BACKENDS.items()
+        },
+    }
+
+
+def _assign_reviewer_backends(
+    reviewer_names: list[str],
+    config: dict,
+    coding_backend: str,
+) -> dict[str, str]:
+    """Return {reviewer_name: backend_name} for each reviewer.
+
+    If force_cross_llm_review is on and multiple backends are available,
+    rotates reviewers across backends that differ from the coding agent.
+    Manual UI assignments are used when the flag is off or only one backend exists.
+    """
+    from draft_server import _probe_backends as _probe
+    available = [b for b, ok in _probe().items() if ok]
+
+    force = config.get("force_cross_llm_review", True)
+    if force and len(available) > 1:
+        alternatives = [b for b in available if b != coding_backend]
+        if not alternatives:
+            alternatives = available
+        return {
+            name: alternatives[i % len(alternatives)]
+            for i, name in enumerate(reviewer_names)
+        }
+
+    # Manual config — use what the settings UI saved
+    reviewer_cfg = config.get("reviewers", _DEFAULT_REVIEWER_BACKENDS)
+    default = next(iter(available), "claude")
+    return {name: reviewer_cfg.get(name, default) for name in reviewer_names}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -250,11 +333,18 @@ async def run_review_chain(
     diff: str,
     monitor: ThreadMonitor,
     previous_findings: list[dict],
+    coding_backend: str = "",
+    docs_required: list[dict] | None = None,
 ) -> tuple[bool, list[dict]]:
     """Run the full review chain for the WO's priority level.
 
     Returns (chain_passed, all_findings).
     Stops on the first reviewer that finds blocking issues.
+    coding_backend — the backend that wrote the code; used to auto-assign
+    reviewers to different LLMs when force_cross_llm_review is enabled.
+    docs_required — list of {item, completed} dicts from the WO spec's
+    Documentation Required section. When non-empty, a documentation reviewer
+    runs after the main chain.
     """
     priority = wo_spec.get("priority", "P2")
     reviewer_names = REVIEW_CHAIN.get(priority, REVIEW_CHAIN["P2"])
@@ -262,18 +352,24 @@ async def run_review_chain(
     if not reviewer_names:
         return True, list(previous_findings)
 
+    agent_config = await _fetch_agent_config()
+    reviewer_backends = _assign_reviewer_backends(reviewer_names, agent_config, coding_backend)
+
+    force = agent_config.get("force_cross_llm_review", True)
+    mode_note = f"cross-LLM auto ({coding_backend} wrote → reviewers: {', '.join(set(reviewer_backends.values()))})" if force and coding_backend else "manual"
     all_findings = list(previous_findings)
     chain_passed = True
 
     await monitor.post(
         f"🔍 Running **{len(reviewer_names)}-reviewer** peer review chain "
-        f"({', '.join(reviewer_names)}) for {wo_spec.get('priority', 'P2')} WO...",
+        f"({', '.join(reviewer_names)}) for {wo_spec.get('priority', 'P2')} WO — {mode_note}...",
         msg_type="text",
     )
 
     for reviewer_name in reviewer_names:
         cfg = REVIEWER_CONFIG[reviewer_name]
-        backend = get_backend(cfg["backend"])
+        assigned_backend = reviewer_backends[reviewer_name]
+        backend = get_backend(assigned_backend)
 
         prompt = build_reviewer_prompt(
             reviewer_name, cfg["prompt_template"], wo_spec, diff, all_findings
@@ -301,11 +397,11 @@ async def run_review_chain(
         all_findings.extend(findings)
 
         await monitor.post(
-            _format_review(reviewer_name, cfg["backend"], findings, passed),
+            _format_review(reviewer_name, assigned_backend, findings, passed),
             msg_type="review",
             metadata={
                 "reviewer": reviewer_name,
-                "backend": cfg["backend"],
+                "backend": assigned_backend,
                 "findings": findings,
                 "passed": passed,
             },
@@ -319,5 +415,52 @@ async def run_review_chain(
                 msg_type="text",
             )
             break
+
+    # Documentation reviewer — runs after the main chain if docs_required is non-empty
+    if chain_passed and docs_required:
+        doc_cfg = REVIEWER_CONFIG["documentation"]
+        doc_backend_name = next(iter(_assign_reviewer_backends(
+            ["documentation"], agent_config, coding_backend
+        ).values()), "claude")
+        doc_backend = get_backend(doc_backend_name)
+        docs_str = json.dumps(docs_required, indent=2)
+        doc_prompt = (
+            f"WO: {wo_spec.get('wo', '?')} — {wo_spec.get('title', '')}\n\n"
+            f"=== DOCUMENTATION REQUIRED ===\n{docs_str}\n\n"
+            f"=== GIT DIFF ===\n{diff[:8000]}\n\n"
+            + doc_cfg["prompt_template"].format(
+                docs_required=docs_str,
+                file_placeholder="<file>",
+                item_placeholder="<item>",
+            )
+        )
+        try:
+            doc_response = await asyncio.wait_for(doc_backend.ask(doc_prompt), timeout=120)
+            doc_findings = parse_reviewer_response(doc_response)
+            doc_blocking = [f for f in doc_findings if f.get("severity") in doc_cfg["blocking_severities"]]
+            doc_passed = len(doc_blocking) == 0
+            all_findings.extend(doc_findings)
+            await monitor.post(
+                _format_review("documentation", doc_backend_name, doc_findings, doc_passed),
+                msg_type="review",
+                metadata={
+                    "reviewer": "documentation",
+                    "backend": doc_backend_name,
+                    "findings": doc_findings,
+                    "passed": doc_passed,
+                },
+            )
+            if not doc_passed:
+                chain_passed = False
+                await monitor.post(
+                    f"🔴 **documentation reviewer** found {len(doc_blocking)} missing doc update(s). "
+                    f"Update the required files before requesting human review.",
+                    msg_type="text",
+                )
+        except Exception as e:
+            await monitor.post(
+                f"⚠️ **documentation reviewer** error: {e} — skipping.",
+                msg_type="text",
+            )
 
     return chain_passed, all_findings

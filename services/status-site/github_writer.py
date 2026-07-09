@@ -8,7 +8,6 @@ Falls back to GitHub API only when LOCAL_REPO_MOUNT is not set (remote/cloud
 deployment where no local mount is available).
 """
 import base64
-import json
 import os
 import re
 from datetime import UTC, datetime
@@ -21,6 +20,7 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 LOCAL_REPO_MOUNT = os.getenv("LOCAL_REPO_MOUNT", "")
+ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
 
 
 def _headers(token: str) -> dict:
@@ -152,31 +152,13 @@ async def next_wo_number(repo: str, wo_path: str, token: str) -> int:
 
 
 def _write_wo_local(wo_data: dict, wo_path: str, plan_path: str) -> dict:
-    """Write WO spec + update PLAN.json directly on the local repo mount."""
+    """Write WO spec to the local repo mount + register in the orchestrator queue DB."""
     number = wo_data["number"]
     title = wo_data["title"]
     slug = _slugify(title)
 
     spec_path = Path(LOCAL_REPO_MOUNT) / wo_path / f"WO-{number}-{slug}.md"
     spec_path.write_text(render_wo_template(wo_data), encoding="utf-8")
-
-    # Update PLAN.json queue
-    plan_file = Path(LOCAL_REPO_MOUNT) / plan_path
-    if plan_file.exists():
-        plan = json.loads(plan_file.read_text(encoding="utf-8"))
-        plan.setdefault("queue", []).append({
-            "wo": f"WO-{number}",
-            "title": title,
-            "phase": wo_data.get("phase", "p2"),
-            "priority": wo_data.get("priority", "P2"),
-            "effort": wo_data.get("effort", "M"),
-            "blocks_milestones": wo_data.get("blocks_milestones", []),
-            "depends_on": wo_data.get("depends_on", []),
-            "pin": False,
-            "notes": wo_data.get("notes", ""),
-        })
-        plan["last_updated"] = _today()
-        plan_file.write_text(json.dumps(plan, indent=2), encoding="utf-8")
 
     return {
         "url": f"https://github.com/{GITHUB_REPO}/blob/main/{wo_path}/WO-{number}-{slug}.md",
@@ -185,17 +167,71 @@ def _write_wo_local(wo_data: dict, wo_path: str, plan_path: str) -> dict:
     }
 
 
+def _parse_docs_required(markdown: str) -> list[dict]:
+    """Extract Documentation Required checklist items from a WO spec."""
+    import re as _re
+    m = _re.search(
+        r"^## Documentation Required\s*\n(.*?)(?=\n^##|\Z)",
+        markdown, _re.MULTILINE | _re.DOTALL,
+    )
+    if not m:
+        return []
+    items = []
+    for line in m.group(1).splitlines():
+        clean = line.strip().lstrip("-").lstrip("[ ]").lstrip("- [ ]").strip()
+        if clean:
+            items.append({"item": clean, "completed": False})
+    return items
+
+
+async def _register_in_queue(wo_data: dict) -> None:
+    """Add the new WO to the orchestrator queue DB via API.
+
+    Parses the rendered WO spec for a '## Documentation Required' section and
+    stores those items in docs_required so the documentation reviewer can enforce them.
+    """
+    import json as _json
+    number = wo_data["number"]
+    title = wo_data["title"]
+
+    # Parse docs_required from the rendered spec markdown
+    spec_md = render_wo_template(wo_data)
+    docs_required_items = _parse_docs_required(spec_md)
+
+    payload = {
+        "wo": f"WO-{number}",
+        "title": title,
+        "phase": wo_data.get("phase", ""),
+        "priority": wo_data.get("priority", "P2"),
+        "effort": wo_data.get("effort", ""),
+        "pin": False,
+        "blocks_milestones": wo_data.get("blocks_milestones", []),
+        "depends_on": wo_data.get("depends_on", []),
+        "notes": wo_data.get("notes", ""),
+        "docs_required": _json.dumps(docs_required_items),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/queue", json=payload)
+            resp.raise_for_status()
+    except Exception as e:
+        print(f"[github_writer] queue registration for WO-{number} failed: {e}")
+
+
 async def create_wo(
     wo_data: dict, token: str, repo: str, wo_path: str, plan_path: str
 ) -> dict:
-    """Create a WO spec + add to PLAN.json queue.
+    """Create a WO spec + register in the orchestrator queue DB.
 
     Writes directly to the local repo mount when available — the factory
     sees it immediately, no GitHub roundtrip needed. Falls back to GitHub
-    API for remote deployments.
+    API for remote deployments. In both cases, the queue DB is updated via
+    the orchestrator API instead of writing to PLAN.json.
     """
     if LOCAL_REPO_MOUNT:
-        return _write_wo_local(wo_data, wo_path, plan_path)
+        result = _write_wo_local(wo_data, wo_path, plan_path)
+        await _register_in_queue(wo_data)
+        return result
 
     # Fallback: commit directly to remote main via GitHub API
     number = wo_data["number"]
@@ -211,31 +247,10 @@ async def create_wo(
             "branch": "main",
         })
 
-        plan_file = await _get(client, f"/repos/{repo}/contents/{plan_path}", token)
-        plan = json.loads(base64.b64decode(plan_file["content"]).decode())  # type: ignore[arg-type]
+    await _register_in_queue(wo_data)
 
-        plan.setdefault("queue", []).append({
-            "wo": f"WO-{number}",
-            "title": title,
-            "phase": wo_data.get("phase", "p2"),
-            "priority": wo_data.get("priority", "P2"),
-            "effort": wo_data.get("effort", "M"),
-            "blocks_milestones": wo_data.get("blocks_milestones", []),
-            "depends_on": wo_data.get("depends_on", []),
-            "pin": False,
-            "notes": wo_data.get("notes", ""),
-        })
-        plan["last_updated"] = _today()
-
-        await _put(client, f"/repos/{repo}/contents/{plan_path}", token, {
-            "message": f"docs(pm): add WO-{number} to PLAN.json queue",
-            "content": base64.b64encode(json.dumps(plan, indent=2).encode()).decode(),
-            "sha": plan_file["sha"],  # type: ignore[index]
-            "branch": "main",
-        })
-
-        wo_url = f"https://github.com/{repo}/blob/main/{spec_path}"
-        return {"url": wo_url, "wo_number": number}
+    wo_url = f"https://github.com/{repo}/blob/main/{spec_path}"
+    return {"url": wo_url, "wo_number": number}
 
 
 async def read_wo_file(wo_id: str, token: str, repo: str, wo_path: str) -> tuple[str, str]:
@@ -325,114 +340,38 @@ async def edit_wo(wo_id: str, new_content: str, token: str, repo: str, wo_path: 
 async def add_phase(
     phase_data: dict, token: str, repo: str, plan_path: str
 ) -> dict:
-    """Add a phase to PLAN.json."""
+    """Add a phase to the orchestrator queue DB."""
     phase_id = phase_data["id"]
-
-    if LOCAL_REPO_MOUNT:
-        plan_file = Path(LOCAL_REPO_MOUNT) / plan_path
-        plan = json.loads(plan_file.read_text(encoding="utf-8"))
-        if any(p["id"] == phase_id for p in plan.get("phases", [])):
+    payload = {
+        "id": phase_id,
+        "label": phase_data.get("label", phase_id),
+        "target_date": phase_data.get("target_date", ""),
+        "milestone_id": phase_data.get("milestone_id") or phase_data.get("milestone") or None,
+        "parallel": bool(phase_data.get("parallel", False)),
+        "description": phase_data.get("description", ""),
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(f"{ORCHESTRATOR_URL}/api/phases", json=payload)
+        if resp.status_code == 409:
             return {"error": f"Phase '{phase_id}' already exists"}
-        plan.setdefault("phases", []).append({
-            "id": phase_id,
-            "label": phase_data.get("label", phase_id),
-            "target_date": phase_data.get("target_date", ""),
-            "milestone": phase_data.get("milestone") or None,
-            "description": phase_data.get("description", ""),
-            "parallel": bool(phase_data.get("parallel", False)),
-        })
-        plan["last_updated"] = _today()
-        plan_file.write_text(json.dumps(plan, indent=2), encoding="utf-8")
-        return {"local": True, "phase_id": phase_id}
-
-    # Fallback: GitHub API branch + PR
-    branch = f"factory/phase-{phase_id}"
-    async with httpx.AsyncClient(timeout=25) as client:
-        ref = await _get(client, f"/repos/{repo}/git/ref/heads/main", token)
-        base_sha = ref["object"]["sha"]
-        await _post(client, f"/repos/{repo}/git/refs", token, {
-            "ref": f"refs/heads/{branch}",
-            "sha": base_sha,
-        })
-        plan_file = await _get(client, f"/repos/{repo}/contents/{plan_path}", token)
-        plan = json.loads(base64.b64decode(plan_file["content"]).decode())  # type: ignore[arg-type]
-        if any(p["id"] == phase_id for p in plan.get("phases", [])):
-            return {"error": f"Phase '{phase_id}' already exists"}
-        plan.setdefault("phases", []).append({
-            "id": phase_id,
-            "label": phase_data.get("label", phase_id),
-            "target_date": phase_data.get("target_date", ""),
-            "milestone": phase_data.get("milestone") or None,
-            "description": phase_data.get("description", ""),
-            "parallel": bool(phase_data.get("parallel", False)),
-        })
-        plan["last_updated"] = _today()
-        await _put(client, f"/repos/{repo}/contents/{plan_path}", token, {
-            "message": f"docs(pm): add phase '{phase_id}'",
-            "content": base64.b64encode(json.dumps(plan, indent=2).encode()).decode(),
-            "sha": plan_file["sha"],  # type: ignore[index]
-            "branch": branch,
-        })
-        pr = await _post(client, f"/repos/{repo}/pulls", token, {
-            "title": f"docs(pm): add phase '{phase_id}' to PLAN.json",
-            "body": f"Created via AI Factory Plan Authoring UI.\n\nAdds phase: **{phase_data.get('label', phase_id)}**",
-            "head": branch,
-            "base": "main",
-        })
-        return {"pr_url": pr["html_url"]}
+        resp.raise_for_status()
+    return {"ok": True, "phase_id": phase_id}
 
 
 async def add_milestone(
     milestone_data: dict, token: str, repo: str, plan_path: str
 ) -> dict:
-    """Add a milestone to PLAN.json."""
+    """Add a milestone to the orchestrator queue DB."""
     milestone_id = milestone_data["id"]
-
-    if LOCAL_REPO_MOUNT:
-        plan_file = Path(LOCAL_REPO_MOUNT) / plan_path
-        plan = json.loads(plan_file.read_text(encoding="utf-8"))
-        if any(m["id"] == milestone_id for m in plan.get("milestones", [])):
+    payload = {
+        "id": milestone_id,
+        "label": milestone_data.get("label", milestone_id),
+        "target_date": milestone_data.get("target_date", ""),
+        "description": milestone_data.get("description", ""),
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(f"{ORCHESTRATOR_URL}/api/milestones", json=payload)
+        if resp.status_code == 409:
             return {"error": f"Milestone '{milestone_id}' already exists"}
-        plan.setdefault("milestones", []).append({
-            "id": milestone_id,
-            "label": milestone_data.get("label", milestone_id),
-            "target_date": milestone_data.get("target_date", ""),
-            "description": milestone_data.get("description", ""),
-        })
-        plan["last_updated"] = _today()
-        plan_file.write_text(json.dumps(plan, indent=2), encoding="utf-8")
-        return {"local": True, "milestone_id": milestone_id}
-
-    # Fallback: GitHub API branch + PR
-    branch = f"factory/milestone-{milestone_id}"
-    async with httpx.AsyncClient(timeout=25) as client:
-        ref = await _get(client, f"/repos/{repo}/git/ref/heads/main", token)
-        base_sha = ref["object"]["sha"]
-        await _post(client, f"/repos/{repo}/git/refs", token, {
-            "ref": f"refs/heads/{branch}",
-            "sha": base_sha,
-        })
-        plan_file = await _get(client, f"/repos/{repo}/contents/{plan_path}", token)
-        plan = json.loads(base64.b64decode(plan_file["content"]).decode())  # type: ignore[arg-type]
-        if any(m["id"] == milestone_id for m in plan.get("milestones", [])):
-            return {"error": f"Milestone '{milestone_id}' already exists"}
-        plan.setdefault("milestones", []).append({
-            "id": milestone_id,
-            "label": milestone_data.get("label", milestone_id),
-            "target_date": milestone_data.get("target_date", ""),
-            "description": milestone_data.get("description", ""),
-        })
-        plan["last_updated"] = _today()
-        await _put(client, f"/repos/{repo}/contents/{plan_path}", token, {
-            "message": f"docs(pm): add milestone '{milestone_id}'",
-            "content": base64.b64encode(json.dumps(plan, indent=2).encode()).decode(),
-            "sha": plan_file["sha"],  # type: ignore[index]
-            "branch": branch,
-        })
-        pr = await _post(client, f"/repos/{repo}/pulls", token, {
-            "title": f"docs(pm): add milestone '{milestone_id}' to PLAN.json",
-            "body": f"Created via AI Factory Plan Authoring UI.\n\nAdds milestone: **{milestone_data.get('label', milestone_id)}**",
-            "head": branch,
-            "base": "main",
-        })
-        return {"pr_url": pr["html_url"]}
+        resp.raise_for_status()
+    return {"ok": True, "milestone_id": milestone_id}
