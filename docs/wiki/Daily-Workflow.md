@@ -53,9 +53,9 @@ The fastest path is the PM tab. Describe what you want in the chat box:
 
 > "I want to add a dark mode toggle to the settings page."
 
-The PM will draft a structured spec and confirm the WO number, priority, and effort. Say "create it" and the PM creates the WO and adds it to the queue.
+The PM drafts a structured spec — title, priority, effort, acceptance criteria — and confirms the details with you. Say "create it" and the PM writes the WO and adds it to the queue. You never write the spec yourself.
 
-Alternatively, go to **Settings → Plan → Create WO**. Write a plain-language description, pick which AI generates the spec, review the generated fields, and click **Save**. The WO lands in the queue immediately.
+Alternatively, go to **Settings → Plan → Create WO**. Describe the feature in plain language, pick which AI generates the spec, review the generated fields, and click **Save**. The WO lands in the queue immediately.
 
 See [Work Orders](Work-Orders.md) for everything about WO specs, priority tiers, and the queue lifecycle.
 
