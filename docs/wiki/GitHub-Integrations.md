@@ -87,6 +87,28 @@ Extracts the Suggestions section from the AI review comment, sends the suggestio
 
 This workflow only runs on agent PRs (identified by the `agent-pr` label or bot account username). It has a loop guard: commits tagged `[ai-review-apply]` do not trigger it again.
 
+## auto-update-prs.yml
+
+**Trigger:** Push to `main`.
+
+When a commit lands on `main`, finds all open PRs that have auto-merge enabled and are behind `main`, then triggers GitHub's "Update Branch" on each. This merges `main` into the PR branch, which kicks off a fresh CI run. When CI passes, auto-merge fires automatically.
+
+This closes the gap created by strict branch protection (branches behind `main` are blocked from merging). Without it, an agent's PR would sit waiting indefinitely after other PRs merged ahead of it.
+
+## ci-auto-fix.yml
+
+**Trigger:** CI fails on a PR labeled `agent-pr` or authored by a known bot account.
+
+When CI fails on an agent PR, this workflow downloads the failure logs, fetches the PR diff, and calls Claude asking for a minimal patch to fix the failure. If Claude is confident about a fix, it applies search-and-replace edits to the branch files, commits with a `[ci-autofix]` tag, and pushes. CI re-runs automatically.
+
+If Claude cannot determine a safe fix (complex logic, structural failure, low confidence), it falls back to posting a comment with the failure details.
+
+Guard rails:
+- Maximum 2 auto-fix attempts per PR (tracked via labels on the PR)
+- `[ci-autofix]` commit tag prevents the workflow from triggering on its own commits
+- Skips build failures — structural issues need human attention
+- Only runs on agent PRs
+
 ## observability.yml
 
 **Schedule:** Every 15 minutes. Also supports manual `workflow_dispatch`.

@@ -45,7 +45,7 @@ Or to claim and complete exactly one WO then stop:
 make agent-once
 ```
 
-The runner polls the orchestrator for the next available WO, claims it, and starts working. It streams progress to the WO's thread (visible in the **Threads** tab and on the WO detail page).
+The runner polls the orchestrator for the next available WO, claims it, and starts working. It streams progress to the WO's thread, visible on the WO detail page (`/wo/NNN`).
 
 ## Creating a new work order
 
@@ -71,7 +71,7 @@ The PM sends a dispatch signal that wakes the runner immediately, bypassing the 
 
 ## Monitoring progress
 
-Open the **Threads** tab or navigate to the WO detail page (`/wo/375`). You will see:
+Navigate to the WO detail page (`/wo/375`) — linked from the Overview tab as "View thread →". You will see:
 
 - A live feed of what the agent is doing (streamed from the agent runner)
 - System messages when the WO transitions states (claimed, validation requested, approved)

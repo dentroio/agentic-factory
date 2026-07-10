@@ -85,11 +85,14 @@ The PM emits structured action tags that the orchestrator processes automaticall
 | Tag | What it does |
 |-----|-------------|
 | `[DISPATCH:WO-375:cursor]` | Claims WO-375 and wakes the agent runner with the Cursor backend |
-| `[PR:merge:308]` | Merges GitHub PR #308 |
-| `[PR:approve:308]` | Approves GitHub PR #308 |
-| `[CREATE_PHASE:Q3:2026-09-30]` | Creates a phase named Q3 with target date Sep 30 |
-| `[DELETE_PHASE:backlog]` | Deletes the phase with that ID |
-| `[CREATE_MILESTONE:Beta Launch:2026-08-15]` | Creates a milestone with that name and date |
+| `[PR:merge:308]` | Squash-merges GitHub PR #308 directly |
+| `[DEPENDABOT:approve-merge:308]` | Approves + merges a Dependabot PR (use only for Dependabot PRs) |
+| `[DEPENDABOT:rebase:308]` | Triggers `@dependabot rebase` on a conflicting PR |
+| `[DEPENDABOT:recreate:308]` | Triggers `@dependabot recreate` when rebase is blocked |
+| `[CREATE_PHASE:now\|Now\|2026-09-30]` | Creates a phase with ID, label, and optional target date |
+| `[DELETE_PHASE:now]` | Deletes the phase with that ID |
+| `[CREATE_MILESTONE:beta-launch\|Beta Launch\|2026-08-15]` | Creates a milestone with ID, label, and target date |
+| `[DELETE_MILESTONE:beta-launch]` | Deletes the milestone with that ID |
 
 These tags are parsed and executed server-side as soon as the PM's response completes. The action confirmation appears in the PM's next message.
 

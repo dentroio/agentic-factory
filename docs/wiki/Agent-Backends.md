@@ -7,7 +7,7 @@ The factory supports five AI backends for executing WOs. Four of them are subscr
 | Backend | How it runs | What you need |
 |---------|------------|--------------|
 | `claude` | `claude --dangerously-skip-permissions` CLI | Claude Pro or Max subscription + CLI logged in |
-| `cursor` | `agent --print --force` CLI | Cursor Pro subscription + CLI logged in |
+| `cursor` | `agent --print --trust` CLI | Cursor Pro subscription + CLI logged in |
 | `codex` | `codex --approval-mode full-auto` CLI | OpenAI Codex subscription |
 | `gemini` | `gemini --yolo -p` CLI | Google Gemini Advanced subscription |
 | `claude-api` | Anthropic SDK inside Docker | `ANTHROPIC_API_KEY` in the secrets vault |
