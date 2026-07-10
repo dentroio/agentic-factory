@@ -1,6 +1,6 @@
 # Dashboard Guide
 
-The factory dashboard runs at `http://localhost:8099`. It has six main tabs and a Settings section. The page auto-refreshes every 60 seconds.
+The factory dashboard runs at `http://localhost:8099`. It has five main tabs and a Settings section. The page auto-refreshes every 60 seconds.
 
 ## Overview
 
@@ -53,23 +53,18 @@ From the queue table you can:
 
 This is the right tab for day-to-day queue management: reordering, holding WOs that are waiting on a dependency, and checking milestone progress.
 
-## Threads
+## WO Thread pages
 
-Per-WO conversation history. Shows a summary list of all active WO threads with the last message and timestamp. Click any WO to open the full thread view.
+There is no dedicated Threads tab. Instead, each WO has its own detail page at `/wo/NNN`, accessible via **"View thread →"** links that appear on the Overview tab and in the PM tab next to active WOs.
 
-The WO thread view (`/wo/NNN`) shows:
+The WO thread page shows:
 
 - The structured WO spec (title, problem, acceptance criteria, etc.)
-- The live message thread — agent status updates, Q&A, system messages on lifecycle transitions
-- Any annotated screenshots posted from the Oryntra browser extension
+- The message thread — agent status updates, system messages on lifecycle transitions, and any Q&A between the agent and the orchestrator
+- Any annotated screenshots posted from connected browser tools
 - The review findings from the peer review chain (after the quality gate runs)
 
-The thread updates in real time via Server-Sent Events. You do not need to refresh to see new messages.
-
-Use the threads tab when:
-- You want to check what the agent is doing mid-run
-- You need to answer a question the agent asked in the thread
-- You want to review what the AI reviewers found before approving
+Use these pages when you want to check what an agent is doing mid-run, or review what the AI reviewers flagged before approving a merge.
 
 ## Settings
 
