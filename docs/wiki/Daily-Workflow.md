@@ -49,7 +49,7 @@ The runner polls the orchestrator for the next available WO, claims it, and star
 
 ## Creating a new work order
 
-The fastest path is the PM tab. Describe what you want in the chat box:
+The fastest path is to open the PM tab and describe what you want:
 
 > "I want to add a dark mode toggle to the settings page."
 

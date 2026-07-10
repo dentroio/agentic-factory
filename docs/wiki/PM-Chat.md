@@ -1,6 +1,6 @@
 # PM Chat
 
-The PM tab hosts an AI assistant that has live context about everything in the factory: the WO queue, open PRs, CI state, Dependabot activity, phases, milestones, and your agent memory. You talk to it in plain language. It takes action directly — no confirmation step, no separate UI.
+The PM is your AI project lead. It sits in the PM tab and has live context about everything in the factory: the WO queue, open PRs, CI state, Dependabot activity, phases, milestones, and your agent memory. You describe what you want in plain language — the PM translates it into action. No forms, no confirmation steps, no separate UI.
 
 ## What the PM knows
 

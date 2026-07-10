@@ -16,14 +16,14 @@ If you are waiting on a notification, this tab tells you the current state at a 
 
 ## PM
 
-The AI PM assistant lives here. Left panel is the chat interface. Right panel shows:
+The PM — your AI project lead — lives here. Left panel is the chat interface. Right panel shows:
 
 - **Program roll-ups** — WOs grouped by program label, with completion percentages and velocity
 - **Blocked alerts** — WOs stuck on dependencies or holds
 - **Velocity bar chart** — completions per week over the last 8 weeks
 - **Milestone progress** — which milestones are approaching and how many blocking WOs remain
 
-The PM chat is the fastest way to do most things: create WOs, dispatch them, merge PRs, manage phases and milestones. See [PM Chat](PM-Chat.md) for the full reference.
+The PM is the fastest way to do most things: create WOs, dispatch agents, merge PRs, manage phases and milestones. See [PM Chat](PM-Chat) for the full reference.
 
 ## Engineering
 
