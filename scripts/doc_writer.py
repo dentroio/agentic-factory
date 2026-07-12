@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 """
-Doc Writer Agent — keeps the Clarion wiki automatically up to date.
+Doc Writer Agent — keeps Clarion and Factory wiki pages automatically up to date.
 
 Runs every 6 hours via GitHub Actions. Finds stale or WO-uncovered wiki pages,
 reads relevant WO specs and design docs, and uses Claude to write updated content.
-Commits changes directly to the Clarion repo.
 
-This is an AI Factory tool — it runs OUTSIDE the Clarion product stack.
-Customers deploying Clarion never run or see this.
+Modes:
+  --clarion-path  Update Clarion wiki (wiki/docs/) using Clarion WO specs
+  --factory-path  Update Factory wiki (docs/wiki/) using Factory WO specs (self-update)
 
 Usage:
     python3 scripts/doc_writer.py --clarion-path ./clarion
     python3 scripts/doc_writer.py --clarion-path ./clarion --dry-run
     python3 scripts/doc_writer.py --clarion-path ./clarion --max-pages 3
     python3 scripts/doc_writer.py --clarion-path ./clarion --page operator/secure/groups.md
+    python3 scripts/doc_writer.py --factory-path .
+    python3 scripts/doc_writer.py --factory-path . --dry-run
 
 Setup:
     export ANTHROPIC_API_KEY=sk-ant-...
-    (GH_PAT handled by the workflow for commits)
 """
 
 from __future__ import annotations
@@ -155,15 +156,17 @@ def call_claude(system: str, user: str) -> str:
     return msg.content[0].text
 
 
-SYSTEM_PROMPT = f"""You are the Clarion Documentation Writer. You update wiki pages for Clarion,
+_TODAY = date.today().isoformat()
+
+CLARION_SYSTEM_PROMPT = f"""You are the Clarion Documentation Writer. You update wiki pages for Clarion,
 a network security and policy enforcement platform.
 
-Today's date: {date.today().isoformat()}
+Today's date: {_TODAY}
 
 Rules:
 - Return ONLY the complete updated wiki page — full markdown including frontmatter, no preamble
-- frontmatter MUST include: title, description, last_verified ({date.today().isoformat()}), covers_wos (list of WO numbers this page documents), doc_owner: clarion-team
-- Set last_verified to exactly {date.today().isoformat()}
+- frontmatter MUST include: title, description, last_verified ({_TODAY}), covers_wos (list of WO numbers this page documents), doc_owner: clarion-team
+- Set last_verified to exactly {_TODAY}
 - covers_wos must be a YAML list: covers_wos:\\n  - WO-NNN
 - Never document Open WOs — only features that have shipped (marked ✅ Complete)
 - Never invent facts — only write what's confirmed in the WO specs or design docs provided
@@ -172,12 +175,34 @@ Rules:
 - Never remove headings the page already has unless they're completely wrong
 - If no changes are needed, return the original content exactly"""
 
+FACTORY_SYSTEM_PROMPT = f"""You are the Factory Documentation Writer. You update wiki pages for the
+Agentic Engineering Factory, an open-source system for building software products with AI agents.
+
+Today's date: {_TODAY}
+
+Rules:
+- Return ONLY the complete updated wiki page — full markdown including frontmatter, no preamble
+- frontmatter MUST include: title, description, last_verified ({_TODAY}), covers_wos (list of WO numbers this page documents), doc_owner: factory-team
+- Set last_verified to exactly {_TODAY}
+- covers_wos must be a YAML list: covers_wos:\\n  - WO-NNNN
+- Never document Open WOs — only features that have shipped (marked ✅ Complete)
+- Never invent facts — only write what's confirmed in the WO specs or docs provided
+- Preserve correct existing content; only update sections that are stale or missing
+- Keep pages concise and user-focused — what it does, how to configure it, key concepts
+- Never remove headings the page already has unless they're completely wrong
+- If no changes are needed, return the original content exactly"""
+
+# Keep backward-compatible alias
+SYSTEM_PROMPT = CLARION_SYSTEM_PROMPT
+
 
 def update_wiki_page(
     page_path: Path,
     wiki_root: Path,
     relevant_wos: list[Path],
     relevant_docs: list[Path],
+    system_prompt: str = CLARION_SYSTEM_PROMPT,
+    page_prefix: str = "wiki/docs",
 ) -> str | None:
     """Call Claude to update a wiki page. Returns new content or None if unchanged."""
     current = page_path.read_text(encoding="utf-8")
@@ -193,7 +218,7 @@ def update_wiki_page(
 
     user_msg = f"""Update this wiki page to be accurate and current.
 
-## Current page: wiki/docs/{rel}
+## Current page: {page_prefix}/{rel}
 {current}
 
 ## Relevant WO specs (completed features to document){wo_context if wo_context else chr(10) + "None provided — preserve existing content and just update last_verified."}
@@ -203,7 +228,7 @@ def update_wiki_page(
 Return the complete updated page."""
 
     logger.info("Calling Claude for %s ...", rel)
-    updated = call_claude(SYSTEM_PROMPT, user_msg)
+    updated = call_claude(system_prompt, user_msg)
 
     # Validate the response has frontmatter
     if not updated.startswith("---"):
@@ -268,42 +293,31 @@ def find_relevant_docs(page_path: Path, wiki_root: Path, docs_root: Path) -> lis
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Update stale Clarion wiki pages using Claude")
-    parser.add_argument("--clarion-path", required=True, help="Path to Clarion repo checkout")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
-    parser.add_argument("--max-pages", type=int, default=MAX_PAGES_DEFAULT, help=f"Max pages to update per run (default {MAX_PAGES_DEFAULT})")
-    parser.add_argument("--page", help="Update a specific wiki page (relative to wiki/docs/)")
-    parser.add_argument("--stale-days", type=int, default=STALE_DAYS)
-    args = parser.parse_args()
-
-    clarion = Path(args.clarion_path).resolve()
-    wiki_root = clarion / "wiki" / "docs"
-    wo_dir = clarion / "docs" / "project_management" / "work_orders"
-    docs_root = clarion / "docs"
-
-    if not wiki_root.exists():
-        logger.error("wiki/docs not found at %s", wiki_root)
-        sys.exit(1)
-    if not wo_dir.exists():
-        logger.error("WO specs dir not found at %s", wo_dir)
-        sys.exit(1)
-
-    # Determine which pages to process
-    if args.page:
-        target = wiki_root / args.page
+def _run_mode(
+    wiki_root: Path,
+    wo_dir: Path,
+    docs_root: Path,
+    page_arg: str | None,
+    max_pages: int,
+    dry_run: bool,
+    system_prompt: str,
+    page_prefix: str,
+) -> list[tuple[Path, str]]:
+    """Process one wiki tree. Returns list of (path, new_content) that were updated."""
+    if page_arg:
+        target = wiki_root / page_arg
         if not target.exists():
             logger.error("Page not found: %s", target)
             sys.exit(1)
         pages = [target]
     else:
-        pages = find_stale_pages(wiki_root, args.max_pages)
+        pages = find_stale_pages(wiki_root, max_pages)
 
     if not pages:
-        logger.info("All wiki pages are current — nothing to update.")
-        return
+        logger.info("All wiki pages in %s are current — nothing to update.", wiki_root)
+        return []
 
-    logger.info("Pages to process: %d", len(pages))
+    logger.info("Pages to process in %s: %d", wiki_root, len(pages))
     for p in pages:
         logger.info("  %s", p.relative_to(wiki_root))
 
@@ -318,44 +332,101 @@ def main() -> None:
     for page_path in pages:
         rel = str(page_path.relative_to(wiki_root))
         relevant_wos = find_relevant_wos(page_path, wiki_root, wo_dir)
-        # Also include unlinked WOs that match this page
         for uw in unlinked_wos[:3]:
             if uw not in relevant_wos:
                 relevant_wos.append(uw)
         relevant_docs = find_relevant_docs(page_path, wiki_root, docs_root)
 
-        if args.dry_run:
+        if dry_run:
             logger.info("[dry-run] would update %s (relevant WOs: %s)",
                         rel, [w.stem for w in relevant_wos[:3]])
             continue
 
-        new_content = update_wiki_page(page_path, wiki_root, relevant_wos, relevant_docs)
+        new_content = update_wiki_page(
+            page_path, wiki_root, relevant_wos, relevant_docs,
+            system_prompt=system_prompt, page_prefix=page_prefix,
+        )
         if new_content:
             updated_pages.append((page_path, new_content))
             logger.info("Updated: %s", rel)
         else:
             logger.info("Skipped (no changes): %s", rel)
 
+    return updated_pages
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Update stale wiki pages using Claude")
+    parser.add_argument("--clarion-path", help="Path to Clarion repo checkout (updates Clarion wiki)")
+    parser.add_argument("--factory-path", help="Path to factory repo root (updates factory's own wiki)")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--max-pages", type=int, default=MAX_PAGES_DEFAULT)
+    parser.add_argument("--page", help="Update a specific wiki page (relative to the wiki root dir)")
+    parser.add_argument("--stale-days", type=int, default=STALE_DAYS)
+    args = parser.parse_args()
+
+    if not args.clarion_path and not args.factory_path:
+        parser.error("Specify --clarion-path, --factory-path, or both.")
+
+    all_updated: list[tuple[Path, str, str]] = []  # (path, content, prefix)
+
+    if args.clarion_path:
+        clarion = Path(args.clarion_path).resolve()
+        wiki_root = clarion / "wiki" / "docs"
+        wo_dir = clarion / "docs" / "project_management" / "work_orders"
+        docs_root = clarion / "docs"
+
+        if not wiki_root.exists():
+            logger.error("wiki/docs not found at %s", wiki_root)
+            sys.exit(1)
+        if not wo_dir.exists():
+            logger.error("WO specs dir not found at %s", wo_dir)
+            sys.exit(1)
+
+        updated = _run_mode(
+            wiki_root, wo_dir, docs_root,
+            args.page, args.max_pages, args.dry_run,
+            CLARION_SYSTEM_PROMPT, "wiki/docs",
+        )
+        all_updated.extend((p, c, "wiki/docs") for p, c in updated)
+
+    if args.factory_path:
+        factory = Path(args.factory_path).resolve()
+        wiki_root = factory / "docs" / "wiki"
+        wo_dir = factory / "docs" / "work_orders"
+        docs_root = factory / "docs"
+
+        if not wiki_root.exists():
+            logger.error("docs/wiki not found at %s", wiki_root)
+            sys.exit(1)
+        if not wo_dir.exists():
+            logger.error("WO specs dir not found at %s", wo_dir)
+            sys.exit(1)
+
+        updated = _run_mode(
+            wiki_root, wo_dir, docs_root,
+            args.page, args.max_pages, args.dry_run,
+            FACTORY_SYSTEM_PROMPT, "docs/wiki",
+        )
+        all_updated.extend((p, c, "docs/wiki") for p, c in updated)
+
     if args.dry_run:
         logger.info("[dry-run] complete — no files written")
         return
 
-    if not updated_pages:
+    if not all_updated:
         logger.info("No pages needed updating this run.")
         return
 
-    # Write updated pages to disk (workflow handles git commit + push)
-    for page_path, content in updated_pages:
+    for page_path, content, prefix in all_updated:
         page_path.write_text(content, encoding="utf-8")
-        logger.info("Written: %s", page_path.relative_to(wiki_root))
+        logger.info("Written: %s", page_path)
 
-    # Write summary for the workflow step
-    summary_lines = [f"Updated {len(updated_pages)} wiki page(s):"]
-    for page_path, _ in updated_pages:
-        summary_lines.append(f"  - wiki/docs/{page_path.relative_to(wiki_root)}")
+    summary_lines = [f"Updated {len(all_updated)} wiki page(s):"]
+    for page_path, _, prefix in all_updated:
+        summary_lines.append(f"  - {prefix}/{page_path.name}")
     print("\n".join(summary_lines))
 
-    # Write GitHub step summary if available
     step_summary = os.getenv("GITHUB_STEP_SUMMARY")
     if step_summary:
         with open(step_summary, "a") as f:

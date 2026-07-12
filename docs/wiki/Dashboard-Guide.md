@@ -1,3 +1,11 @@
+---
+title: "Dashboard Guide"
+description: "Factory dashboard tabs, settings, and controls at localhost:8099"
+last_verified: 2026-07-11
+covers_wos: []
+doc_owner: factory-team
+---
+
 # Dashboard Guide
 
 The factory dashboard runs at `http://localhost:8099`. It has five main tabs and a Settings section. The page auto-refreshes every 60 seconds.

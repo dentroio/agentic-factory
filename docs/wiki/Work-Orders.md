@@ -1,3 +1,11 @@
+---
+title: "Work Orders"
+description: "WO spec structure, priority tiers, effort sizes, and full queue lifecycle"
+last_verified: 2026-07-11
+covers_wos: []
+doc_owner: factory-team
+---
+
 # Work Orders
 
 A work order (WO) is the unit of work the factory dispatches to an agent. Every WO has a structured spec file that describes the problem, what to build, and how to verify it was done correctly. Agents read the spec before starting and follow its acceptance criteria as the exit condition.

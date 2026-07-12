@@ -1,16 +1,14 @@
-name: Doc Writer — Update Clarion Wiki
+name: Doc Writer — Update Clarion + Factory Wikis
 
 # Runs every 6 hours and on-demand.
-# Finds stale or WO-uncovered wiki pages in the Clarion repo,
-# uses Claude to update them, and commits the changes back.
+# Job 1: Updates Clarion wiki pages (dentroio/clarion wiki/docs/)
+# Job 2: Updates factory's own wiki pages (docs/wiki/) — self-maintenance
 #
-# This is an AI Factory tool — NOT part of the deployable Clarion product.
-#
-# Secrets required (set on the agentic-factory repo):
+# Secrets required (set on dentroio/agentic-factory):
 #   ANTHROPIC_API_KEY  — Claude API key
 #   GH_PAT             — PAT with contents:write on dentroio/clarion
 #
-# Variables (optional, set as repo vars):
+# Variables (optional):
 #   CLARION_REPO       — default: dentroio/clarion
 #   DOC_WRITER_MAX_PAGES — default: 5
 
@@ -32,8 +30,8 @@ on:
         default: false
 
 jobs:
-  update-docs:
-    name: Update wiki pages
+  update-clarion-wiki:
+    name: Update Clarion wiki
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -58,8 +56,7 @@ jobs:
       - name: Install dependencies
         run: pip install anthropic
 
-      - name: Run doc writer
-        id: doc_writer
+      - name: Run doc writer (Clarion)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -74,9 +71,8 @@ jobs:
           fi
 
           python3 scripts/doc_writer.py $ARGS
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
 
-      - name: Commit and push wiki updates
+      - name: Commit and push Clarion wiki updates
         if: ${{ inputs.dry_run != 'true' }}
         working-directory: clarion
         run: |
@@ -85,11 +81,10 @@ jobs:
           git add wiki/docs/
 
           if git diff --cached --quiet; then
-            echo "No wiki changes to commit."
+            echo "No Clarion wiki changes to commit."
             exit 0
           fi
 
-          # Build commit message from changed files
           CHANGED=$(git diff --cached --name-only | grep "^wiki/docs/" | sed 's|wiki/docs/||' | tr '\n' ', ' | sed 's/,$//')
           git commit -m "docs(wiki): auto-update ${CHANGED} [doc-writer-agent]
 
@@ -97,3 +92,60 @@ jobs:
           Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ vars.CLARION_REPO || 'dentroio/clarion' }}.git HEAD:main
+
+  update-factory-wiki:
+    name: Update factory wiki (self)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout agentic-factory
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install anthropic
+
+      - name: Run doc writer (factory)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ARGS="--factory-path . --max-pages ${{ inputs.max_pages || vars.DOC_WRITER_MAX_PAGES || '5' }}"
+
+          if [ -n "${{ inputs.page }}" ]; then
+            ARGS="$ARGS --page ${{ inputs.page }}"
+          fi
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+
+          python3 scripts/doc_writer.py $ARGS
+
+      - name: Commit and push factory wiki updates
+        if: ${{ inputs.dry_run != 'true' }}
+        run: |
+          git config user.name  "factory-doc-writer[bot]"
+          git config user.email "noreply@dentroio.com"
+          git add docs/wiki/
+
+          if git diff --cached --quiet; then
+            echo "No factory wiki changes to commit."
+            exit 0
+          fi
+
+          CHANGED=$(git diff --cached --name-only | grep "^docs/wiki/" | sed 's|docs/wiki/||' | tr '\n' ', ' | sed 's/,$//')
+          git commit -m "docs(wiki): auto-update factory wiki ${CHANGED} [doc-writer-agent]
+
+          Updated by the AI Factory doc-writer agent (self-maintenance).
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          git push

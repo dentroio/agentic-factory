@@ -1,0 +1,103 @@
+name: Factory Documentation Audit
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"   # every Monday at 09:00 UTC
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Staleness threshold in days"
+        required: false
+        default: "90"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    name: Scan for stale wiki pages
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run stale check
+        id: stale
+        run: |
+          DAYS=${{ github.event.inputs.days || '90' }}
+          python scripts/docs_stale_check.py --days "$DAYS" --gha || echo "stale_found=true" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Build issue body
+        if: steps.stale.outputs.stale_found == 'true'
+        run: |
+          DAYS=${{ github.event.inputs.days || '90' }}
+          python scripts/docs_stale_check.py --days "$DAYS" --json > /tmp/stale.json
+          python - <<'EOF'
+          import json
+          with open("/tmp/stale.json") as f:
+              data = json.load(f)
+          stale = [p for p in data["problems"] if any("stale" in i for i in p["issues"])]
+          lines = []
+          lines.append(f"## {len(stale)} factory wiki pages need a documentation review\n")
+          lines.append(f"**Threshold:** {data['threshold_days']} days  \n")
+          lines.append(f"**Scanner:** `scripts/docs_stale_check.py`\n\n")
+          lines.append("| Page | Age | Owner |")
+          lines.append("|---|---|---|")
+          for p in stale:
+              lines.append(f"| `docs/wiki/{p['path']}` | {p['age_days']}d | {p['doc_owner']} |")
+          lines.append("")
+          lines.append("### How to resolve")
+          lines.append("1. Open the page and verify its content is current")
+          lines.append("2. Update any outdated sections")
+          lines.append("3. Set `last_verified` to today's date")
+          lines.append("4. Set `covers_wos` to list the WOs whose features this page documents")
+          lines.append("")
+          lines.append("> Created automatically by the Factory Documentation Audit workflow.")
+          with open("/tmp/issue_body.md", "w") as f:
+              f.write("\n".join(lines))
+          EOF
+
+      - name: Create stale-docs issue
+        if: steps.stale.outputs.stale_found == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/issue_body.md', 'utf8');
+            const title = `docs: stale factory wiki pages (week of ${new Date().toISOString().slice(0,10)})`;
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'documentation',
+              state: 'open',
+            });
+            for (const issue of existing.data) {
+              if (issue.title.startsWith('docs: stale factory wiki pages')) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  state: 'closed',
+                });
+              }
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['documentation'],
+            });
+
+      - name: All pages current
+        if: steps.stale.outputs.stale_found != 'true'
+        run: echo "✅ All factory wiki pages verified within threshold."

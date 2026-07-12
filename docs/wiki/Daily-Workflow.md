@@ -1,3 +1,11 @@
+---
+title: "Daily Workflow"
+description: "Day-to-day loop for starting the factory, dispatching work orders, and reviewing results"
+last_verified: 2026-07-11
+covers_wos: []
+doc_owner: factory-team
+---
+
 # Daily Workflow
 
 This is the loop you run every day. The factory is stateful — it remembers what's in the queue, which WOs are in progress, and what the PR watchdog has seen. You do not need to reset or re-initialize anything between sessions.

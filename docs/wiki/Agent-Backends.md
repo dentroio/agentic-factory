@@ -1,3 +1,11 @@
+---
+title: "Agent Backends"
+description: "Configuring and using AI backends (Claude, Cursor, Codex, Gemini, claude-api) for WO execution"
+last_verified: 2026-07-11
+covers_wos: []
+doc_owner: factory-team
+---
+
 # Agent Backends
 
 The factory supports five AI backends for executing WOs. Four of them are subscription-based CLI tools that run on your host machine. One calls the Anthropic API directly from Docker.

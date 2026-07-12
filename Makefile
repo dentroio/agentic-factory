@@ -7,6 +7,7 @@ LOG_DIR := $(HOME)/Library/Logs/factory-agent
         agent-setup \
         up down logs restart \
         agent-install agent-remove agent-start agent-stop agent-logs agent-status agent-once \
+        docs-check docs-check-strict docs-gdrive \
         oryntra-open
 
 help:  ## Show this help
@@ -61,6 +62,20 @@ agent-status:  ## Show whether the agent daemon is running
 
 agent-once:  ## Run the agent runner once (claims one WO then exits) — useful for testing
 	@bash services/agent-runner/run-local.sh --once
+
+# ── Documentation ────────────────────────────────────────────────────────────
+
+docs-check:  ## Check factory wiki for stale pages (90-day threshold)
+	python scripts/docs_stale_check.py --ignore-empty-wos
+
+docs-check-strict:  ## Check factory wiki — flag stale AND empty covers_wos
+	python scripts/docs_stale_check.py
+
+docs-gdrive:  ## Sync factory docs to Google Drive (requires GDRIVE_* env vars)
+	python scripts/publish_to_gdrive.py
+
+docs-gdrive-dry:  ## Preview Google Drive sync without writing
+	python scripts/publish_to_gdrive.py --dry-run
 
 # ── Oryntra Chrome extension ──────────────────────────────────────────────────
 

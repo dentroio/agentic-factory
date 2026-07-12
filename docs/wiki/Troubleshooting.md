@@ -1,3 +1,11 @@
+---
+title: "Troubleshooting"
+description: "Diagnosing and resolving common factory issues: startup, agents, CI failures, and Docker"
+last_verified: 2026-07-11
+covers_wos: []
+doc_owner: factory-team
+---
+
 # Troubleshooting
 
 ## Factory won't start

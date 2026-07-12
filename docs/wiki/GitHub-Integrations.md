@@ -1,3 +1,11 @@
+---
+title: "GitHub Integrations"
+description: "Automated code review, planning, verification, and observability via GitHub Actions workflows"
+last_verified: 2026-07-11
+covers_wos: []
+doc_owner: factory-team
+---
+
 # GitHub Integrations
 
 The factory's GitHub Actions layer provides automated code review, planning, post-merge verification, and observability. These workflows run on GitHub's infrastructure — no local factory stack required.

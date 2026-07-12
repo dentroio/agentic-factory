@@ -1,0 +1,68 @@
+name: Sync Factory Docs to Google Drive
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/TECHNICAL_ARCHITECTURE.md"
+      - "docs/CD_IMPLEMENTATION_PLAN.md"
+      - "docs/GITHUB_ACTIONS_GUIDE.md"
+      - "docs/ENGINEER_OVERVIEW.md"
+      - "docs/EXECUTIVE_BRIEF.md"
+  workflow_dispatch:
+    inputs:
+      category:
+        description: "Sync one category (architecture, executive) — leave blank for all"
+        required: false
+      dry_run:
+        description: "Dry run — show what would change without writing"
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    name: Publish to Google Drive
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install google-api-python-client google-auth google-auth-oauthlib markdown
+
+      - name: Sync docs to Google Drive
+        env:
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          GDRIVE_FOLDER_ARCHITECTURE: ${{ secrets.GDRIVE_FOLDER_ARCHITECTURE }}
+          GDRIVE_FOLDER_EXECUTIVE: ${{ secrets.GDRIVE_FOLDER_EXECUTIVE }}
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.category }}" ]; then
+            ARGS="--category ${{ inputs.category }}"
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          python scripts/publish_to_gdrive.py $ARGS
+
+      - name: Commit updated drive map
+        if: ${{ inputs.dry_run != 'true' }}
+        run: |
+          git config user.name  "gdocs-sync[bot]"
+          git config user.email "noreply@dentroio.com"
+          git add docs/google_drive_map.json
+          if git diff --cached --quiet; then
+            echo "Drive map unchanged."
+          else
+            git commit -m "chore(docs): update google_drive_map.json [gdocs-sync]"
+            git push
+          fi

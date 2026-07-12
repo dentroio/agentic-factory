@@ -1,3 +1,11 @@
+---
+title: "Phases and Milestones"
+description: "Controlling WO dispatch order with phases and declaring delivery gates with milestones"
+last_verified: 2026-07-11
+covers_wos: []
+doc_owner: factory-team
+---
+
 # Phases and Milestones
 
 Phases and milestones are the two planning structures in the factory. They solve different problems.

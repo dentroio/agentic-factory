@@ -1,3 +1,11 @@
+---
+title: "Agentic Engineering Factory"
+description: "Overview of the factory: what it is, how it works, what it does not do, and navigation index"
+last_verified: 2026-07-11
+covers_wos: []
+doc_owner: factory-team
+---
+
 # Agentic Engineering Factory
 
 The agentic factory is a Docker-based system that orchestrates AI agents — Claude, Cursor, Codex, Gemini — to implement software work orders autonomously. You describe a feature, capability, or change to the PM in plain language. The PM — your AI project lead — drafts a structured work order spec, an agent claims it, writes the code, runs CI, gets a peer review from another model, and opens a PR. For low-risk work, the PR merges itself.

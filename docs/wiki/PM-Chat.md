@@ -1,3 +1,11 @@
+---
+title: "PM Chat"
+description: "Using the AI project manager in plain language to create WOs, manage the queue, and plan phases"
+last_verified: 2026-07-11
+covers_wos: []
+doc_owner: factory-team
+---
+
 # PM Chat
 
 The PM is your AI project lead. It sits in the PM tab and has live context about everything in the factory: the WO queue, open PRs, CI state, Dependabot activity, phases, milestones, and your agent memory. You describe what you want in plain language — the PM translates it into action. No forms, no confirmation steps, no separate UI.

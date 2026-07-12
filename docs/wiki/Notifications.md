@@ -1,3 +1,11 @@
+---
+title: "Notifications"
+description: "Push notification setup via ntfy and Slack for factory lifecycle events"
+last_verified: 2026-07-11
+covers_wos: []
+doc_owner: factory-team
+---
+
 # Notifications
 
 The factory sends push notifications for key lifecycle events. Two channels are supported: ntfy (push to phone/desktop) and Slack (webhook to a channel). Both can run simultaneously.
