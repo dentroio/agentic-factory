@@ -191,138 +191,245 @@
 
 {# ── Programs ─────────────────────────────────────────────────────────── #}
 {% if program_wos %}
-<div class="mb-4">
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Programs ({{ program_wos | length }})</h2>
-    <span class="text-[10px] text-slate-600 font-mono">click a program to expand</span>
+{% set prog_list = program_wos.items() | list %}
+
+<div class="glass-panel overflow-hidden mb-4">
+
+  {# ── Open / Closed program view tabs ── #}
+  <div class="flex items-center border-b border-slate-800/50">
+    <span class="px-5 text-[10px] font-mono text-slate-500 uppercase tracking-widest border-r border-slate-800/50 py-3 flex-shrink-0">Programs</span>
+    <button onclick="switchProgramView('open')" id="prog-view-btn-open"
+      class="px-4 py-3 text-[11px] font-semibold border-b-2 border-b-indigo-500 text-slate-200 transition-all">
+      Open
+    </button>
+    <button onclick="switchProgramView('closed')" id="prog-view-btn-closed"
+      class="px-4 py-3 text-[11px] font-semibold border-b-2 border-b-transparent text-slate-500 hover:text-slate-300 transition-all">
+      Closed
+    </button>
   </div>
-  <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
-    {% for prog_name, pw in program_wos.items() %}
-    {% set prog = programs[prog_name] if prog_name in programs else {"total": 0, "done": 0, "in_progress": 0, "in_review": 0, "open": 0, "blocked": 0, "deferred": 0, "pct": 0} %}
-    {% set active_count = (pw.in_progress | length) + (pw.review | length) %}
-    <details class="glass-panel overflow-hidden group" {% if active_count > 0 %}open{% endif %}>
-      <summary class="px-5 py-4 cursor-pointer list-none hover:bg-slate-900/20 transition-colors">
-        <div class="flex items-start gap-3">
-          <svg class="w-3.5 h-3.5 text-slate-600 mt-0.5 transition-transform group-open:rotate-90 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center justify-between gap-3 mb-2">
-              <span class="text-sm font-display font-semibold text-slate-200 truncate">{{ prog_name }}</span>
-              <div class="flex items-center gap-2 flex-shrink-0 text-[10px] font-mono">
-                {% if pw.blocked | length > 0 %}
-                <span class="text-rose-400 font-bold">{{ pw.blocked | length }} blocked</span>
-                {% endif %}
-                {% if active_count > 0 %}
-                <span class="text-indigo-400">{{ active_count }} active</span>
-                {% endif %}
-                <span class="text-slate-500">{{ prog.total }} total</span>
-              </div>
+
+  {# ── Open programs table ── #}
+  <div id="prog-view-open">
+    {% set ns = namespace(has_open=false) %}
+    {% for prog_name, pw in prog_list %}{% if (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.open|length) > 0 %}{% set ns.has_open = true %}{% endif %}{% endfor %}
+    {% if ns.has_open %}
+    <table class="w-full text-xs text-left">
+      <thead>
+        <tr class="border-b border-slate-800/40">
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Program</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-40">Progress</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-20 text-center">Blocked</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-20 text-center">Active</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-16 text-center">Open</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-16 text-center">Total</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800/20">
+        {% for prog_name, pw in prog_list %}
+        {% set prog = programs[prog_name] if prog_name in programs else {"total": 0, "done": 0, "pct": 0} %}
+        {% set open_count = (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.open|length) %}
+        {% set active_count = (pw.in_progress|length)+(pw.review|length) %}
+        {% set blocked_count = pw.blocked|length %}
+        {% if open_count > 0 %}
+        <tr data-open-prog="{{ prog_name }}"
+          class="cursor-pointer hover:bg-slate-800/30 transition-colors group">
+          <td class="px-5 py-3">
+            <div class="flex items-center gap-2">
+              {% if blocked_count > 0 %}<span class="w-1.5 h-1.5 rounded-full bg-rose-500 flex-shrink-0"></span>
+              {% elif active_count > 0 %}<span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse flex-shrink-0"></span>
+              {% else %}<span class="w-1.5 h-1.5 rounded-full bg-slate-700 flex-shrink-0"></span>{% endif %}
+              <span class="font-semibold text-slate-200 group-hover:text-indigo-300 transition-colors">{{ prog_name }}</span>
+              <svg class="w-3 h-3 text-slate-600 group-hover:text-indigo-400 ml-auto flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
             </div>
-            <div class="flex items-center gap-2.5">
+          </td>
+          <td class="px-5 py-3">
+            <div class="flex items-center gap-2">
               <div class="flex-1 bg-slate-950/60 border border-slate-900 rounded-full h-1.5 overflow-hidden">
-                <div class="bg-gradient-to-r from-emerald-500 to-teal-400 h-1.5 rounded-full transition-all duration-500" style="width:{{ prog.pct }}%"></div>
+                <div class="bg-gradient-to-r from-emerald-500 to-teal-400 h-1.5 rounded-full" style="width:{{ prog.pct }}%"></div>
               </div>
-              <span class="text-[10px] text-slate-500 font-mono w-16 text-right">{{ prog.done }}/{{ prog.total }} done ({{ prog.pct }}%)</span>
+              <span class="text-[10px] font-mono text-slate-500 flex-shrink-0 w-8 text-right">{{ prog.pct }}%</span>
             </div>
-          </div>
-        </div>
-      </summary>
-
-      <div class="border-t border-slate-800/50 divide-y divide-slate-800/20">
-
-        {# Blocked #}
-        {% if pw.blocked %}
-        <div class="px-5 py-3">
-          <div class="text-[9px] font-bold uppercase tracking-widest text-rose-500 mb-2">Blocked ({{ pw.blocked | length }})</div>
-          <div class="space-y-1.5">
-            {% for spec in pw.blocked %}
-            <div class="flex items-center gap-2.5 py-1">
-              <span class="w-2 h-2 rounded-full bg-rose-500 flex-shrink-0"></span>
-              <a href="/wo/{{ spec.number }}" class="text-[11px] font-mono font-bold text-slate-500 hover:text-indigo-400 hover:underline flex-shrink-0">WO-{{ spec.number }}</a>
-              <span class="text-[11px] text-slate-300 truncate flex-1">{{ spec.title }}</span>
-              <span class="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded flex-shrink-0 {{ spec.priority_class }}">{{ spec.priority }}</span>
-              <span class="text-[10px] text-slate-600 font-mono w-6 text-center">{{ spec.effort or "—" }}</span>
-            </div>
-            {% endfor %}
-          </div>
-        </div>
+          </td>
+          <td class="px-5 py-3 text-center">
+            {% if blocked_count > 0 %}<span class="text-[11px] font-bold text-rose-400">{{ blocked_count }}</span>
+            {% else %}<span class="text-[11px] text-slate-700">—</span>{% endif %}
+          </td>
+          <td class="px-5 py-3 text-center">
+            {% if active_count > 0 %}<span class="text-[11px] font-semibold text-indigo-400">{{ active_count }}</span>
+            {% else %}<span class="text-[11px] text-slate-700">—</span>{% endif %}
+          </td>
+          <td class="px-5 py-3 text-center"><span class="text-[11px] text-slate-400">{{ pw.open|length }}</span></td>
+          <td class="px-5 py-3 text-center"><span class="text-[11px] text-slate-500 font-mono">{{ prog.total }}</span></td>
+        </tr>
         {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="px-5 py-8 text-center text-xs text-slate-600">No open programs.</div>
+    {% endif %}
+  </div>
 
-        {# In Progress + Review #}
-        {% if pw.in_progress or pw.review %}
-        <div class="px-5 py-3">
-          <div class="text-[9px] font-bold uppercase tracking-widest text-indigo-400 mb-2">Active ({{ active_count }})</div>
-          <div class="space-y-1.5">
-            {% for spec in pw.in_progress %}
-            <div class="flex items-center gap-2.5 py-1">
-              <span class="w-2 h-2 rounded-full bg-indigo-400 animate-pulse flex-shrink-0"></span>
-              <a href="/wo/{{ spec.number }}" class="text-[11px] font-mono font-bold text-slate-500 hover:text-indigo-400 hover:underline flex-shrink-0">WO-{{ spec.number }}</a>
-              <span class="text-[11px] text-slate-300 truncate flex-1">{{ spec.title }}</span>
-              <span class="text-[9px] text-indigo-400 font-mono flex-shrink-0">in progress</span>
-              <span class="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded flex-shrink-0 {{ spec.priority_class }}">{{ spec.priority }}</span>
+  {# ── Closed programs table ── #}
+  <div id="prog-view-closed" class="hidden">
+    {% set ns2 = namespace(has_closed=false) %}
+    {% for prog_name, pw in prog_list %}{% set oc2 = (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.open|length) %}{% if oc2 == 0 and (pw.done|length)+(pw.deferred|length) > 0 %}{% set ns2.has_closed = true %}{% endif %}{% endfor %}
+    {% if ns2.has_closed %}
+    <table class="w-full text-xs text-left">
+      <thead>
+        <tr class="border-b border-slate-800/40">
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Program</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-40">Progress</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-20 text-center">Done</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-20 text-center">Deferred</th>
+          <th class="px-5 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-16 text-center">Total</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800/20">
+        {% for prog_name, pw in prog_list %}
+        {% set prog = programs[prog_name] if prog_name in programs else {"total": 0, "done": 0, "pct": 0} %}
+        {% set oc3 = (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.open|length) %}
+        {% if oc3 == 0 and (pw.done|length)+(pw.deferred|length) > 0 %}
+        <tr data-closed-prog="{{ prog_name }}"
+          class="cursor-pointer hover:bg-slate-800/30 transition-colors group opacity-65">
+          <td class="px-5 py-3">
+            <div class="flex items-center gap-2">
+              <span class="text-emerald-600 text-[11px] flex-shrink-0">✓</span>
+              <span class="font-semibold text-slate-400 group-hover:text-slate-200 transition-colors">{{ prog_name }}</span>
+              <svg class="w-3 h-3 text-slate-700 group-hover:text-slate-400 ml-auto flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
             </div>
-            {% endfor %}
-            {% for spec in pw.review %}
-            <div class="flex items-center gap-2.5 py-1">
-              <span class="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0"></span>
-              <a href="/wo/{{ spec.number }}" class="text-[11px] font-mono font-bold text-slate-500 hover:text-indigo-400 hover:underline flex-shrink-0">WO-{{ spec.number }}</a>
-              <span class="text-[11px] text-slate-300 truncate flex-1">{{ spec.title }}</span>
-              <span class="text-[9px] text-amber-400 font-mono flex-shrink-0">in review</span>
-              <span class="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded flex-shrink-0 {{ spec.priority_class }}">{{ spec.priority }}</span>
+          </td>
+          <td class="px-5 py-3">
+            <div class="flex items-center gap-2">
+              <div class="flex-1 bg-slate-950/60 border border-slate-900 rounded-full h-1.5 overflow-hidden">
+                <div class="bg-gradient-to-r from-emerald-500 to-teal-400 h-1.5 rounded-full" style="width:{{ prog.pct }}%"></div>
+              </div>
+              <span class="text-[10px] font-mono text-slate-500 flex-shrink-0 w-8 text-right">{{ prog.pct }}%</span>
             </div>
-            {% endfor %}
-          </div>
-        </div>
+          </td>
+          <td class="px-5 py-3 text-center"><span class="text-[11px] text-emerald-700">{{ pw.done|length }}</span></td>
+          <td class="px-5 py-3 text-center"><span class="text-[11px] text-slate-600">{{ pw.deferred|length }}</span></td>
+          <td class="px-5 py-3 text-center"><span class="text-[11px] text-slate-500 font-mono">{{ prog.total }}</span></td>
+        </tr>
         {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="px-5 py-8 text-center text-xs text-slate-600">No closed programs.</div>
+    {% endif %}
+  </div>
 
-        {# Open #}
-        {% if pw.open %}
-        <div class="px-5 py-3">
-          <div class="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-2">Open ({{ pw.open | length }})</div>
-          <div class="space-y-1">
-            {% for spec in pw.open %}
-            <div class="flex items-center gap-2.5 py-0.5">
-              <span class="w-3.5 h-3.5 rounded-full border-2 border-slate-700 flex-shrink-0"></span>
-              <a href="/wo/{{ spec.number }}" class="text-[11px] font-mono font-bold text-slate-500 hover:text-indigo-400 hover:underline flex-shrink-0">WO-{{ spec.number }}</a>
-              <span class="text-[11px] text-slate-400 truncate flex-1">{{ spec.title }}</span>
-              <span class="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded flex-shrink-0 {{ spec.priority_class }}">{{ spec.priority }}</span>
-              <span class="text-[10px] text-slate-600 font-mono w-6 text-center">{{ spec.effort or "—" }}</span>
-            </div>
-            {% endfor %}
-          </div>
-        </div>
-        {% endif %}
+</div>
 
-        {# Done (collapsed) #}
-        {% if pw.done %}
-        <details class="px-5 py-3 group/done">
-          <summary class="cursor-pointer list-none text-[9px] font-bold uppercase tracking-widest text-emerald-700 hover:text-emerald-500 transition-colors flex items-center gap-1.5">
-            <svg class="w-3 h-3 transition-transform group-open/done:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-            Done ({{ pw.done | length }})
-          </summary>
-          <div class="mt-2 space-y-1">
-            {% for spec in pw.done %}
-            <div class="flex items-center gap-2.5 py-0.5 opacity-50">
-              <span class="text-emerald-600 text-[11px] flex-shrink-0 w-3.5 text-center">✓</span>
-              <a href="/wo/{{ spec.number }}" class="text-[11px] font-mono text-slate-600 hover:text-slate-400 flex-shrink-0">WO-{{ spec.number }}</a>
-              <span class="text-[11px] text-slate-600 truncate flex-1 line-through decoration-slate-700">{{ spec.title }}</span>
-            </div>
-            {% endfor %}
-          </div>
-        </details>
-        {% endif %}
-
-        {# Deferred #}
-        {% if pw.deferred %}
-        <div class="px-5 py-2 border-t border-slate-900/60">
-          <span class="text-[9px] text-slate-700 font-mono uppercase tracking-widest">{{ pw.deferred | length }} deferred</span>
-        </div>
-        {% endif %}
-
+{# ── Program WO modal ── #}
+<div id="prog-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4"
+  onclick="if(event.target===this)closeProgModal()">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+  <div class="relative bg-slate-900 border border-slate-700/50 rounded-xl shadow-2xl w-full max-w-3xl max-h-[78vh] flex flex-col">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-slate-800/50 flex-shrink-0">
+      <div class="flex items-center gap-3 min-w-0">
+        <span id="modal-prog-dot" class="w-2 h-2 rounded-full flex-shrink-0 bg-slate-600"></span>
+        <h3 id="modal-prog-name" class="text-sm font-semibold text-slate-100 truncate"></h3>
+        <span id="modal-prog-meta" class="text-[10px] font-mono text-slate-500 flex-shrink-0"></span>
       </div>
-    </details>
-    {% endfor %}
+      <div class="flex items-center gap-1 flex-shrink-0 ml-4">
+        <button onclick="switchModalTab('open')" id="modal-tab-open"
+          class="px-3 py-1.5 text-[11px] font-semibold rounded-md bg-slate-800 text-slate-200 transition-all">Open</button>
+        <button onclick="switchModalTab('closed')" id="modal-tab-closed"
+          class="px-3 py-1.5 text-[11px] font-semibold rounded-md text-slate-500 hover:text-slate-300 transition-all">Closed</button>
+        <button onclick="closeProgModal()"
+          class="ml-2 w-7 h-7 flex items-center justify-center rounded-md text-slate-500 hover:text-slate-200 hover:bg-slate-800 text-lg leading-none transition-colors">×</button>
+      </div>
+    </div>
+    <div class="overflow-y-auto flex-1">
+      <div id="modal-wo-open"></div>
+      <div id="modal-wo-closed" class="hidden"></div>
+    </div>
   </div>
 </div>
+
+<script>
+const _PROG = {
+  {% for prog_name, pw in prog_list %}
+  {% set prog = programs[prog_name] if prog_name in programs else {"total": 0, "done": 0, "pct": 0} %}
+  {{ prog_name | tojson }}: {
+    pct: {{ prog.pct }},
+    total: {{ prog.total }},
+    done_count: {{ prog.done }},
+    open: [{% for s in (pw.blocked + pw.in_progress + pw.review + pw.open) %}{n:{{ s.number }},t:{{ s.title | tojson }},s:{{ s.board_column | tojson }},p:{{ s.priority | tojson }},pc:{{ s.priority_class | tojson }},e:{{ (s.effort | string if s.effort else "—") | tojson }}}{% if not loop.last %},{% endif %}{% endfor %}],
+    closed: [{% for s in (pw.done + pw.deferred) %}{n:{{ s.number }},t:{{ s.title | tojson }},s:{{ s.board_column | tojson }},p:{{ s.priority | tojson }},pc:{{ s.priority_class | tojson }},e:{{ (s.effort | string if s.effort else "—") | tojson }}}{% if not loop.last %},{% endif %}{% endfor %}]
+  }{% if not loop.last %},{% endif %}
+  {% endfor %}
+};
+
+const _STAT = {
+  blocked:     `<span class="inline-flex items-center gap-1.5 text-[10px] font-semibold text-rose-400"><span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>blocked</span>`,
+  in_progress: `<span class="inline-flex items-center gap-1.5 text-[10px] font-semibold text-indigo-400"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>in progress</span>`,
+  review:      `<span class="inline-flex items-center gap-1.5 text-[10px] font-semibold text-amber-400"><span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>in review</span>`,
+  open:        `<span class="text-[10px] text-slate-500">open</span>`,
+  done:        `<span class="inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-600">✓ done</span>`,
+  deferred:    `<span class="text-[10px] text-slate-600 font-mono">deferred</span>`,
+};
+
+function _woTable(wos, closed) {
+  if (!wos.length) return `<div class="px-5 py-10 text-center text-xs text-slate-600">${closed ? 'No closed work orders.' : 'All work orders are complete.'}</div>`;
+  const rows = wos.map(w => `<tr class="hover:bg-slate-900/20 transition-colors${closed?' opacity-60':''}">
+    <td class="px-5 py-2.5"><a href="/wo/${w.n}" class="font-mono font-bold ${closed?'text-slate-500 hover:text-indigo-400':'text-indigo-400'} hover:underline">WO-${w.n}</a></td>
+    <td class="px-5 py-2.5 ${closed?'text-slate-500 line-through decoration-slate-700':'text-slate-200'}">${w.t}</td>
+    <td class="px-5 py-2.5">${_STAT[w.s]||w.s}</td>
+    <td class="px-5 py-2.5"><span class="text-[9px] font-bold font-mono px-1.5 py-0.5 rounded ${w.pc}">${w.p}</span></td>
+    <td class="px-5 py-2.5 ${closed?'text-slate-600':'text-slate-500'} font-mono">${w.e}</td>
+  </tr>`).join('');
+  return `<table class="w-full text-xs text-left"><thead class="sticky top-0 bg-slate-950/95 backdrop-blur-sm"><tr class="border-b border-slate-800/40">
+    <th class="px-5 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-20">WO</th>
+    <th class="px-5 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Title</th>
+    <th class="px-5 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-28">Status</th>
+    <th class="px-5 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-16">Pri</th>
+    <th class="px-5 py-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-14">Effort</th>
+  </tr></thead><tbody class="divide-y divide-slate-800/30">${rows}</tbody></table>`;
+}
+
+function openProgModal(name) {
+  const d = _PROG[name]; if (!d) return;
+  document.getElementById('modal-prog-name').textContent = name;
+  document.getElementById('modal-prog-meta').textContent = `${d.done_count}/${d.total} done · ${d.pct}%`;
+  const dot = document.getElementById('modal-prog-dot');
+  const hasBlocked = d.open.some(w => w.s === 'blocked');
+  const hasActive  = d.open.some(w => w.s === 'in_progress' || w.s === 'review');
+  dot.className = `w-2 h-2 rounded-full flex-shrink-0 ${hasBlocked ? 'bg-rose-500' : hasActive ? 'bg-indigo-400 animate-pulse' : 'bg-slate-600'}`;
+  document.getElementById('modal-tab-open').textContent   = `Open (${d.open.length})`;
+  document.getElementById('modal-tab-closed').textContent = `Closed (${d.closed.length})`;
+  document.getElementById('modal-wo-open').innerHTML   = _woTable(d.open, false);
+  document.getElementById('modal-wo-closed').innerHTML = _woTable(d.closed, true);
+  switchModalTab('open');
+  document.getElementById('prog-modal').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+function closeProgModal() {
+  document.getElementById('prog-modal').classList.add('hidden');
+  document.body.style.overflow = '';
+}
+function switchModalTab(tab) {
+  const isOpen = tab === 'open';
+  document.getElementById('modal-wo-open').classList.toggle('hidden', !isOpen);
+  document.getElementById('modal-wo-closed').classList.toggle('hidden', isOpen);
+  document.getElementById('modal-tab-open').className   = `px-3 py-1.5 text-[11px] font-semibold rounded-md transition-all ${isOpen  ? 'bg-slate-800 text-slate-200' : 'text-slate-500 hover:text-slate-300'}`;
+  document.getElementById('modal-tab-closed').className = `px-3 py-1.5 text-[11px] font-semibold rounded-md transition-all ${!isOpen ? 'bg-slate-800 text-slate-200' : 'text-slate-500 hover:text-slate-300'}`;
+}
+function switchProgramView(view) {
+  const isOpen = view === 'open';
+  document.getElementById('prog-view-open').classList.toggle('hidden', !isOpen);
+  document.getElementById('prog-view-closed').classList.toggle('hidden', isOpen);
+  document.getElementById('prog-view-btn-open').className   = `px-4 py-3 text-[11px] font-semibold border-b-2 transition-all ${isOpen  ? 'border-b-indigo-500 text-slate-200' : 'border-b-transparent text-slate-500 hover:text-slate-300'}`;
+  document.getElementById('prog-view-btn-closed').className = `px-4 py-3 text-[11px] font-semibold border-b-2 transition-all ${!isOpen ? 'border-b-indigo-500 text-slate-200' : 'border-b-transparent text-slate-500 hover:text-slate-300'}`;
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeProgModal(); });
+document.addEventListener('click', e => {
+  const row = e.target.closest('tr[data-open-prog], tr[data-closed-prog]');
+  if (row) openProgModal(row.dataset.openProg || row.dataset.closedProg);
+});
+</script>
 {% endif %}
 
 {# ── Open WO table ─────────────────────────────────────────────────────── #}

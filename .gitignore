@@ -1,3 +1,11 @@
 .env
 .env.runtime
 .env.keychain
+
+# OS / tooling
+.DS_Store
+**/__pycache__/
+*.pyc
+
+# Stray copies of files that belong in services/status-site/static/
+DentroAIFactory.jpg
