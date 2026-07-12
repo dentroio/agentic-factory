@@ -6,9 +6,7 @@ name: Sync Wiki Pages to GitHub Wiki
 #   2. Click the Wiki tab → "Create the first page" → save anything
 # After that, this workflow handles all future updates automatically.
 #
-# Secrets required:
-#   GH_PAT — PAT with contents:write on this repo (for wiki push)
-#
+# Uses GITHUB_TOKEN (automatic — no secrets needed) with contents:write.
 # The sidebar (docs/wiki/_Sidebar.md) is copied as-is.
 # Content pages (docs/wiki/*.md) are copied to the wiki repo root.
 
@@ -24,17 +22,15 @@ jobs:
     name: Push to GitHub Wiki
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout factory repo
         uses: actions/checkout@v4
 
       - name: Clone GitHub Wiki repo
-        env:
-          GH_PAT: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
-          WIKI_URL="https://x-access-token:${GH_PAT}@github.com/${{ github.repository }}.wiki.git"
+          WIKI_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git"
           if ! git clone "$WIKI_URL" wiki-repo 2>/dev/null; then
             echo "::error::Could not clone the wiki repo."
             echo "  Make sure the Wiki tab is enabled and initialized:"
@@ -45,14 +41,11 @@ jobs:
 
       - name: Copy wiki pages
         run: |
-          # Copy all content pages and the sidebar
           cp docs/wiki/*.md wiki-repo/
           echo "Copied $(ls docs/wiki/*.md | wc -l | tr -d ' ') files"
 
       - name: Commit and push
         working-directory: wiki-repo
-        env:
-          GH_PAT: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
           git config user.name  "wiki-sync[bot]"
           git config user.email "noreply@dentroio.com"
@@ -69,4 +62,4 @@ jobs:
           Synced from docs/wiki/ in commit ${{ github.sha }}.
           Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-          git push "https://x-access-token:${GH_PAT}@github.com/${{ github.repository }}.wiki.git" HEAD:master
+          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" HEAD:master
