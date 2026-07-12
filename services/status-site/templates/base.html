@@ -79,6 +79,15 @@
         <span id="pm-nav-dot" class="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-indigo-500"></span>
       </button>
 
+      {# Help / page-guide button #}
+      <button onclick="toggleHelpPanel()" id="help-nav-btn"
+        title="Page guide"
+        class="relative flex items-center justify-center w-8 h-8 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-transparent hover:border-slate-700/60 transition-all">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+      </button>
+
       <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle light/dark mode" title="Toggle theme">
         <svg id="theme-icon-moon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="display:none">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
@@ -630,6 +639,187 @@
 
     /* ── Restore history on load ─────────────────────────────────────── */
     restoreHistory();
+  })();
+  </script>
+
+  {# ── Help / Page-Guide Panel ─────────────────────────────────────────────── #}
+  <div id="help-backdrop"
+    class="hidden fixed inset-0 bg-black/40 z-[85] backdrop-blur-[1px] transition-opacity"
+    onclick="toggleHelpPanel(false)"></div>
+
+  <div id="help-panel"
+    class="fixed inset-y-0 left-0 w-[360px] z-[95] flex flex-col bg-slate-950 border-r border-slate-800/80 shadow-2xl shadow-black/60 -translate-x-full transition-transform duration-300 ease-out">
+
+    <div class="px-4 py-3 bg-slate-900/60 border-b border-slate-800/60 flex items-center justify-between flex-shrink-0">
+      <div class="flex items-center gap-2.5">
+        <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <span class="text-sm font-semibold text-slate-200" id="help-panel-title">Page Guide</span>
+      </div>
+      <button onclick="toggleHelpPanel(false)" class="text-slate-600 hover:text-slate-300 transition-colors p-0.5" title="Close">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div id="help-panel-content" class="flex-1 overflow-y-auto px-5 py-5 text-sm text-slate-300 leading-relaxed space-y-5"></div>
+
+    <div class="px-4 py-3 border-t border-slate-800/40 flex-shrink-0">
+      <a href="https://github.com/{{ github_repo.split('/')[0] if github_repo is defined else 'dentroio' }}/agentic-factory/wiki" target="_blank"
+        class="text-[10px] font-mono text-slate-600 hover:text-indigo-400 transition-colors">
+        Full wiki documentation →
+      </a>
+    </div>
+  </div>
+
+  <style>
+    #help-panel { transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1); }
+    #help-panel.help-open { transform: translateX(0); }
+    #help-backdrop.help-open { display: block; }
+    #help-nav-btn.help-active { color: #e2e8f0; background: rgba(30,41,59,0.8); border-color: rgba(71,85,105,0.6); }
+    .help-section-title { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #818cf8; margin-bottom: 0.5rem; }
+    .help-content p { margin-bottom: 0.75rem; }
+    .help-content ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.375rem; }
+    .help-content li { padding-left: 1rem; position: relative; color: #94a3b8; }
+    .help-content li::before { content: "–"; position: absolute; left: 0; color: #4b5563; }
+    .help-content code { font-family: ui-monospace, monospace; font-size: 0.75rem; background: rgba(15,23,42,0.8); padding: 0.1rem 0.35rem; border-radius: 0.25rem; color: #a5b4fc; }
+    .help-content .help-tip { font-size: 0.7rem; color: #475569; font-family: ui-monospace, monospace; margin-top: 0.25rem; }
+  </style>
+
+  <script>
+  (function() {
+    'use strict';
+    const currentPath = {{ request.url.path | tojson }};
+
+    const HELP = {
+      '/': {
+        title: 'Overview',
+        sections: [
+          { heading: 'What you\'re looking at',
+            body: '<p>The factory\'s kanban board — every work order organized by status from left to right: Queued → In Progress → In Review → Done.</p><p>The health banner at the top reflects CI errors, PR warnings, and agent runner state in real time. The page auto-refreshes every 60 seconds.</p>' },
+          { heading: 'Key actions',
+            body: '<ul><li>Yellow validation banner: an agent finished a WO and needs your sign-off — click <strong>Approve</strong> or <strong>Reject</strong></li><li>Click any WO card to open its detail thread and see what the agent did</li><li><strong>+ New WO</strong> in the nav: open the PM to describe a new feature</li><li>WOs in "In Review" have an open PR — check the Engineering tab for CI and review status</li></ul>' },
+          { heading: 'Tip',
+            body: '<p class="help-tip">If a WO is stuck in "In Progress," check the Factory tab to see the agent\'s live step. If the agent runner is offline, the WO will stay claimed but idle until the runner restarts.</p>' },
+        ]
+      },
+      '/factory': {
+        title: 'Factory Floor',
+        sections: [
+          { heading: 'What you\'re looking at',
+            body: '<p>Real-time view of the agent backends and what they\'re doing right now. Backend cards at the top show each agent\'s status. The log panel below streams the current step of every active WO.</p>' },
+          { heading: 'Backend card states',
+            body: '<ul><li><strong>Green pulse — Ready:</strong> the agent CLI is logged in and the runner is polling</li><li><strong>Blue pulse — Working:</strong> actively running a WO right now</li><li><strong>Red ⊘ — Quota exhausted:</strong> hit a rate limit; the runner will skip this backend until the daemon restarts</li><li><strong>Grey — Offline:</strong> CLI not found or not logged in</li></ul>' },
+          { heading: 'Key actions',
+            body: '<ul><li>Click a backend card to filter the log panel to that agent\'s activity</li><li>The Dependabot panel shows dependency PRs where CI failed — these auto-create WOs via the bridge workflow</li><li>The API usage banner (top right) shows today\'s Anthropic API spend</li></ul>' },
+        ]
+      },
+      '/pm': {
+        title: 'PM View',
+        sections: [
+          { heading: 'What this is',
+            body: '<p>Full-page version of the PM chat. The PM has live context: the entire WO queue, all open PRs, CI state, Dependabot alerts, phases, milestones, and your agent memory. Talk to it in plain English.</p><p>This is the same conversation as the ◆ panel in the nav — it persists across page loads.</p>' },
+          { heading: 'What you can ask',
+            body: '<ul><li>"I want to add a dark mode toggle to the settings page" — creates a WO draft</li><li>"What\'s currently in progress?" — status summary</li><li>"Move WO-123 to phase 1 and set priority P1"</li><li>"What should we work on next?"</li><li>"Merge the Dependabot PRs that have passing CI"</li><li>"What PRs are waiting for my review?"</li></ul>' },
+          { heading: 'Creating a WO',
+            body: '<p>Describe the feature, the PM drafts a spec card inline. Review the title, priority, effort, and acceptance criteria. Say "create it" to write the WO file and add it to the queue. You can also expand <strong>+ Create a WO...</strong> to hint the priority, phase, and effort before describing the feature.</p>' },
+        ]
+      },
+      '/ci': {
+        title: 'Engineering',
+        sections: [
+          { heading: 'What you\'re looking at',
+            body: '<p>PR health dashboard. Every open PR with its CI status, AI code review verdict, and merge advisor recommendation. Gives you a single view of what\'s safe to merge, what needs attention, and what\'s blocked.</p>' },
+          { heading: 'AI Review verdicts',
+            body: '<ul><li><strong>LGTM:</strong> all checks passed — merge is not blocked</li><li><strong>Needs attention:</strong> advisory issues noted; the auto-applier may fix them automatically</li><li><strong>Review required:</strong> one or more checks failed — merge is blocked until the agent addresses the issues</li></ul>' },
+          { heading: 'Key actions',
+            body: '<ul><li>PRs marked P2 with passing CI and LGTM merge automatically — no action needed</li><li>P1/P0 PRs need your manual approval before merging</li><li>Dependabot PRs where CI fails are automatically converted to WOs — you\'ll see them in the queue</li><li>Click a PR title to open it on GitHub</li></ul>' },
+        ]
+      },
+      '/plan': {
+        title: 'Plan',
+        sections: [
+          { heading: 'What you\'re looking at',
+            body: '<p>The WO queue manager. All work orders organized by phase and priority. Phases control dispatch order — WOs in the <em>now</em> phase are dispatched before <em>backlog</em> WOs regardless of WO number. Milestones are delivery gates.</p>' },
+          { heading: 'WO states',
+            body: '<ul><li><strong>Queued:</strong> waiting for an agent to claim it</li><li><strong>⏸ On hold:</strong> skipped by the dispatcher until you release it</li><li><strong>📌 Pinned:</strong> floats to the top of the dispatch queue</li><li><strong>Blocked:</strong> depends on another WO that isn\'t done yet</li></ul>' },
+          { heading: 'Key actions',
+            body: '<ul><li>Click a WO number to open its detail thread</li><li>Use the <strong>+ New WO</strong> button or PM chat to add work orders</li><li>Hold a WO to pause it without removing it from the queue</li><li>Milestones block all later-phase WOs until every blocking WO in the milestone is complete</li></ul>' },
+        ]
+      },
+      '/usage': {
+        title: 'API Usage',
+        sections: [
+          { heading: 'What you\'re looking at',
+            body: '<p>Anthropic API usage log — calls made today by the factory\'s GitHub Actions workflows (AI review, planning agent, verifier, memory agent) and by the PM chat in the orchestrator.</p>' },
+          { heading: 'Cost notes',
+            body: '<ul><li>AI code review: ~$0.02–0.05 per PR (7K tokens, Sonnet)</li><li>Planning agent: ~$0.01–0.03 per WO spec generated</li><li>Post-merge memory: ~$0.01 per merge (only when something worth recording is found)</li><li>PM chat: depends on conversation length; typical messages are 1K–3K tokens</li></ul>' },
+        ]
+      },
+      '/settings': {
+        title: 'Settings',
+        sections: [
+          { heading: 'Sub-pages',
+            body: '<ul><li><strong>Authentication:</strong> GitHub token and Anthropic API key — green badge means the credential is valid and has the required scopes</li><li><strong>Agents:</strong> default AI backend, dispatch configuration, runner settings</li><li><strong>Projects:</strong> GitHub repos the factory monitors and creates PRs in</li><li><strong>Plan:</strong> manage phases and milestones for the WO queue</li></ul>' },
+          { heading: 'If a badge is red',
+            body: '<p>Re-run <code>make agent-setup</code> on your Mac to update the stored secret in Keychain, then restart the factory with <code>make restart</code>. The badge reflects the live credential state — it refreshes on page load.</p>' },
+        ]
+      },
+    };
+
+    // Prefix match for settings sub-pages
+    function getHelp(path) {
+      if (HELP[path]) return HELP[path];
+      // settings sub-pages all share the settings guide
+      if (path.startsWith('/settings/')) return HELP['/settings'];
+      // WO detail page
+      if (path.startsWith('/wo/')) return {
+        title: 'Work Order Thread',
+        sections: [
+          { heading: 'What you\'re looking at',
+            body: '<p>The full history of this work order: agent progress steps, system events, and any messages between you and the agent. Every action the agent takes is streamed here in real time.</p>' },
+          { heading: 'Human checkpoint',
+            body: '<p>When the agent finishes implementing and passes the quality gate, it posts a message here asking you to verify. A push notification fires (if ntfy is configured). Check the feature, then click <strong>Approve</strong> to let the agent commit and open a PR — or <strong>Reject</strong> with notes to send it back for revision.</p>' },
+          { heading: 'After approval',
+            body: '<ul><li>P2 WOs: agent commits, opens PR, sets auto-merge — no further action needed from you</li><li>P1/P0 WOs: agent opens PR, you review and merge manually on GitHub</li><li>Check the Engineering tab to monitor CI and AI review status</li></ul>' },
+        ]
+      };
+      return null;
+    }
+
+    window.toggleHelpPanel = function(force) {
+      const panel = document.getElementById('help-panel');
+      const backdrop = document.getElementById('help-backdrop');
+      const btn = document.getElementById('help-nav-btn');
+      const isOpen = panel.classList.contains('help-open');
+      const open = force !== undefined ? force : !isOpen;
+
+      if (open) {
+        const help = getHelp(currentPath);
+        const titleEl = document.getElementById('help-panel-title');
+        const contentEl = document.getElementById('help-panel-content');
+        if (help) {
+          titleEl.textContent = help.title;
+          contentEl.innerHTML = help.sections.map(s =>
+            `<div class="help-content"><div class="help-section-title">${s.heading}</div>${s.body}</div>`
+          ).join('');
+        } else {
+          titleEl.textContent = 'Page Guide';
+          contentEl.innerHTML = '<div class="help-content"><p class="text-slate-500 text-sm">No guide available for this page.</p></div>';
+        }
+      }
+
+      panel.classList.toggle('help-open', open);
+      backdrop.classList.toggle('help-open', open);
+      btn.classList.toggle('help-active', open);
+    };
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        const panel = document.getElementById('help-panel');
+        if (panel && panel.classList.contains('help-open')) toggleHelpPanel(false);
+      }
+    });
   })();
   </script>
 
