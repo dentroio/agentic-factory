@@ -83,7 +83,7 @@ def main() -> None:
         print(f"ERROR: {WIKI_DOCS} not found. Run from the repo root.", file=sys.stderr)
         sys.exit(1)
 
-    pages = sorted(WIKI_DOCS.rglob("*.md"))
+    pages = sorted(p for p in WIKI_DOCS.rglob("*.md") if not p.name.startswith("_"))
     problems: list[dict] = []
 
     for page in pages:

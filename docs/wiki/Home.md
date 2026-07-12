@@ -22,7 +22,8 @@ The factory does not write code on its own initiative. It executes what you queu
 
 | Page | What's in it |
 |------|-------------|
-| [Daily Workflow](Daily-Workflow) | Start here — the day-to-day loop from starting the factory to merging a WO |
+| [Getting Started](Getting-Started) | New here? Full setup walkthrough from template to first WO |
+| [Daily Workflow](Daily-Workflow) | The day-to-day loop from starting the factory to merging a WO |
 | [PM Chat](PM-Chat) | The PM — your AI project lead: what it knows and what it can do |
 | [Work Orders](Work-Orders) | WO specs, priority tiers, effort sizes, queue lifecycle |
 | [Phases and Milestones](Phases-and-Milestones) | Controlling dispatch order and declaring delivery gates |
@@ -30,4 +31,5 @@ The factory does not write code on its own initiative. It executes what you queu
 | [Agent Backends](Agent-Backends) | Claude, Cursor, Codex, Gemini — when to use each, how the review chain works |
 | [GitHub Integrations](GitHub-Integrations) | The GitHub Actions workflows and what each one does |
 | [Notifications](Notifications) | ntfy push notifications and Slack webhook setup |
+| [Customization](Customization) | Review rules, observability thresholds, CI template, agent instructions |
 | [Troubleshooting](Troubleshooting) | Common failures and how to fix them |
