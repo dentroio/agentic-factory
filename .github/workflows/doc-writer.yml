@@ -1,0 +1,99 @@
+name: Doc Writer — Update Clarion Wiki
+
+# Runs every 6 hours and on-demand.
+# Finds stale or WO-uncovered wiki pages in the Clarion repo,
+# uses Claude to update them, and commits the changes back.
+#
+# This is an AI Factory tool — NOT part of the deployable Clarion product.
+#
+# Secrets required (set on the agentic-factory repo):
+#   ANTHROPIC_API_KEY  — Claude API key
+#   GH_PAT             — PAT with contents:write on dentroio/clarion
+#
+# Variables (optional, set as repo vars):
+#   CLARION_REPO       — default: dentroio/clarion
+#   DOC_WRITER_MAX_PAGES — default: 5
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"    # every 6 hours
+  workflow_dispatch:
+    inputs:
+      page:
+        description: "Update a specific page (relative to wiki/docs/, e.g. operator/secure/groups.md)"
+        required: false
+      max_pages:
+        description: "Max pages to update (default 5)"
+        required: false
+        default: "5"
+      dry_run:
+        description: "Dry run — show what would change without writing"
+        type: boolean
+        default: false
+
+jobs:
+  update-docs:
+    name: Update wiki pages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout agentic-factory
+        uses: actions/checkout@v4
+
+      - name: Checkout Clarion repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.CLARION_REPO || 'dentroio/clarion' }}
+          token: ${{ secrets.GH_PAT }}
+          path: clarion
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install anthropic
+
+      - name: Run doc writer
+        id: doc_writer
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ARGS="--clarion-path ./clarion --max-pages ${{ inputs.max_pages || vars.DOC_WRITER_MAX_PAGES || '5' }}"
+
+          if [ -n "${{ inputs.page }}" ]; then
+            ARGS="$ARGS --page ${{ inputs.page }}"
+          fi
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+
+          python3 scripts/doc_writer.py $ARGS
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: Commit and push wiki updates
+        if: ${{ inputs.dry_run != 'true' }}
+        working-directory: clarion
+        run: |
+          git config user.name  "clarion-doc-writer[bot]"
+          git config user.email "noreply@dentroio.com"
+          git add wiki/docs/
+
+          if git diff --cached --quiet; then
+            echo "No wiki changes to commit."
+            exit 0
+          fi
+
+          # Build commit message from changed files
+          CHANGED=$(git diff --cached --name-only | grep "^wiki/docs/" | sed 's|wiki/docs/||' | tr '\n' ', ' | sed 's/,$//')
+          git commit -m "docs(wiki): auto-update ${CHANGED} [doc-writer-agent]
+
+          Updated by the AI Factory doc-writer agent.
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ vars.CLARION_REPO || 'dentroio/clarion' }}.git HEAD:main
