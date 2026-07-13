@@ -2185,14 +2185,18 @@ async def poll() -> None:
             continue
         if spec.get("repo", GITHUB_REPO) != GITHUB_REPO:
             continue  # secondary-repo WOs board-visible only, not dispatchable
-        _plan_overlay.append({
+        entry = {
             "wo": wo_id,
             "title": spec.get("title", wo_id),
             "priority": spec.get("priority", "P2"),
             "effort": spec.get("effort", ""),
             "status": spec.get("status", "open"),
             "_overlay": True,
-        })
+        }
+        _plan_overlay.append(entry)
+        # Persist to SQLite so the queue stays current without manual PLAN.json edits.
+        # ON CONFLICT DO UPDATE preserves any human-set position/pin/phase already in the DB.
+        _db_upsert_queue_entry({**entry, "phase": spec.get("phase", "backlog")})
 
     # Enrich active_work with dispatch state (agent/step from API claims)
     active_work = []
@@ -2765,6 +2769,196 @@ async def approve_merge_dependabot_pr(number: int):
     return {"status": "merged", "pr": number}
 
 
+# ── PM tool definitions ──────────────────────────────────────────────────────
+_PM_TOOLS: list[dict] = [
+    {
+        "name": "read_file",
+        "description": (
+            "Read a file from the Clarion repository. Use to inspect source code, WO specs, "
+            "docs, configs, or any project file before drafting a WO or answering a question."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path relative to the repo root, e.g. 'src/clarion/api/routes/devices.py' or 'docs/project_management/work_orders/WO-376-canonical-entity-uuid.md'",
+                }
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "grep_codebase",
+        "description": (
+            "Search for a text pattern across the repository. Returns matching lines with file paths. "
+            "Use to find where something is defined, what APIs exist, or what code already handles a feature."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "grep regex pattern"},
+                "path": {
+                    "type": "string",
+                    "description": "Optional subdirectory or file glob to narrow the search, e.g. 'src/clarion/' or '*.md'",
+                },
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "list_files",
+        "description": "List files in a repository directory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "directory": {
+                    "type": "string",
+                    "description": "Directory path relative to repo root, e.g. 'src/clarion/api/routes/'",
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Optional glob filter, e.g. '*.py' or 'WO-*.md'",
+                },
+            },
+            "required": ["directory"],
+        },
+    },
+    {
+        "name": "git_log",
+        "description": "Get recent git commit history, optionally filtered to a specific file.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max commits to return (default 15)"},
+                "path": {"type": "string", "description": "Optional file path to filter commits"},
+            },
+        },
+    },
+    {
+        "name": "query_queue",
+        "description": "Query the SQLite WO priority queue, phases, and milestones.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "phase": {"type": "string", "description": "Filter by phase id, e.g. 'now' or 'backlog'"},
+                "priority": {"type": "string", "description": "Filter by priority, e.g. 'P1'"},
+            },
+        },
+    },
+]
+
+
+def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
+    """Execute a PM tool call. Returns a string result (always safe to include in messages)."""
+    repo_root = Path(LOCAL_REPO_MOUNT).resolve() if LOCAL_REPO_MOUNT else None
+
+    def _safe_path(rel: str) -> "Path | None":
+        if not repo_root:
+            return None
+        try:
+            target = (repo_root / rel).resolve()
+            if not str(target).startswith(str(repo_root)):
+                return None
+            return target
+        except Exception:
+            return None
+
+    if tool_name == "read_file":
+        rel = tool_input.get("path", "").lstrip("/")
+        if not repo_root:
+            return "Error: repository not mounted (LOCAL_REPO_MOUNT not configured)"
+        target = _safe_path(rel)
+        if target is None:
+            return "Error: path traversal not allowed"
+        if not target.exists():
+            return f"File not found: {rel}"
+        try:
+            lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+            if len(lines) > 300:
+                return "\n".join(lines[:300]) + f"\n\n[... truncated at 300 lines; file has {len(lines)} total]"
+            return "\n".join(lines)
+        except Exception as exc:
+            return f"Error reading file: {exc}"
+
+    if tool_name == "grep_codebase":
+        if not repo_root:
+            return "Error: repository not mounted"
+        pattern = tool_input.get("pattern", "")
+        search_path = tool_input.get("path", "")
+        base = _safe_path(search_path) if search_path else repo_root
+        if base is None:
+            return "Error: invalid search path"
+        try:
+            import subprocess as _sp
+            result = _sp.run(
+                ["grep", "-r", "-n", "-m", "3",
+                 "--include=*.py", "--include=*.ts", "--include=*.tsx",
+                 "--include=*.md", "--include=*.json", "--include=*.sql",
+                 pattern, str(base)],
+                capture_output=True, text=True, timeout=10,
+            )
+            out = result.stdout.strip()
+            if not out:
+                return f"No matches for: {pattern}"
+            lines = out.split("\n")[:60]
+            return "\n".join(l.replace(str(repo_root) + "/", "") for l in lines)
+        except Exception as exc:
+            return f"Error: {exc}"
+
+    if tool_name == "list_files":
+        if not repo_root:
+            return "Error: repository not mounted"
+        directory = tool_input.get("directory", "").lstrip("/")
+        pattern = tool_input.get("pattern", "*")
+        target = _safe_path(directory)
+        if target is None:
+            return "Error: invalid directory"
+        if not target.exists():
+            return f"Directory not found: {directory}"
+        try:
+            files = sorted(target.glob(pattern))
+            names = [str(f.relative_to(repo_root)) for f in files if f.is_file()][:100]
+            if not names:
+                return "No files found"
+            return "\n".join(names)
+        except Exception as exc:
+            return f"Error: {exc}"
+
+    if tool_name == "git_log":
+        if not repo_root:
+            return "Error: repository not mounted"
+        limit = min(int(tool_input.get("limit") or 15), 30)
+        path = tool_input.get("path", "")
+        try:
+            import subprocess as _sp
+            cmd = ["git", "-C", str(repo_root), "log", f"--max-count={limit}",
+                   "--oneline", "--no-decorate"]
+            if path:
+                cmd += ["--", path]
+            result = _sp.run(cmd, capture_output=True, text=True, timeout=10)
+            return result.stdout.strip() or "No commits found"
+        except Exception as exc:
+            return f"Error: {exc}"
+
+    if tool_name == "query_queue":
+        queue = _db_get_queue()
+        phase_f = tool_input.get("phase")
+        pri_f = tool_input.get("priority")
+        if phase_f:
+            queue = [e for e in queue if e.get("phase") == phase_f]
+        if pri_f:
+            queue = [e for e in queue if e.get("priority") == pri_f]
+        return json.dumps({
+            "queue": queue,
+            "phases": _db_get_phases(),
+            "milestones": _db_get_milestones(),
+            "overlay_count": len(_plan_overlay),
+        }, indent=2)
+
+    return f"Unknown tool: {tool_name}"
+
+
 _PM_SYSTEM = """\
 You are the AI Factory PM for the Clarion project — a sharp, decisive engineering PM who knows the codebase.
 You coordinate AI agents (Claude, Cursor, Codex, Gemini) that autonomously implement work orders (WOs).
@@ -2781,13 +2975,23 @@ PERSONALITY & STYLE:
 
 YOUR CAPABILITIES:
 - Answer questions about active WOs, agent status, queue health, PR status
-- Read WO specs (provided in context when a WO is mentioned) to advise on dependencies and sequencing
-- Draft new work orders from plain-English feature requests
+- Read WO specs, source code, docs, and any project file via the read_file tool
+- Search the codebase for symbols, patterns, or existing implementations via grep_codebase
+- List directory contents via list_files to understand project structure
+- Check git history for recent changes via git_log
+- Query the live priority queue, phases, and milestones via query_queue
+- Draft new work orders from plain-English feature requests — always read relevant code first
 - Trigger Dependabot actions (rebase, recreate, merge)
 - Dispatch WOs directly to an agent backend
 - Create and delete Programs, Phases, and Milestones
 - Priorities: P1=core/risky, P2=feature/additive, P3=docs
 - Effort: XS<1h S~2h M=½d L=1d XL=2-3d
+
+TOOL USE GUIDANCE:
+- Before drafting a WO spec, use read_file / grep_codebase to understand what code already exists.
+- When the user asks about the codebase ("what does X do?", "where is Y?"), use the tools to look it up rather than guessing.
+- When drafting WOs that touch a specific file or module, read that file first so the spec references real function names and patterns.
+- Use query_queue to understand the current queue before advising on prioritization or sequencing.
 
 PLANNING STRUCTURE — these three concepts organize work:
   Program  — what initiative a WO belongs to (e.g. "Launch Program"). Pure label; assign when creating a WO.
@@ -3019,24 +3223,6 @@ async def pm_chat(req: PMChatRequest):
         if hint_lines:
             user_message = user_message + "\n\n[User-specified WO metadata — use these exact values in the draft:\n" + "\n".join(hint_lines) + "]"
 
-    # Build user content — multi-modal when images are attached
-    if req.images:
-        user_content: list[dict] = []
-        for img in req.images:
-            user_content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": img.get("media_type", "image/png"),
-                    "data": img["data"],
-                },
-            })
-        if user_message:
-            user_content.append({"type": "text", "text": user_message})
-        messages.append({"role": "user", "content": user_content})
-    else:
-        messages.append({"role": "user", "content": user_message})
-
     text = ""
     if req.backend == "claude-api" or not req.backend:
         api_key = _get_anthropic_key()
@@ -3045,14 +3231,41 @@ async def pm_chat(req: PMChatRequest):
                 import anthropic as _anthropic
                 _aclient = _anthropic.Anthropic(api_key=api_key)
                 _model = "claude-opus-4-8"
+                tools = _PM_TOOLS if LOCAL_REPO_MOUNT else []
+                tool_messages = list(messages)
+                tool_messages.append({"role": "user", "content": user_message if not req.images else [
+                    *[{"type": "image", "source": {"type": "base64", "media_type": img.get("media_type", "image/png"), "data": img["data"]}} for img in req.images],
+                    *([] if not user_message else [{"type": "text", "text": user_message}]),
+                ]})
                 _amsg = _aclient.messages.create(
                     model=_model,
-                    max_tokens=1024,
+                    max_tokens=4096,
                     system=system,
-                    messages=messages,
+                    messages=tool_messages,
+                    tools=tools or _anthropic.NOT_GIVEN,
                 )
                 _record_anthropic_usage(_model, _amsg.usage.input_tokens, _amsg.usage.output_tokens, "pm/chat")
-                text = _amsg.content[0].text.strip()
+                # Tool-use loop — PM may call tools before producing final text
+                _MAX_TOOL_ROUNDS = 6
+                for _round in range(_MAX_TOOL_ROUNDS):
+                    if _amsg.stop_reason != "tool_use":
+                        break
+                    tool_calls = [b for b in _amsg.content if b.type == "tool_use"]
+                    tool_messages.append({"role": "assistant", "content": [b.model_dump() for b in _amsg.content]})
+                    tool_results = []
+                    for tc in tool_calls:
+                        result = _execute_pm_tool(tc.name, tc.input)
+                        tool_results.append({"type": "tool_result", "tool_use_id": tc.id, "content": result})
+                    tool_messages.append({"role": "user", "content": tool_results})
+                    _amsg = _aclient.messages.create(
+                        model=_model,
+                        max_tokens=4096,
+                        system=system,
+                        messages=tool_messages,
+                        tools=tools or _anthropic.NOT_GIVEN,
+                    )
+                    _record_anthropic_usage(_model, _amsg.usage.input_tokens, _amsg.usage.output_tokens, "pm/chat")
+                text = "".join(b.text for b in _amsg.content if hasattr(b, "text")).strip()
             except Exception as e:
                 raise HTTPException(status_code=500, detail=str(e))
         elif req.images:
