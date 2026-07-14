@@ -67,6 +67,7 @@
       </div>
       {% for wo in my_wos %}
       <div class="text-[9px] font-mono text-slate-400 truncate">{{ wo.wo }} — {{ (wo.step or '') | truncate(32, True, '…') }}</div>
+      {% if wo.last_seen %}<div class="text-[9px] font-mono text-slate-600">checkin {{ wo.last_seen[11:16] }} UTC</div>{% endif %}
       {% endfor %}
       {% elif online %}
       <div class="text-[10px] font-mono text-emerald-400">● ready</div>
@@ -128,7 +129,7 @@
               <span class="w-1 h-1 rounded-full bg-indigo-500 flex-shrink-0"></span>
               <span class="text-[10px] text-slate-500 font-mono truncate">{{ wo.step[:70] }}</span>
             </div>{% endif %}
-            {% if wo.last_seen %}<div class="text-[9px] text-slate-700 font-mono mt-1">{{ wo.last_seen[:16].replace('T',' ') }} UTC</div>{% endif %}
+            {% if wo.last_seen %}<div class="text-[9px] text-slate-500 font-mono mt-1">{{ wo.last_seen[11:16] }} UTC</div>{% endif %}
           </div>
           {% endfor %}{% else %}
           <div class="px-4 py-10 text-center">
@@ -230,7 +231,11 @@
     if (/No WO available|sleeping/i.test(text)) return;
     lineCount++;
     const d = document.createElement('div');
-    d.innerHTML = colorize(text);
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2,'0');
+    const mm = String(now.getMinutes()).padStart(2,'0');
+    const ss = String(now.getSeconds()).padStart(2,'0');
+    d.innerHTML = `<span class="text-slate-700 select-none mr-1">${hh}:${mm}:${ss}</span>` + colorize(text);
     feed.appendChild(d);
     if (autoscroll.checked) feed.scrollTop = feed.scrollHeight;
     if (lineCount > 2000) { feed.removeChild(feed.firstChild); lineCount--; }
@@ -301,7 +306,13 @@
         const sc = statusClass(wo.status);
         const isFailed = (wo.step||'').toLowerCase().includes('failed');
         const step = wo.step ? `<div class="flex items-center gap-1.5 mt-1.5"><span class="w-1 h-1 rounded-full ${isFailed?'bg-rose-500':'bg-indigo-500'} flex-shrink-0"></span><span class="text-[10px] ${isFailed?'text-rose-400 font-semibold':'text-slate-500'} font-mono truncate">${e(wo.step.slice(0,70))}</span></div>` : '';
-        const ts = wo.last_seen ? `<div class="text-[9px] text-slate-700 font-mono mt-1">${wo.last_seen.slice(0,16).replace('T',' ')} UTC</div>` : '';
+        const tsRel = wo.last_seen ? (() => {
+          const diff = Math.round((Date.now() - new Date(wo.last_seen)) / 1000);
+          if (diff < 60) return `${diff}s ago`;
+          if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+          return `${Math.floor(diff/3600)}h ${Math.floor((diff%3600)/60)}m ago`;
+        })() : '';
+        const ts = wo.last_seen ? `<div class="text-[9px] text-slate-500 font-mono mt-1">${wo.last_seen.slice(11,16)} UTC · ${tsRel}</div>` : '';
         const retryBtn = isFailed ? `<button onclick="retryWO('${e(wo.wo)}')" class="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 hover:bg-amber-500/30 font-mono transition-all" title="Re-queue">↺ retry</button>` : '';
         return `<div class="px-4 py-3 hover:bg-slate-800/20 transition-colors group">
           <div class="flex items-center gap-2 mb-1.5">

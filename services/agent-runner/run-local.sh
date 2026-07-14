@@ -89,6 +89,12 @@ if ! command -v claude &>/dev/null; then
     fi
 fi
 
+# ── Capture per-instance env vars set by LaunchAgent before any sourcing ──────
+# Per-backend plists inject PREFERRED_AGENT and AGENT_NAME via EnvironmentVariables.
+# We save them here so they survive the prefs/env sourcing below.
+_PLIST_PREFERRED_AGENT="${PREFERRED_AGENT:-}"
+_PLIST_AGENT_NAME="${AGENT_NAME:-}"
+
 # ── Try Keychain first ────────────────────────────────────────────────────────
 FACTORY_ENV="$REPO_ROOT/scripts/factory-env.sh"
 if [ -f "$FACTORY_ENV" ]; then
@@ -109,6 +115,10 @@ if [ -f "$ENV_FILE" ]; then
 else
     echo "[factory-agent] WARNING: No .env at $ENV_FILE — relying on environment" >&2
 fi
+
+# ── Restore per-instance overrides (plist values beat prefs/env file) ─────────
+[ -n "$_PLIST_PREFERRED_AGENT" ] && export PREFERRED_AGENT="$_PLIST_PREFERRED_AGENT"
+[ -n "$_PLIST_AGENT_NAME" ]      && export AGENT_NAME="$_PLIST_AGENT_NAME"
 
 # ── Local overrides (Docker internal paths don't work on the host) ────────────
 export ORCHESTRATOR_URL="${ORCHESTRATOR_URL:-http://localhost:8100}"

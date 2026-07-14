@@ -115,6 +115,43 @@ async def get_dispatch_status(wo_id: str) -> str:
         return "unknown"
 
 
+async def get_prior_rejections(wo_id: str) -> list[dict]:
+    """Return prior rejected validations for this WO, newest first, with a reject_reason."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/validations")
+            resp.raise_for_status()
+            return [
+                v for v in reversed(resp.json())
+                if v.get("wo") == wo_id
+                and v.get("status") == "rejected"
+                and v.get("reject_reason")
+            ]
+    except Exception:
+        return []
+
+
+async def get_thread_messages(wo_id: str) -> list[dict]:
+    """Return all thread messages for a WO."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/thread/{wo_id}/messages")
+            resp.raise_for_status()
+            msgs = resp.json()
+            return msgs if isinstance(msgs, list) else []
+    except Exception:
+        return []
+
+
+async def release_dispatch(wo_id: str) -> None:
+    """Remove WO from dispatch state so capacity is freed and it can be re-claimed."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}/retry")
+    except Exception as e:
+        print(f"[runner] release_dispatch {wo_id} failed: {e}")
+
+
 async def get_agent_config() -> dict:
     """Fetch agent config from the orchestrator (preferred backend, reviewers, etc.)."""
     try:

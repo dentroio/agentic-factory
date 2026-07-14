@@ -633,6 +633,10 @@ class ThreadMessage(BaseModel):
 class ValidationDecision(BaseModel):
     decided_by: str
     notes: str = ""
+    reason: str = ""  # alias used by claude-reviewer; prefer over notes
+
+    def reject_reason(self) -> str:
+        return self.reason or self.notes
 
 
 class QueueEntryRequest(BaseModel):
@@ -1109,6 +1113,7 @@ async def reject_validation(wo: str, decision: ValidationDecision):
             v["decided_by"] = decision.decided_by
             v["decided_at"] = _utcnow()
             v["notes"] = decision.notes
+            v["reject_reason"] = decision.reject_reason()
             rejected_count += 1
 
     if rejected_count == 0:

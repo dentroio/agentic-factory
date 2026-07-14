@@ -38,10 +38,13 @@ from orchestrator_client import (
     get_agent_config,
     get_dispatch_status,
     get_next,
+    get_prior_rejections,
+    get_thread_messages,
     post_thread_message,
+    release_dispatch,
     request_validate,
 )
-from prompt_builder import build_prompt, slug_from_title
+from prompt_builder import build_prompt, format_prior_context, slug_from_title
 from quality_gate import run_container_rebuild, run_quality_gate, _ci_env
 from review_chain import get_worktree_diff, run_review_chain
 from thread_monitor import ThreadMonitor, _is_question
@@ -63,6 +66,32 @@ async def _post_log(line: str) -> None:
             await c.post(f"{ORCHESTRATOR_URL}/api/log", json={"line": line, "agent": AGENT_NAME})
     except Exception:
         pass
+
+
+async def _analyze_failure(wo_id: str, context: str) -> str:
+    """
+    Call claude -p to produce a short root-cause diagnosis of a build/CI failure.
+    Returns the analysis string, or empty string on error. Non-blocking via executor.
+    """
+    import subprocess as _sp
+    prompt = (
+        f"A CI or build step just failed for work order {wo_id}. "
+        "Give a 3-5 sentence root-cause diagnosis and the exact file/line fix the agent must apply. "
+        "Be specific and actionable — no preamble, no markdown headers.\n\n"
+        f"{context}"
+    )
+    def _run() -> str:
+        try:
+            result = _sp.run(
+                ["claude", "-p", prompt],
+                capture_output=True, text=True, timeout=90,
+            )
+            return result.stdout.strip()
+        except Exception as e:
+            _log(f"{wo_id} _analyze_failure error: {e}")
+            return ""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _run)
 
 
 async def _checkin_loop(wo_id: str, interval: int = 90) -> None:
@@ -295,12 +324,20 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         wo_path="docs/project_management/work_orders",
     )
 
-    prompt = build_prompt(wo_spec, wo_markdown, worktree_path, AGENT_NAME)
+    # Inject prior failure context so the agent knows exactly what to fix on retry
+    prior_rejections = await get_prior_rejections(wo_id)
+    thread_msgs = await get_thread_messages(wo_id) if prior_rejections else []
+    prior_ctx = format_prior_context(prior_rejections, thread_msgs)
+    if prior_ctx:
+        _log(f"{wo_id} retry #{len(prior_rejections)}: injecting prior rejection context")
+
+    prompt = build_prompt(wo_spec, wo_markdown, worktree_path, AGENT_NAME, prior_context=prior_ctx)
     backend = get_backend(preferred_agent)
 
-    _log(f"Starting {preferred_agent} backend for {wo_id}")
-    await checkin(wo_id, "starting agent")
-    await post_thread_message(wo_id, f"Starting implementation of **{wo_id}**: {title}")
+    attempt_label = f"retry #{len(prior_rejections)}" if prior_rejections else "first attempt"
+    _log(f"Starting {preferred_agent} backend for {wo_id} ({attempt_label})")
+    await checkin(wo_id, f"starting agent ({attempt_label})")
+    await post_thread_message(wo_id, f"Starting implementation of **{wo_id}**: {title} ({attempt_label})")
 
     monitor = ThreadMonitor(wo_id)
 
@@ -380,6 +417,13 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         )
         if not rebuild["rebuilt"]:
             await checkin(wo_id, "container build failed — stopping")
+            build_analysis = await _analyze_failure(
+                wo_id,
+                f"Docker container build failed for {wo_id}.\n\nBuild output:\n{rebuild['output'][-3000:]}"
+            )
+            if build_analysis:
+                await post_thread_message(wo_id, f"🔍 **Build failure analysis:**\n\n{build_analysis}", msg_type="ci_analysis")
+            await release_dispatch(wo_id)
             return
     else:
         await post_thread_message(wo_id, "No container changes detected (docs/scripts only) — skipping rebuild.")
@@ -410,6 +454,15 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
             metadata={"ci_passed": gate["ci_passed"], "security_passed": gate["security_passed"],
                       "findings": gate["bandit_findings"][:5]},
         )
+        # Analyze the failure so the next attempt's prompt knows exactly what to fix
+        failure_detail = gate.get("ci_output", "") if not gate["ci_passed"] else str(gate.get("bandit_findings", ""))
+        ci_analysis = await _analyze_failure(
+            wo_id,
+            f"CI/security gate failed for {wo_id}.\n\nFailure: {failure_str}\n\nOutput:\n{failure_detail[-3000:]}"
+        )
+        if ci_analysis:
+            await post_thread_message(wo_id, f"🔍 **Failure analysis:**\n\n{ci_analysis}", msg_type="ci_analysis")
+        await release_dispatch(wo_id)
         return
 
     await post_thread_message(

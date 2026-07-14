@@ -135,15 +135,57 @@ rows = db.execute(text("SELECT id, name FROM table WHERE active = :active"), {"a
 """.strip()
 
 
-def build_prompt(wo_spec: dict, wo_markdown: str, worktree_path: str, agent_name: str) -> str:
+def format_prior_context(rejections: list[dict], thread_msgs: list[dict]) -> str:
+    """
+    Build a ⚠️ RETRY CONTEXT block from prior rejection reasons and CI failure
+    analyses posted to the thread. Returns empty string if nothing to inject.
+    """
+    parts: list[str] = []
+
+    if rejections:
+        latest = rejections[0]
+        reason = (latest.get("reject_reason") or "").strip()
+        attempt = len(rejections)
+        if reason:
+            parts.append(
+                f"### Previous reviewer rejection (attempt {attempt})\n\n{reason}"
+            )
+
+    # Pull CI analysis messages posted by the runner on prior failures
+    ci_analyses = [
+        m["content"]
+        for m in thread_msgs
+        if m.get("type") == "ci_analysis" and m.get("content")
+    ]
+    if ci_analyses:
+        # Most recent CI analysis is last in the list
+        parts.append(f"### Prior CI failure analysis\n\n{ci_analyses[-1]}")
+
+    if not parts:
+        return ""
+
+    body = "\n\n".join(parts)
+    return (
+        "## ⚠️ RETRY — fix the specific issues below before doing anything else\n\n"
+        "This WO was attempted before and failed. Do NOT start from scratch.\n"
+        "Read the issues below, apply the targeted fixes, then re-run CI and validate.\n\n"
+        f"{body}\n\n"
+        "---"
+    )
+
+
+def build_prompt(wo_spec: dict, wo_markdown: str, worktree_path: str, agent_name: str,
+                 prior_context: str = "") -> str:
     wo_id = f"WO-{wo_spec['wo']}" if "wo" in wo_spec else f"WO-{wo_spec.get('number', '?')}"
     title = wo_spec.get("title", "Unknown")
     priority = wo_spec.get("priority", "P2")
     effort = wo_spec.get("effort", "M")
 
+    retry_block = f"{prior_context}\n\n" if prior_context else ""
+
     return f"""You are an AI agent working in the Clarion AI Factory.
 
-## Your Assignment
+{retry_block}## Your Assignment
 
 {wo_id}: {title}
 Priority: {priority} | Effort: {effort}

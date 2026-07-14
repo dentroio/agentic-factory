@@ -14,7 +14,7 @@ _QUOTA_RE = re.compile(
 
 
 class ClaudeBackend(AgentBackend):
-    """Runs Claude Code CLI headlessly: `claude --print -p <prompt>`."""
+    """Runs Claude Code CLI headlessly with auto-approved permissions."""
 
     def __init__(self) -> None:
         self._pending_messages: list[str] = []
@@ -25,8 +25,9 @@ class ClaudeBackend(AgentBackend):
             raise RuntimeError("claude CLI not found in PATH — install Claude Code CLI")
 
         proc = await asyncio.create_subprocess_exec(
-            claude_bin, "--print", "-p", prompt,
+            claude_bin, "--print", "--permission-mode", "bypassPermissions", "-p", prompt,
             cwd=worktree,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
