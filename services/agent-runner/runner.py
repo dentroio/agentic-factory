@@ -140,7 +140,22 @@ async def _setup_worktree(wo_number: str | int, title: str) -> str:
     if LOCAL_REPO_PATH:
         worktree_dir = str(Path(LOCAL_REPO_PATH) / ".worktrees" / f"wo-{num}-{title_slug}")
         if Path(worktree_dir).exists():
-            _log(f"Worktree already exists at {worktree_dir} — resuming")
+            # Worktree exists from a previous agent run. Reset uncommitted changes so
+            # this agent starts clean — stale edits from a failed/interrupted agent
+            # must not bleed into a new agent's implementation.
+            # We keep commits (agent 1 may have pushed real work) but wipe dirty state.
+            _log(f"Worktree exists — resetting uncommitted state before re-entry: {worktree_dir}")
+            for cmd in (
+                ["git", "checkout", "."],           # revert tracked modifications
+                ["git", "clean", "-fd"],             # remove untracked files (not .gitignore'd — node_modules safe)
+            ):
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, cwd=worktree_dir,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.communicate()
+            _log(f"Worktree clean — resuming at {worktree_dir}")
             return worktree_dir
         _log(f"Creating worktree via wo_start.sh: wo-{num}-{title_slug}")
         proc = await asyncio.create_subprocess_exec(
