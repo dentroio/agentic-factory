@@ -3346,7 +3346,7 @@ async def pm_chat(req: PMChatRequest):
             try:
                 import anthropic as _anthropic
                 _aclient = _anthropic.Anthropic(api_key=api_key)
-                _model = "claude-opus-4-8"
+                _model = "claude-sonnet-4-6"
                 tools = _PM_TOOLS if LOCAL_REPO_MOUNT else []
                 tool_messages = list(messages)
                 tool_messages.append({"role": "user", "content": user_message if not req.images else [
