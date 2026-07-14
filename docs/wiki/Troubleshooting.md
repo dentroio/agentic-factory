@@ -67,6 +67,24 @@ The PM assistant uses the agent-runner's `ask()` function for subscription backe
 
 Fix: set `ANTHROPIC_API_KEY` in **Settings → Authentication**, or start the agent-runner with at least one subscription CLI available.
 
+## WO stuck after a CI failure or build crash
+
+When the runner's container rebuild or CI gate fails mid-run, it automatically calls `POST /api/dispatch/{wo}/retry` to release the WO back into the queue. In most cases no intervention is needed — the WO will reappear as open on the next poll.
+
+If the auto-release did not fire (e.g., the runner process was killed before it could call the endpoint) and the WO shows as `in_progress` with no active agent:
+
+```bash
+curl -X POST http://localhost:8100/api/dispatch/WO-NNN/retry
+```
+
+The runner also posts a `ci_analysis` thread message before releasing, so the reason for the failure is stored in the WO thread. On the next attempt, `format_prior_context()` injects this analysis into the agent's prompt alongside any prior reviewer rejection reasons.
+
+To inspect what failure context is queued for a WO's next attempt:
+```bash
+curl -s http://localhost:8100/api/thread/WO-NNN/messages | python3 -m json.tool | grep -A5 '"type": "ci_analysis"'
+curl -s http://localhost:8100/api/validations | python3 -m json.tool | grep -A5 '"reject_reason"'
+```
+
 ## WO stuck in "claimed" but agent isn't running
 
 A WO in `claimed` or `in_progress` status with no recent heartbeat means the agent-runner crashed or was stopped while a WO was in flight.

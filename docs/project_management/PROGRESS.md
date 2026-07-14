@@ -1,6 +1,6 @@
 # Dentro AI Factory — Progress Tracker
 
-_Last updated: 2026-07-04_
+_Last updated: 2026-07-14_
 
 ---
 
@@ -40,6 +40,7 @@ Update this file **at the time of merge**, not before.
 
 | Fix | Description | Date |
 |-----|-------------|------|
+| fix/factory-resilience | Auto-recovery on build/CI failure (`release_dispatch` → `POST /api/dispatch/{wo}/retry`); retry context injection (`format_prior_context()` injects prior rejection reason + ci_analysis into next attempt); `ValidationDecision.reject_reason` field + storage; factory status timestamps (live feed HH:MM:SS + WO card last-seen relative time); dispatch management endpoints | 2026-07-14 |
 | fix/factory-quality-alignment | Semgrep ERROR-only threshold, JS/TS security scan, performance + code quality mandate in agent prompt, Codex/Cursor `ask()` rewritten to use OpenAI API (not agentic CLI) | 2026-07-04 |
 
 ---

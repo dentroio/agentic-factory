@@ -1,6 +1,6 @@
 # Dentro AI Factory — Capability Status
 
-_Last updated: 2026-07-04_
+_Last updated: 2026-07-14_
 
 A living registry of what the system can do, at what fidelity, and what's still open.
 
@@ -87,6 +87,12 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Mid-task directive injection | ✅ | Directives queued via `backend.inject()` | WO-1010 |
 | Agent mandate: PERFORMANCE section | ✅ | No blocking I/O, no unbounded queries, no N+1 | fix/factory-quality-alignment |
 | Agent mandate: CODE QUALITY section | ✅ | Error paths, function focus, pattern adherence | fix/factory-quality-alignment |
+| Auto-recovery on build/CI failure | ✅ | Runner calls `POST /api/dispatch/{wo}/retry` on failure; WO released for re-pickup without manual intervention | fix/factory-resilience |
+| Retry context injection | ✅ | Prior rejection reasons + CI failure analysis injected into next attempt's prompt via `format_prior_context()`; agent gets targeted fix instructions instead of starting from scratch | fix/factory-resilience |
+| Validation `reject_reason` storage | ✅ | `ValidationDecision` stores explicit `reject_reason` (accepts both `reason` and `notes` fields); filters rejections without actionable feedback from retry context | fix/factory-resilience |
+| Factory status site — live feed timestamps | ✅ | Local browser HH:MM:SS prefix on each live feed line | fix/factory-resilience |
+| Factory status site — WO last-seen relative time | ✅ | WO cards show `HH:MM UTC · Xs/Xm/Xh ago` from `last_seen` field | fix/factory-resilience |
+| Dispatch management endpoints | ✅ | `DELETE /api/dispatch/{wo}`, `POST /api/dispatch/{wo}/retry`, `DELETE /api/dispatch` for manual and automatic ghost-lock resolution | fix/factory-resilience |
 
 ## Dimension 5: CI/CD + Agent Infrastructure
 
@@ -129,6 +135,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
+| 2026-07-14 | Auto-recovery on failure (release_dispatch), retry context injection, reject_reason storage, dispatch management endpoints, status site timestamps | fix/factory-resilience |
 | 2026-07-04 | Agent quality+security+optimization alignment (semgrep threshold, JS scan, performance mandate, backend ask() fixes) | fix/factory-quality-alignment |
 | 2026-07-04 | Oryntra Chrome extension + orchestrator image storage/serving + status site CORS proxy | WO-1011 |
 | 2026-07-04 | Multi-agent peer review chain (4 reviewers, env-configurable backends) | WO-1013 |

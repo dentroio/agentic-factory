@@ -67,6 +67,10 @@ The orchestrator is a FastAPI application (APScheduler polling loop, port 8100) 
 | `/api/wos/{wo_id}/hold` | DELETE | Remove a WO from the hold list |
 | `/api/pm/chat` | POST | PM assistant chat — context-aware, includes queue/board state; processes `[DISPATCH:WO-NNN:backend]` action tags to trigger immediate dispatch |
 | `/api/pm/dispatch` | POST | Directly dispatch a WO from PM chat; sets a priority slot in `/api/next` and wakes the runner via the draft server `/dispatch` endpoint |
+| `/api/dispatch` | GET | Return current dispatch state — all in-flight and recently-completed WOs |
+| `/api/dispatch/{wo_id}` | DELETE | Remove a specific WO from dispatch state (manual reset when a run failed and needs to be re-queued) |
+| `/api/dispatch/{wo_id}/retry` | POST | Reset a failed/stuck WO back to open — clears it from `_dispatch_state` so the runner picks it up on the next poll |
+| `/api/dispatch` | DELETE | Clear the entire dispatch state — use after a crash or bad run to reset everything |
 | `/api/pm/memory` | GET | Return the current PM session memory (`/data/pm_memory.json`) |
 | `/api/pm/memory` | POST | Write a key/value pair to PM memory (keys: `preferred_backend`, `decision`, `dispatched`) |
 | `/api/queue` | GET | List all queue entries ordered by position |
@@ -96,9 +100,15 @@ The orchestrator is a FastAPI application (APScheduler polling loop, port 8100) 
 
 **PM dispatch:** `POST /api/pm/dispatch` sets a priority slot consumed by the next `/api/next` call. It also calls the agent-runner draft server at `http://host.docker.internal:8101/dispatch`, which sets a `threading.Event` to wake the runner immediately instead of waiting for the next poll interval.
 
-**Thread storage:** Per-WO conversation lives in `/data/threads/{wo}.json`. System messages are auto-posted on lifecycle transitions (claim, validate, approve, reject, complete). Image messages store base64-decoded PNGs in `/data/threads/images/{wo}/{timestamp}.png`.
+**Thread storage:** Per-WO conversation lives in `/data/threads/{wo}.json`. System messages are auto-posted on lifecycle transitions (claim, validate, approve, reject, complete). Image messages store base64-decoded PNGs in `/data/threads/images/{wo}/{timestamp}.png`. Message types: `text` (default), `ci_result`, `security_finding`, `review`, `image`, `ci_analysis`. The `ci_analysis` type is used by the runner to post failure analysis after a build or CI failure — `format_prior_context()` filters for this type when building retry context.
 
 **Quality gate enforcement:** `/api/validate` rejects (HTTP 422) any call where `ci_passed=false` or `security_passed=false`. This is a hard gate — agents cannot request human review for broken code.
+
+**Ghost lock recovery (auto-release on failure):** When the runner's container rebuild or CI gate fails, the runner automatically calls `POST /api/dispatch/{wo_id}/retry`, which removes the WO from `_dispatch_state`. This frees the WO for re-pickup on the next poll cycle — no manual intervention required. The runner posts a `ci_analysis` thread message with the failure details before releasing so the context is available for the next attempt. If the auto-release does not fire (e.g. the runner process was killed mid-run), release manually: `curl -X POST http://localhost:8100/api/dispatch/WO-NNN/retry`.
+
+**Retry context injection:** Before building the prompt for a WO retry, the runner calls `format_prior_context()` (in `prompt_builder.py`), which collects: (1) the most recent reviewer rejection reason from `GET /api/validations`, filtered by `reject_reason` being non-empty; (2) the most recent `ci_analysis`-typed thread message posted by the runner on a prior failure. These are assembled into a `⚠️ RETRY` block prepended to the system prompt, giving the agent specific, targeted fix instructions instead of starting from scratch.
+
+**Validation `reject_reason` field:** The `ValidationDecision` Pydantic model accepts both `notes` (legacy) and `reason` fields. The `reject_reason()` method returns `reason or notes`. When a reviewer rejects a WO, the orchestrator stores `reject_reason` explicitly in the validation record so `get_prior_rejections()` can filter for records that have actionable feedback. Rejections without a stored `reject_reason` are excluded from retry context injection.
 
 **Draft routing:** `POST /api/plan/draft` accepts `{description, next_wo_num, backend}`. If `backend=claude-api`, it calls the Anthropic SDK directly using the key from the secrets vault. For all other backends (`claude`, `cursor`, `codex`, `gemini`), it proxies the request to the agent-runner draft server at `http://host.docker.internal:8101/api/draft` — so subscription CLI credentials never need to be in Docker.
 
@@ -247,11 +257,18 @@ Claim WO from orchestrator
     │
     ▼
 Fetch WO markdown spec from GitHub
+Fetch prior rejections + ci_analysis thread messages → format_prior_context()
     │
     ▼
-Build prompt (QUALITY_MANDATE + PROCESS_SECTION + FACTORY_API_SECTION + WO spec)
+Build prompt (⚠️ RETRY block if prior context exists +
+              QUALITY_MANDATE + PROCESS_SECTION + FACTORY_API_SECTION + WO spec)
     │
     ▼
+Container rebuild (make build-svc SVC=...) — if build fails:
+    ├── post ci_analysis thread message with failure details
+    └── release_dispatch(wo_id) → POST /api/dispatch/{wo}/retry  ← auto-recovery
+    │
+    ▼ (build succeeds)
 backend.run(prompt, worktree)  ← agentic execution; streams output to thread
     │
     ├── thread_monitor runs in parallel (polls every 15 s)
@@ -265,6 +282,8 @@ Quality gate (quality_gate.py — runs in parallel):
     ├── semgrep (blocking on ERROR only — WARNING is non-blocking)
     └── JS/TS security scan (eslint-plugin-security or regex fallback)
     │
+    ├── if gate fails: post ci_analysis message + release_dispatch() ← auto-recovery
+    │
     ▼ (gate passes)
 Peer review chain (review_chain.py):
     ├── security reviewer      (blocking on CRITICAL/HIGH)
@@ -277,8 +296,9 @@ Peer review chain (review_chain.py):
     ▼ (all reviewers sign off)
 POST /api/validate (accepted — orchestrator queues for human review)
     │
-    ▼ (human approves)
-git commit + push + PR open + PR merge + POST /api/complete
+    ▼ (human approves or rejects)
+    ├── rejected: reject_reason stored in validation record → available for next retry
+    └── approved: git commit + push + PR open + PR merge + POST /api/complete
 ```
 
 **Agent mandate (injected into every prompt):**
