@@ -609,6 +609,8 @@ class ValidateRequest(BaseModel):
     ci_passed: bool = True
     security_passed: bool = True
     thread_summary: str = ""
+    pr_url: str = ""        # GitHub PR URL — must be non-empty before validation is accepted
+    pr_number: int | None = None
 
 
 class CodexDispatchRequest(BaseModel):
@@ -884,7 +886,16 @@ async def unhold_wo(wo_id: str):
 @app.post("/api/claim")
 async def claim_wo(req: ClaimRequest):
     """Atomically claim a WO. Returns 409 if already claimed by another agent."""
-    wo_id = req.wo
+    # Normalize WO ID: uppercase, ensure single "WO-" prefix
+    wo_id = req.wo.strip()
+    wo_upper = wo_id.upper()
+    if not wo_upper.startswith("WO-"):
+        wo_id = f"WO-{wo_id}"
+    else:
+        wo_id = wo_upper
+    # Collapse accidental double-prefix (e.g. "WO-WO-353" → "WO-353")
+    while wo_id.startswith("WO-WO-"):
+        wo_id = "WO-" + wo_id[6:]
     existing = _dispatch_state.get(wo_id, {})
     active_statuses = {"claimed", "in_progress", "awaiting_human", "awaiting_commit"}
 
@@ -937,6 +948,10 @@ async def request_validation(req: ValidateRequest):
         gate_failures.append("CI checks failed")
     if not req.security_passed:
         gate_failures.append("security scan found CRITICAL or HIGH findings")
+    if not req.pr_url and not req.pr_number:
+        gate_failures.append(
+            "no GitHub PR attached — commit and push the branch, open a PR, then submit validation with pr_url"
+        )
     if gate_failures:
         raise HTTPException(
             status_code=422,
@@ -956,6 +971,8 @@ async def request_validation(req: ValidateRequest):
         "ci_passed": req.ci_passed,
         "security_passed": req.security_passed,
         "thread_summary": req.thread_summary,
+        "pr_url": req.pr_url,
+        "pr_number": req.pr_number,
         "requested_at": _utcnow(),
         "status": "pending",
     })
@@ -1019,23 +1036,41 @@ async def approve_validation(wo: str, decision: ValidationDecision):
 
 @app.post("/api/validations/{wo}/reject")
 async def reject_validation(wo: str, decision: ValidationDecision):
+    # Reject ALL pending validations for this WO (duplicates accumulate when
+    # multiple runners claim the same WO concurrently).
+    rejected_count = 0
     for v in _validations:
         if v["wo"] == wo and v["status"] == "pending":
             v["status"] = "rejected"
             v["decided_by"] = decision.decided_by
             v["decided_at"] = _utcnow()
             v["notes"] = decision.notes
-            _save_validations()
-            if wo in _dispatch_state:
-                _dispatch_state[wo]["status"] = "rejected"
-                _save_dispatch()
-            thread_store.append_message(wo, thread_store.system_message(
-                f"✗ Rejected by **{decision.decided_by}**"
-                + (f"\n\nGuidance: {decision.notes}" if decision.notes else "")
-            ))
-            print(f"[orchestrator] {wo} rejected by {decision.decided_by}: {decision.notes}")
-            return {"ok": True}
-    raise HTTPException(status_code=404, detail=f"No pending validation for {wo}")
+            rejected_count += 1
+
+    if rejected_count == 0:
+        raise HTTPException(status_code=404, detail=f"No pending validation for {wo}")
+
+    _save_validations()
+    if wo in _dispatch_state:
+        _dispatch_state[wo]["status"] = "rejected"
+        _save_dispatch()
+
+    thread_store.append_message(wo, thread_store.system_message(
+        f"✗ Rejected by **{decision.decided_by}**"
+        + (f"\n\nGuidance: {decision.notes}" if decision.notes else "")
+    ))
+    print(f"[orchestrator] {wo} rejected by {decision.decided_by} ({rejected_count} pending cleared): {decision.notes}")
+
+    # Auto-hold the WO after 3 cumulative rejections so agents don't spin forever.
+    total_rejections = sum(1 for v in _validations if v["wo"] == wo and v["status"] == "rejected")
+    if total_rejections >= 3 and wo not in _held_wos:
+        _held_wos.add(wo)
+        thread_store.append_message(wo, thread_store.system_message(
+            f"⛔ Auto-held after {total_rejections} rejections — human must review and un-hold before agents retry"
+        ))
+        print(f"[orchestrator] {wo} auto-held after {total_rejections} rejections")
+
+    return {"ok": True, "rejected": rejected_count}
 
 
 @app.delete("/api/dispatch/{wo_id}")
@@ -2057,23 +2092,35 @@ def _load_watchdog() -> dict | None:
 async def _sync_local_repo() -> None:
     """Pull latest from origin/main so local WO specs and PLAN.json stay fresh.
 
+    Uses HTTPS with GITHUB_TOKEN to avoid SSH key requirements inside Docker.
     Runs once per poll cycle. Failures are logged but never block the poll.
     """
     if not LOCAL_REPO_MOUNT:
         return
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        return
+    https_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "pull", "--ff-only", "origin", "main",
+            "git", "fetch", https_url, "main:refs/remotes/origin/main",
+            cwd=LOCAL_REPO_MOUNT,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+        _, err = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
+            print(f"[orchestrator] git fetch failed: {err.decode(errors='replace').strip()[:200]}")
+            return
+        proc2 = await asyncio.create_subprocess_exec(
+            "git", "merge", "--ff-only", "refs/remotes/origin/main",
             cwd=LOCAL_REPO_MOUNT,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
-        if proc.returncode == 0:
-            msg = out.decode(errors="replace").strip().splitlines()[0] if out else "ok"
+        out2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
+        if proc2.returncode == 0:
+            msg = out2.decode(errors="replace").strip().splitlines()[0] if out2 else "ok"
             if "Already up to date" not in msg:
                 print(f"[orchestrator] local repo synced: {msg}")
-        else:
-            print(f"[orchestrator] git pull failed (rc={proc.returncode}): {err.decode(errors='replace').strip()[:200]}")
     except Exception as e:
         print(f"[orchestrator] git pull error: {e}")
 

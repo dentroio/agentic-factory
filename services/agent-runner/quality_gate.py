@@ -32,7 +32,7 @@ def _ci_env(worktree: str) -> dict:
     Worktrees live at <repo>/.worktrees/<name>; the main repo clone (two levels
     up) may have Python venvs (.venv-docs, .venv) that contain tools like black.
     Launchd starts the runner with a minimal PATH so those aren't inherited —
-    we add them explicitly here.
+    we add them explicitly here, including NVM-managed node/npm.
     """
     env = os.environ.copy()
     main_repo = Path(worktree).parent.parent
@@ -40,6 +40,17 @@ def _ci_env(worktree: str) -> dict:
         venv_bin = main_repo / venv_name / "bin"
         if venv_bin.is_dir():
             env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+
+    # Add NVM-managed node/npm — launchd doesn't source .nvm/nvm.sh so these
+    # aren't in the inherited PATH. Scan ~/.nvm/versions/node/ for installed versions.
+    nvm_dir = Path.home() / ".nvm" / "versions" / "node"
+    if nvm_dir.is_dir():
+        for node_ver in sorted(nvm_dir.iterdir(), reverse=True):
+            node_bin = node_ver / "bin"
+            if node_bin.is_dir() and (node_bin / "node").exists():
+                env["PATH"] = f"{node_bin}:{env.get('PATH', '')}"
+                break  # use the latest installed version
+
     return env
 
 
@@ -63,6 +74,10 @@ async def _changed_files(worktree: str, extensions: tuple[str, ...]) -> list[str
     ]
 
 
+_CI_LOCK_PATH = Path("/tmp/factory-ci-local.lock")
+_CI_LOCK_TIMEOUT = 900  # seconds to wait for the lock
+
+
 async def run_ci(worktree: str) -> tuple[bool, str]:
     """Run make ci-local in the worktree.
 
@@ -70,6 +85,9 @@ async def run_ci(worktree: str) -> tuple[bool, str]:
     the main checkout's node_modules so tsc would fail without this.
     Augments PATH with the repo's Python venvs so tools like black are found
     even when the runner was started by launchd with a minimal PATH.
+
+    Uses a file lock so that multiple parallel runners don't run `make ci-local`
+    simultaneously — overlapping Vite builds and pytest suites cause timeouts.
     """
     nm = Path(worktree) / "frontend" / "node_modules"
     tsc_bin = nm / ".bin" / "tsc"
@@ -77,7 +95,35 @@ async def run_ci(worktree: str) -> tuple[bool, str]:
     if not tsc_bin.exists():
         await _run(["npm", "install", "--silent", "--prefer-offline"], str(Path(worktree) / "frontend"), timeout=120, env=env)
 
-    rc, out = await _run(["make", "ci-local"], worktree, timeout=600, env=env)
+    # Auto-fix lint before CI — black and ruff are deterministic formatters;
+    # auto-fixing prevents formatting-only failures from killing correct implementations.
+    for fmt_dir in ["src", "services", "tests"]:
+        if (Path(worktree) / fmt_dir).is_dir():
+            await _run(["black", "--quiet", fmt_dir], worktree, timeout=60, env=env)
+            await _run(["ruff", "check", "--fix", "--quiet", fmt_dir], worktree, timeout=60, env=env)
+
+    # Serialize CI runs across all runner processes via a simple lock file.
+    waited = 0
+    while True:
+        try:
+            fd = os.open(str(_CI_LOCK_PATH), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            break  # lock acquired
+        except FileExistsError:
+            if waited >= _CI_LOCK_TIMEOUT:
+                return False, "CI lock wait timed out — another CI run held the lock too long"
+            await asyncio.sleep(5)
+            waited += 5
+
+    try:
+        rc, out = await _run(["make", "ci-local"], worktree, timeout=900, env=env)
+    finally:
+        try:
+            _CI_LOCK_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     return rc == 0, out[-3000:]
 
 
@@ -211,8 +257,18 @@ _SERVICE_PATTERNS: list[tuple[str, str]] = [
 ]
 
 
+# Paths that are auto-managed by the doc-writer agent and are left as
+# uncommitted noise in every worktree. Exclude them from changed-file detection
+# so they don't trigger container rebuilds or pollute validation summaries.
+_WORKTREE_NOISE_PREFIXES = ("frontend/public/help/",)
+
+
 async def _all_changed_files(worktree: str) -> list[str]:
-    """Return all changed files — committed on branch + uncommitted — relative to the worktree root."""
+    """Return all changed files — committed on branch + uncommitted — relative to the worktree root.
+
+    Excludes auto-generated help docs that the doc-writer agent leaves unstaged
+    in every worktree but never intends to commit as part of WO work.
+    """
     files: set[str] = set()
 
     # Uncommitted changes (staged + unstaged + untracked)
@@ -228,6 +284,10 @@ async def _all_changed_files(worktree: str) -> list[str]:
     )
     for line in (out2.strip().splitlines() if out2.strip() else []):
         files.add(line.strip())
+
+    # Strip noise paths — help docs are managed by the doc-writer and should
+    # never drive container rebuilds or appear in validation summaries.
+    files = {f for f in files if not any(f.startswith(p) for p in _WORKTREE_NOISE_PREFIXES)}
 
     return list(files)
 
@@ -263,11 +323,22 @@ async def run_container_rebuild(worktree: str) -> dict:
 
     compose_cmd = ["docker", "compose", "-f", "docker-compose.yml"]
     for svc in services:
-        # Build the image
-        rc, out = await _run(
-            [*compose_cmd, "build", "--build-arg", f"CACHE_BUST={int(__import__('time').time())}", svc],
-            worktree, timeout=600, env=env,
-        )
+        # Build the image — use cached base images (--pull=false) to avoid Docker Hub
+        # rate-limit timeouts when multiple runners are building simultaneously.
+        # Retry up to 3 times: BuildKit metadata resolver intermittently fails with
+        # DeadlineExceeded even with --pull=false when Docker Hub is slow.
+        build_rc, build_out = 1, ""
+        for attempt in range(1, 4):
+            build_rc, build_out = await _run(
+                [*compose_cmd, "build", "--pull=false", "--build-arg", f"CACHE_BUST={int(__import__('time').time())}", svc],
+                worktree, timeout=1200, env=env,
+            )
+            if build_rc == 0:
+                break
+            if "DeadlineExceeded" not in build_out or attempt == 3:
+                break
+            await asyncio.sleep(10 * attempt)  # 10s, 20s back-off before retry
+        rc, out = build_rc, build_out
         output_lines.append(f"\n--- {svc} build ---\n{out[-1500:]}")
         if rc != 0:
             return {
