@@ -748,6 +748,65 @@ async def get_status():
     return _orchestrator_output
 
 
+@app.get("/api/metrics")
+async def get_metrics():
+    """Factory velocity metrics derived from dispatch history and validation records."""
+    from collections import Counter
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+
+    # Cycle times for completed WOs
+    cycle_times: list[float] = []
+    for info in _dispatch_state.values():
+        if info.get("status") == "complete" and info.get("claimed_at") and info.get("completed_at"):
+            try:
+                c = datetime.fromisoformat(info["claimed_at"].replace("Z", "+00:00"))
+                d = datetime.fromisoformat(info["completed_at"].replace("Z", "+00:00"))
+                cycle_times.append((d - c).total_seconds() / 60)
+            except Exception:
+                pass
+
+    status_counts = Counter(i.get("status") for i in _dispatch_state.values())
+    val_counts = Counter(v.get("status") for v in _validations)
+    rejections_by_wo: Counter = Counter()
+    for v in _validations:
+        if v.get("status") == "rejected":
+            rejections_by_wo[v["wo"]] += 1
+
+    total_val = len(_validations)
+    approved = val_counts.get("approved", 0)
+    rejected = val_counts.get("rejected", 0)
+    plan = _orchestrator_output.get("plan", {})
+    queue_depth = len(plan.get("queue", []))
+
+    return {
+        "queue_depth": queue_depth,
+        "wos_complete": status_counts.get("complete", 0),
+        "wos_active": sum(status_counts.get(s, 0) for s in ("claimed", "in_progress", "awaiting_human")),
+        "wos_rejected": status_counts.get("rejected", 0),
+        "held_count": len(_held_wos),
+        "validations": {
+            "total": total_val,
+            "approved": approved,
+            "rejected": rejected,
+            "approval_rate_pct": round(approved / total_val * 100) if total_val else 0,
+        },
+        "cycle_time_minutes": {
+            "avg": round(sum(cycle_times) / len(cycle_times)) if cycle_times else None,
+            "min": round(min(cycle_times)) if cycle_times else None,
+            "max": round(max(cycle_times)) if cycle_times else None,
+            "samples": len(cycle_times),
+        },
+        "most_rejected_wos": [
+            {"wo": wo, "rejections": n}
+            for wo, n in rejections_by_wo.most_common(5)
+        ],
+        "held_wos": sorted(_held_wos),
+        "generated_at": now.isoformat(),
+    }
+
+
 @app.get("/api/next")
 async def get_next():
     """Return the highest-priority unclaimed WO, or null if none available."""
@@ -793,6 +852,11 @@ async def get_next():
             continue
         claim = _dispatch_state.get(wo_id, {})
         if claim.get("status") in active_statuses:
+            continue
+        # Dependency enforcement — skip WOs whose depends_on aren't complete yet
+        deps = wo.get("depends_on") or []
+        unmet = [d for d in deps if _dispatch_state.get(d, {}).get("status") != "complete"]
+        if unmet:
             continue
         return {**wo, "repo": GITHUB_REPO}
 

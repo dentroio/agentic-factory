@@ -85,6 +85,53 @@ PROCESS_SECTION = """
     The orchestrator REJECTS validation without a pr_url. Steps 8-10 are mandatory first.
 12. After human approval: for P2 run gh pr merge --auto --squash
 13. Call POST /api/complete after merge
+
+## Frontend dependency rule
+If you edit frontend/package.json, you MUST also regenerate the lock file:
+  cd frontend && npm install && cd ..
+Then commit BOTH package.json AND package-lock.json together. Never edit package.json
+without updating the lock file — `npm ci` in the Docker build will fail otherwise.
+""".strip()
+
+
+CLARION_PATTERNS = """
+## Clarion codebase patterns — copy these exactly, do not invent alternatives
+
+### DB write (ALWAYS call db.commit() after execute())
+```python
+db.execute(text("INSERT INTO my_table (col) VALUES (:val)"), {"val": value})
+db.commit()
+```
+
+### Parameterized queries (NEVER use f-strings or % formatting in SQL)
+```python
+# CORRECT
+result = db.execute(text("SELECT * FROM endpoints WHERE mac = :mac"), {"mac": mac})
+# WRONG — SQL injection risk
+result = db.execute(text(f"SELECT * FROM endpoints WHERE mac = '{mac}'"))
+```
+
+### API route with auth (every new endpoint needs require_role)
+```python
+from clarion.api.auth import require_role
+
+@router.get("/api/my-resource")
+def get_resource(db: Session = Depends(get_db), _=Depends(require_role("operator"))):
+    ...
+```
+
+### SQLAlchemy raw query — use text(), not Query objects
+```python
+from sqlalchemy import text
+rows = db.execute(text("SELECT id, name FROM table WHERE active = :active"), {"active": True}).fetchall()
+# Access columns by name: row.id, row.name  — NOT row[0]
+```
+
+### Migration file (register in src/clarion/storage/adapter.py after creating)
+```python
+# In adapter.py _MIGRATIONS list:
+"sql/migrations/add_my_table.sql",
+```
 """.strip()
 
 
@@ -109,6 +156,10 @@ Worktree: {worktree_path}
 ## Full Work Order Specification
 
 {wo_markdown}
+
+---
+
+{CLARION_PATTERNS}
 
 ---
 

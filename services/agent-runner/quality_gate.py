@@ -302,6 +302,83 @@ def _detect_services(changed: list[str]) -> list[str]:
     return sorted(services)
 
 
+# ── Improvement #4: PR size gate ─────────────────────────────────────────────
+
+_MAX_FILES_CHANGED = 30
+_MAX_LINES_CHANGED = 800
+
+
+async def run_pr_size_gate(worktree: str) -> tuple[bool, str]:
+    """Reject PRs that are too large to review safely in one agent pass.
+
+    Large PRs have a higher defect rate and are harder for reviewers to catch
+    all issues in. Agents should split work into focused, reviewable units.
+    """
+    rc, out = await _run(
+        ["git", "diff", "main...HEAD", "--stat"],
+        worktree, timeout=15,
+    )
+    if rc != 0 or not out.strip():
+        return True, "could not determine PR size — skipping gate"
+
+    summary = out.strip().splitlines()[-1]
+    files_m = re.search(r"(\d+) files? changed", summary)
+    ins_m   = re.search(r"(\d+) insertion",       summary)
+    del_m   = re.search(r"(\d+) deletion",        summary)
+
+    files_changed = int(files_m.group(1)) if files_m else 0
+    lines_changed = (int(ins_m.group(1)) if ins_m else 0) + (int(del_m.group(1)) if del_m else 0)
+
+    if files_changed > _MAX_FILES_CHANGED or lines_changed > _MAX_LINES_CHANGED:
+        return False, (
+            f"PR too large: {files_changed} files changed, {lines_changed} lines changed. "
+            f"Maximum: {_MAX_FILES_CHANGED} files / {_MAX_LINES_CHANGED} lines. "
+            f"Split this WO into smaller, focused work orders and implement one piece at a time."
+        )
+    return True, f"PR size OK: {files_changed} files, {lines_changed} lines"
+
+
+# ── Improvement #2: Browser smoke test ───────────────────────────────────────
+
+async def run_browser_smoke(worktree: str) -> tuple[bool, str]:
+    """Verify the frontend loads without a white screen after a rebuild.
+
+    Only runs when frontend/src/ files changed. Uses two checks:
+    1. curl to confirm nginx returns HTML with the React root element
+    2. node --check on the built JS bundle to catch syntax errors in emitted code
+    """
+    changed = await _all_changed_files(worktree)
+    if not any(f.startswith("frontend/src/") for f in changed):
+        return True, "no frontend/src changes — browser smoke skipped"
+
+    # Check 1: frontend container serves the app shell
+    rc, html = await _run(
+        ["curl", "-sk", "--max-time", "10", "https://localhost/"],
+        worktree, timeout=15,
+    )
+    if rc != 0:
+        return False, "frontend container did not respond to https://localhost/"
+    if '<div id="root">' not in html:
+        return False, (
+            "frontend returned HTML but <div id=\"root\"> is missing — "
+            "likely a build error or nginx misconfiguration"
+        )
+
+    # Check 2: node syntax check on the built entry-point bundle
+    dist = Path(worktree) / "frontend" / "dist" / "assets"
+    if dist.exists():
+        index_files = sorted(dist.glob("index-*.js"))
+        if index_files:
+            rc2, out2 = await _run(
+                ["node", "--check", str(index_files[0])],
+                worktree, timeout=30,
+            )
+            if rc2 != 0:
+                return False, f"Built JS bundle failed syntax check:\n{out2[:800]}"
+
+    return True, "browser smoke passed: app shell loads, bundle syntax OK"
+
+
 async def run_container_rebuild(worktree: str) -> dict:
     """Detect which services changed, rebuild their containers, wait healthy, smoke-test.
 
@@ -375,23 +452,54 @@ async def run_container_rebuild(worktree: str) -> dict:
 
 
 async def run_quality_gate(worktree: str) -> dict:
-    """Run all quality checks in parallel. Returns a structured result dict."""
-    ci_task = asyncio.create_task(run_ci(worktree))
-    bandit_task = asyncio.create_task(run_bandit(worktree))
-    semgrep_task = asyncio.create_task(run_semgrep(worktree))
-    js_task = asyncio.create_task(run_js_security(worktree))
+    """Run all quality checks. Returns a structured result dict.
 
-    ci_passed, ci_output = await ci_task
+    Order:
+      1. PR size gate (fast, fails-fast before expensive checks)
+      2. CI + security scans in parallel
+      3. Browser smoke (only when frontend/src changed, after CI so dist/ exists)
+    """
+    # 1. PR size gate — fast check before investing in CI
+    size_ok, size_msg = await run_pr_size_gate(worktree)
+    if not size_ok:
+        return {
+            "ci_passed": False,
+            "security_passed": False,
+            "ci_output": f"PR SIZE GATE FAILED: {size_msg}",
+            "bandit_findings": [],
+            "semgrep_findings": [],
+            "js_findings": [],
+            "finding_count": 0,
+            "pr_size_msg": size_msg,
+            "browser_smoke_passed": True,
+            "browser_smoke_msg": "skipped",
+        }
+
+    # 2. CI + security in parallel
+    ci_task      = asyncio.create_task(run_ci(worktree))
+    bandit_task  = asyncio.create_task(run_bandit(worktree))
+    semgrep_task = asyncio.create_task(run_semgrep(worktree))
+    js_task      = asyncio.create_task(run_js_security(worktree))
+
+    ci_passed, ci_output         = await ci_task
     bandit_passed, bandit_findings = await bandit_task
     semgrep_passed, semgrep_findings = await semgrep_task
-    js_passed, js_findings = await js_task
+    js_passed, js_findings       = await js_task
+
+    # 3. Browser smoke — only when CI passes (dist/ must exist) and frontend changed
+    browser_passed, browser_msg = True, "skipped"
+    if ci_passed:
+        browser_passed, browser_msg = await run_browser_smoke(worktree)
 
     return {
-        "ci_passed": ci_passed,
+        "ci_passed": ci_passed and browser_passed,
         "security_passed": bandit_passed and semgrep_passed and js_passed,
-        "ci_output": ci_output,
+        "ci_output": ci_output if ci_passed else ci_output,
         "bandit_findings": bandit_findings,
         "semgrep_findings": semgrep_findings,
         "js_findings": js_findings,
         "finding_count": len(bandit_findings) + len(semgrep_findings) + len(js_findings),
+        "pr_size_msg": size_msg,
+        "browser_smoke_passed": browser_passed,
+        "browser_smoke_msg": browser_msg,
     }
