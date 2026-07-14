@@ -13,6 +13,7 @@ import backends.quota_state as quota_state
 _BACKEND_FAIL = (CursorConnectionError, BackendHangError)
 import re
 
+import os as _os
 from config import (
     AGENT_NAME,
     AGENT_TIMEOUT,
@@ -24,6 +25,10 @@ from config import (
     PREFERRED_AGENT,
     WORKTREE_BASE,
 )
+# True when this runner was launched with an explicit PREFERRED_AGENT env var
+# (i.e., a per-backend LaunchAgent plist). In that case the orchestrator's
+# global "preferred" config must not override it.
+_BACKEND_EXPLICITLY_SET = _os.getenv("PREFERRED_AGENT") is not None
 import httpx as _httpx
 from github_client import fetch_wo_markdown
 from orchestrator_client import (
@@ -157,18 +162,18 @@ async def _setup_worktree(wo_number: str | int, title: str) -> str:
 
 
 async def _build_change_summary(worktree: str) -> str:
-    """Return a plain-text summary of files the agent created or modified."""
+    """Return a plain-text summary of files committed on this branch vs main."""
     proc = await asyncio.create_subprocess_exec(
-        "git", "status", "--short",
+        "git", "diff", "main...HEAD", "--name-status",
         cwd=worktree,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
     )
     out, _ = await proc.communicate()
     lines = out.decode(errors="replace").strip().splitlines()
     if not lines:
-        return "No file changes detected."
-    new_files = [l[3:] for l in lines if l.startswith("??")]
-    modified = [l[3:] for l in lines if not l.startswith("??")]
+        return "No committed changes vs main."
+    new_files = [l.split("\t", 1)[1] for l in lines if l.startswith("A")]
+    modified  = [l.split("\t", 1)[1] for l in lines if l.startswith(("M", "R"))]
     parts = []
     if new_files:
         names = ", ".join(new_files[:8]) + (" ..." if len(new_files) > 8 else "")
@@ -179,11 +184,12 @@ async def _build_change_summary(worktree: str) -> str:
     return " | ".join(parts) if parts else "No changes."
 
 
-async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, monitor) -> bool:
-    """Commit all changes in the worktree, push the branch, and open a PR.
+async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, monitor) -> str:
+    """Commit WO changes, push the branch, open a PR, and return the PR URL.
 
-    Returns True if a commit was created, False if the tree was already clean.
-    Runs shell commands directly — no AI backend needed for this step.
+    Returns the GitHub PR URL on success, or "" if there was nothing to commit.
+    Auto-generated help docs (frontend/public/help/) are discarded before
+    staging so they never appear in WO commits.
     """
     num = re.sub(r"[^0-9]", "", wo_id)
     branch = f"wo/{num}-{re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:40].rstrip('-')}"
@@ -199,13 +205,17 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
         out, _ = await proc.communicate()
         return proc.returncode, out.decode(errors="replace").strip()
 
-    # Check for any changes (staged, unstaged, or untracked)
+    # Discard auto-generated help docs before checking status — the doc-writer
+    # agent leaves these modified in every worktree but they're never WO work.
+    await _git("checkout", "--", "frontend/public/help/")
+
+    # Check for any remaining changes (staged, unstaged, or untracked)
     rc, status = await _git("status", "--porcelain")
     if not status:
-        _log(f"{wo_id} worktree is clean — nothing to commit")
-        return False
+        _log(f"{wo_id} worktree is clean after stripping noise — nothing to commit")
+        return ""
 
-    # Stage everything
+    # Stage everything that remains
     await _git("add", "-A")
 
     # Commit
@@ -214,7 +224,7 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
     if rc != 0:
         _log(f"{wo_id} git commit failed: {out[:200]}")
         await monitor.post(f"⚠️ Git commit failed:\n```\n{out[:400]}\n```")
-        return False
+        return ""
 
     _log(f"{wo_id} committed: {out.splitlines()[0] if out else '(no output)'}")
 
@@ -223,7 +233,7 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
     if rc != 0:
         _log(f"{wo_id} git push failed: {out[:200]}")
         await monitor.post(f"⚠️ Git push failed:\n```\n{out[:400]}\n```\nBranch: `{branch}`")
-        return True  # commit was created, just push failed
+        return ""
 
     _log(f"{wo_id} pushed branch {branch}")
 
@@ -231,7 +241,7 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
     pr_proc = await asyncio.create_subprocess_exec(
         "gh", "pr", "create",
         "--title", f"{wo_id}: {title[:60]}",
-        "--body", f"## Summary\n\nImplemented by {AGENT_NAME} (backend: {PREFERRED_AGENT}) via agentic factory.\n\n🤖 Auto-committed after human approval.",
+        "--body", f"## Summary\n\nImplemented by {AGENT_NAME} (backend: {PREFERRED_AGENT}) via agentic factory.\n\n🤖 Submitted for human review before merge.",
         "--base", "main",
         "--head", branch,
         cwd=worktree,
@@ -242,11 +252,11 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
     if pr_proc.returncode == 0:
         _log(f"{wo_id} PR created: {pr_url}")
         await monitor.post(f"✅ Committed, pushed, and PR opened: {pr_url}")
+        return pr_url
     else:
         _log(f"{wo_id} gh pr create failed: {pr_url[:200]}")
-        await monitor.post(f"✅ Changes pushed to `{branch}` — open PR manually:\n```\ngh pr create --head {branch}\n```")
-
-    return True
+        await monitor.post(f"✅ Changes pushed to `{branch}` — PR creation failed, will submit validate without pr_url")
+        return ""
 
 
 async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
@@ -452,37 +462,46 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         msg_type="text",
     )
 
-    # Request human validation (gate + review chain both passed)
+    # Commit, push, and open the PR BEFORE requesting validation so the
+    # human reviews real committed code and so pr_url can be included in
+    # the validate payload (the orchestrator now requires it).
+    await checkin(wo_id, "committing and opening PR for review")
+    pr_url = await _commit_and_push(wo_id, slug, worktree_path, title, monitor)
+    if not pr_url:
+        _log(f"{wo_id} nothing committed or PR creation failed — aborting")
+        await monitor.post("⚠️ Nothing to commit after removing noise, or PR creation failed. Manual intervention needed.")
+        return
+
+    # Request human validation with the PR URL attached
     change_summary = await _build_change_summary(worktree_path)
     thread_summary = f"{title} — {change_summary}"
     validated = await request_validate(
         wo_id,
-        verify_url=f"http://localhost:8099/wo/{str(wo_number).replace('WO-', '')}",
+        verify_url=pr_url,
         steps=[
-            "Open 'View thread →' above for full agent notes",
-            "Review the files listed above",
-            "Confirm output matches the WO spec",
+            f"Open the PR: {pr_url}",
+            "Review committed files — confirm they match the WO spec",
+            "Verify the running system at https://localhost if UI changed",
         ],
         ci_passed=gate["ci_passed"],
         security_passed=gate["security_passed"],
         thread_summary=thread_summary,
+        pr_url=pr_url,
     )
     if not validated:
-        _log(f"{wo_id} validate rejected — agent must fix and retry (manual intervention needed)")
+        _log(f"{wo_id} validate rejected by orchestrator — check error in thread")
+        await monitor.post("⚠️ Orchestrator rejected the validation request — see thread for details.")
         return
 
-    # Wait for human decision — also poll thread for questions during wait
+    # Wait for human decision
     _log(f"{wo_id} awaiting human approval...")
-    await monitor.post("Implementation submitted for review. Monitoring thread for questions while waiting...")
+    await monitor.post("PR open and submitted for review. Monitoring thread for questions while waiting...")
     decision = await _poll_approval(wo_id, monitor=monitor)
     if decision == "approved":
-        _log(f"{wo_id} approved — committing and pushing")
-        await checkin(wo_id, "approved: committing and pushing")
-        committed = await _commit_and_push(wo_id, slug, worktree_path, title, monitor)
+        _log(f"{wo_id} approved — marking complete")
+        await checkin(wo_id, "approved: marking complete")
         await complete(wo_id)
         _log(f"{wo_id} complete")
-        if not committed:
-            await monitor.post("⚠️ Nothing to commit — work may have already been pushed, or the agent made no file changes.")
         await usage_tracker.record_run(ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, True, ask_calls)
     elif decision == "rejected":
         _log(f"{wo_id} rejected — check the factory dashboard for guidance")
@@ -497,13 +516,16 @@ async def main(once: bool = False) -> None:
          + (" [--once]" if once else ""))
     _log(f"Polling orchestrator every {POLL_INTERVAL}s")
 
-    # Fetch agent config from orchestrator — Settings UI changes take effect without restart
+    # Fetch agent config from orchestrator — Settings UI changes take effect without restart.
+    # If this runner was started with an explicit PREFERRED_AGENT (per-backend LaunchAgent),
+    # the orchestrator's global preferred setting must not override it.
     agent_cfg = await get_agent_config()
-    active_backend = agent_cfg.get("preferred", PREFERRED_AGENT) if agent_cfg else PREFERRED_AGENT
-    if active_backend != PREFERRED_AGENT:
-        _log(f"Orchestrator config overrides PREFERRED_AGENT: {PREFERRED_AGENT} → {active_backend}")
-    else:
+    if _BACKEND_EXPLICITLY_SET:
         active_backend = PREFERRED_AGENT
+    else:
+        active_backend = agent_cfg.get("preferred", PREFERRED_AGENT) if agent_cfg else PREFERRED_AGENT
+        if active_backend != PREFERRED_AGENT:
+            _log(f"Orchestrator config sets backend: {PREFERRED_AGENT} → {active_backend}")
 
     while True:
         # Check for a PM-dispatched WO — use its backend override if present

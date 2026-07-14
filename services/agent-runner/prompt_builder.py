@@ -10,6 +10,8 @@ Before calling POST {orchestrator_url}/api/validate you MUST:
 
 1. Run `make ci-local` — zero lint errors, zero type errors, all tests pass.
    CI failure is BLOCKING. Fix all errors before calling /api/validate.
+   NOTE: black and ruff are auto-fixed by the quality gate before CI runs,
+   so formatting-only failures will be fixed automatically. Focus on real errors.
 
 2. SECURITY — your implementation MUST NOT contain:
    - Hardcoded secrets, API keys, or passwords in code
@@ -48,15 +50,17 @@ Base URL: {orchestrator_url}
 POST /api/checkin          Send a heartbeat every 2 minutes with your current step.
                            Body: {{"wo": "{wo_id}", "agent": "{agent_name}", "step": "description"}}
 
-POST /api/validate         Signal that you need human review before committing.
+POST /api/validate         Signal that you need human review. REQUIRES a GitHub PR.
+                           You MUST commit, push, and open the PR first. Then call:
                            Body: {{
                              "wo": "{wo_id}",
                              "agent": "{agent_name}",
-                             "verify_url": "http://localhost:8000/...",
-                             "steps": ["check X", "verify Y"],
+                             "verify_url": "<PR URL>",
+                             "steps": ["Review PR: <PR URL>", "Verify at https://localhost"],
                              "ci_passed": true,
                              "security_passed": true,
-                             "thread_summary": "What I built and key decisions"
+                             "thread_summary": "What I built and key decisions",
+                             "pr_url": "<full GitHub PR URL — REQUIRED>"
                            }}
 
 POST /api/complete          Signal that the PR has merged and the WO is done.
@@ -74,11 +78,13 @@ PROCESS_SECTION = """
 5.  make smoke-test
 6.  make ci-local   ← MUST PASS before proceeding
 7.  Fix any CI failures, then re-run step 6
-8.  Call POST /api/validate with ci_passed=true and security_passed=true
-9.  After human approval: git add <files> && git commit && git push
-10. gh pr create with WO number in title
-11. For P2: gh pr merge --auto --squash
-12. Call POST /api/complete after merge
+8.  git add <specific files you changed> && git commit  (do NOT use git add -A)
+9.  git push -u origin <branch>
+10. gh pr create — get the PR URL from the output
+11. Call POST /api/validate with ci_passed=true, security_passed=true, AND pr_url=<PR URL>
+    The orchestrator REJECTS validation without a pr_url. Steps 8-10 are mandatory first.
+12. After human approval: for P2 run gh pr merge --auto --squash
+13. Call POST /api/complete after merge
 """.strip()
 
 

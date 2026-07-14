@@ -39,6 +39,11 @@ restart:  ## Rebuild and restart all factory services
 	docker compose -f docker-compose.status.yml build
 	docker compose -f docker-compose.status.yml up -d --force-recreate
 
+pin-base-images:  ## Pre-pull Docker base images used by Clarion builds (run daily to avoid DeadlineExceeded)
+	docker pull node:20-alpine
+	docker pull nginx:alpine
+	docker pull python:3.12-slim
+
 # ── Agent runner daemon (runs Claude on your Mac, not in Docker) ──────────────
 
 agent-install:  ## Install agent daemon + start it (run once after filling in .env)

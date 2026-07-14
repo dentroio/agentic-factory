@@ -49,7 +49,8 @@ async def checkin(wo_id: str, step: str) -> None:
 
 async def request_validate(wo_id: str, verify_url: str = "", steps: list[str] | None = None,
                            ci_passed: bool = True, security_passed: bool = True,
-                           thread_summary: str = "") -> bool:
+                           thread_summary: str = "", pr_url: str = "",
+                           pr_number: int | None = None) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(f"{ORCHESTRATOR_URL}/api/validate", json={
@@ -61,6 +62,8 @@ async def request_validate(wo_id: str, verify_url: str = "", steps: list[str] | 
                 "ci_passed": ci_passed,
                 "security_passed": security_passed,
                 "thread_summary": thread_summary,
+                "pr_url": pr_url,
+                "pr_number": pr_number,
             })
             if resp.status_code == 422:
                 print(f"[runner] validate rejected: {resp.json().get('detail')}")
