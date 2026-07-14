@@ -2,7 +2,9 @@
 reviewer.py — Claude-powered PR gatekeeper daemon.
 
 Polls for pending validations with a pr_url, reviews the diff with Claude, then:
-  - Backend-only PRs: auto-approves (or rejects with feedback) based on code review
+  - Backend-only PRs with no API surface changes: auto-approves if code looks good
+  - Backend PRs that change API routes/schemas: rebuilds containers, smoke-tests,
+    then routes to human for UI verification (API contract changes can break the UI)
   - UI-change PRs: reviews code quality, posts a verification request to the thread,
     and waits for human approval — does NOT auto-approve
 """
@@ -12,18 +14,45 @@ import os
 import re
 import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8100")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
+LOCAL_REPO_PATH = os.getenv("LOCAL_REPO_PATH", "")
 POLL_INTERVAL = int(os.getenv("REVIEWER_POLL_INTERVAL", "30"))
 REVIEWER_NAME = "claude-reviewer"
 
-# Files under these paths count as UI changes requiring human visual verification
+# Files under these paths count as direct UI changes
 UI_PATHS = ("frontend/src/",)
 # Files under these paths are doc-writer noise — ignored in classification
 NOISE_PATHS = ("frontend/public/help/",)
+
+# Backend route files — changes here can alter the API contract consumed by the UI
+API_SURFACE_PATHS = (
+    "src/clarion/api/routes/",
+    "src/clarion/api/schemas/",
+    "services/data-service/routes/",
+    "services/correlation-service/routes/",
+    "services/connector-service/routes/",
+    "services/clustering-service/routes/",
+    "services/user-service/routes/",
+    "services/gateway/routes/",
+)
+
+# Map file prefixes to the service(s) that must be rebuilt
+_SERVICE_MAP: list[tuple[str, list[str]]] = [
+    ("src/clarion/endpoints/correlation_engine.py", ["data-service", "correlation-service"]),
+    ("src/clarion/",                                ["data-service"]),
+    ("services/data-service/",                      ["data-service"]),
+    ("services/correlation-service/",               ["correlation-service"]),
+    ("services/connector-service/",                 ["connector-service"]),
+    ("services/clustering-service/",                ["clustering-service"]),
+    ("services/user-service/",                      ["user-service"]),
+    ("services/gateway/",                           ["gateway"]),
+    ("frontend/",                                   ["frontend"]),
+]
 
 # Track which validations we've reviewed this session (wo + requested_at)
 _reviewed: set[str] = set()
@@ -65,32 +94,72 @@ def _get_pr_diff(pr_url: str) -> str:
         return ""
 
 
-def _classify(diff: str) -> tuple[bool, bool]:
-    """Return (has_ui_changes, has_backend_changes)."""
-    has_ui = has_backend = False
+def _changed_files(diff: str) -> list[str]:
+    """Extract list of changed file paths from a unified diff."""
+    files = []
     for line in diff.splitlines():
-        if line.startswith("diff --git "):
-            filepath = line.split(" b/", 1)[-1] if " b/" in line else ""
-        elif line.startswith("+++ b/"):
-            filepath = line[6:]
-        else:
-            continue
+        if line.startswith("diff --git ") and " b/" in line:
+            files.append(line.split(" b/", 1)[-1])
+    return files
+
+
+def _classify(diff: str) -> tuple[bool, bool, bool, list[str]]:
+    """Return (has_ui_changes, has_api_surface_changes, has_backend_changes, services_to_rebuild)."""
+    has_ui = has_api_surface = has_backend = False
+    svcs: set[str] = set()
+
+    for filepath in _changed_files(diff):
         if not filepath or any(filepath.startswith(p) for p in NOISE_PATHS):
             continue
+
         if any(filepath.startswith(p) for p in UI_PATHS):
             has_ui = True
         else:
             has_backend = True
-    return has_ui, has_backend
+
+        if any(filepath.startswith(p) for p in API_SURFACE_PATHS):
+            has_api_surface = True
+
+        for prefix, svc_list in _SERVICE_MAP:
+            if filepath.startswith(prefix):
+                svcs.update(svc_list)
+                break
+
+    return has_ui, has_api_surface, has_backend, sorted(svcs)
 
 
-def _claude_review(wo_id: str, title: str, diff: str, has_ui: bool) -> tuple[bool, str]:
-    """Call claude -p for a focused code review. Returns (approved, notes)."""
-    ui_note = (
-        "\nNOTE: This PR includes frontend UI changes. Review code quality and "
-        "correctness only — visual layout will be verified separately by the human."
-        if has_ui else ""
+def _rebuild_and_smoke(repo_path: str, services: list[str]) -> tuple[bool, str]:
+    """Rebuild service containers and run smoke-test. Returns (success, output)."""
+    if not repo_path or not Path(repo_path).exists():
+        return False, f"LOCAL_REPO_PATH not set or missing: {repo_path!r}"
+
+    for svc in services:
+        _log(f"  rebuilding {svc}...")
+        result = subprocess.run(
+            ["make", "build-svc", f"SVC={svc}"],
+            cwd=repo_path, capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode != 0:
+            return False, f"build-svc {svc} failed:\n{result.stdout[-1500:]}\n{result.stderr[-500:]}"
+
+    _log("  running smoke-test...")
+    smoke = subprocess.run(
+        ["make", "smoke-test"],
+        cwd=repo_path, capture_output=True, text=True, timeout=120,
     )
+    passed = smoke.returncode == 0
+    output = (smoke.stdout + smoke.stderr)[-2000:]
+    return passed, output
+
+
+def _claude_review(wo_id: str, title: str, diff: str, has_ui: bool, has_api_surface: bool) -> tuple[bool, str]:
+    """Call claude -p for a focused code review. Returns (approved, notes)."""
+    extra = ""
+    if has_ui:
+        extra += "\nNOTE: Frontend UI changes are present. Review code quality only — visual correctness verified separately."
+    if has_api_surface:
+        extra += "\nNOTE: API route/schema changes detected. Verify the response shapes, status codes, and field names are backward-compatible with existing UI consumers."
+
     prompt = f"""You are a senior engineer reviewing a PR for the Clarion network security platform.
 
 WO: {wo_id} — {title}
@@ -100,7 +169,7 @@ Review for:
 2. Correctness (does it match the WO? missing edge cases? type errors?)
 3. Clarion patterns (db.commit() after writes, parameterized queries, no bare excepts)
 4. Performance (N+1 queries, unbounded result sets, blocking I/O in async handlers)
-{ui_note}
+{extra}
 
 Diff (first 14 000 chars):
 {diff[:14000]}
@@ -109,7 +178,7 @@ Reply with exactly one of:
   APPROVE: <one sentence why this is ready to merge>
   REJECT: <specific, actionable issue(s) the agent must fix>
 
-Be concise. APPROVE means the agent's PR will be auto-merged without further human code review.
+Be concise. APPROVE means the code quality is sound; UI verification is a separate step.
 REJECT must say exactly what to change."""
 
     try:
@@ -122,7 +191,6 @@ REJECT must say exactly what to change."""
             return True, out[7:].lstrip(": ").strip()
         if out.startswith("REJECT"):
             return False, out[6:].lstrip(": ").strip()
-        # Ambiguous — safe default is reject
         return False, f"Ambiguous response — treating as reject: {out[:300]}"
     except Exception as e:
         _log(f"claude -p failed: {e}")
@@ -189,11 +257,12 @@ async def review_one(v: dict) -> None:
         _log(f"{wo}: empty diff — skipping")
         return
 
-    has_ui, _ = _classify(diff)
+    has_ui, has_api_surface, _, services = _classify(diff)
     title = await _wo_title(wo)
     pr_num = _pr_number(pr_url)
 
-    approved, notes = _claude_review(wo, title, diff, has_ui)
+    # --- Code review -------------------------------------------------------
+    approved, notes = _claude_review(wo, title, diff, has_ui, has_api_surface)
 
     if not approved:
         _log(f"{wo}: REJECT — {notes[:120]}")
@@ -201,23 +270,55 @@ async def review_one(v: dict) -> None:
         await _reject(wo, notes)
         return
 
-    if has_ui:
-        _log(f"{wo}: code OK but has UI changes — requesting human visual verification")
+    # --- Determine if human verification is needed -------------------------
+    # UI changes: always need visual sign-off
+    # API surface changes: backend changes that alter routes/schemas the frontend
+    #   consumes — we rebuild + smoke-test first, then still ask for UI verification
+    needs_human = has_ui or has_api_surface
+
+    if has_api_surface and not has_ui:
+        # Rebuild affected containers and smoke-test before routing to human
+        _log(f"{wo}: API surface changed — rebuilding {services} and smoke-testing")
+        await _post_thread(wo, f"✅ **Code review passed** — {notes}\n\n🔄 API routes/schemas changed — rebuilding containers and running smoke-test...")
+
+        repo = LOCAL_REPO_PATH
+        if services and repo:
+            build_ok, build_out = await asyncio.get_event_loop().run_in_executor(
+                None, _rebuild_and_smoke, repo, services
+            )
+            if not build_ok:
+                msg = f"🔴 **Container rebuild/smoke-test failed** after API surface change — rejecting.\n\n```\n{build_out}\n```"
+                await _post_thread(wo, msg)
+                await _reject(wo, f"Container rebuild failed: {build_out[:400]}")
+                return
+            await _post_thread(wo, f"✅ **Smoke-test passed** after rebuild of: {', '.join(services)}")
+        else:
+            _log(f"{wo}: LOCAL_REPO_PATH not set — skipping rebuild; routing to human anyway")
+
+    if needs_human:
+        reason = []
+        if has_ui:
+            reason.append("UI changes")
+        if has_api_surface:
+            reason.append("API contract changes (routes/schemas that the UI consumes)")
+        reason_str = " + ".join(reason)
+
+        _log(f"{wo}: code OK, {reason_str} — requesting human visual verification")
         msg = (
             f"✅ **Code review passed** — {notes}\n\n"
-            f"⚠️ **Human visual verification required** — this PR contains UI changes.\n\n"
+            f"⚠️ **Human visual verification required** — {reason_str}.\n\n"
             f"Please:\n"
             f"1. Open **https://localhost** (admin / Clarion#Admin1)\n"
-            f"2. Review the changes in PR #{pr_num}: {pr_url}\n"
-            f"3. Verify the UI looks and behaves correctly\n"
+            f"2. Review PR #{pr_num}: {pr_url}\n"
+            f"3. Exercise the affected UI flows and confirm everything still works\n"
             f"4. Approve or reject in the **factory dashboard**"
         )
         await _post_thread(wo, msg)
         # Leave pending — human must approve
         return
 
-    # Backend-only, code approved — auto-approve
-    _log(f"{wo}: APPROVE — {notes[:120]}")
+    # Pure backend with no API surface changes — auto-approve
+    _log(f"{wo}: APPROVE (backend-only, no API surface changes) — {notes[:120]}")
     await _post_thread(wo, f"✅ **Claude reviewer auto-approved** — {notes}")
     ok = await _approve(wo, notes)
     _log(f"{wo}: orchestrator {'accepted' if ok else 'FAILED'} approve")
