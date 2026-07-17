@@ -69,10 +69,7 @@ async def _post_log(line: str) -> None:
 
 
 async def _analyze_failure(wo_id: str, context: str) -> str:
-    """
-    Call claude -p to produce a short root-cause diagnosis of a build/CI failure.
-    Returns the analysis string, or empty string on error. Non-blocking via executor.
-    """
+    """Call claude -p to produce a short root-cause diagnosis of a build/CI failure."""
     import subprocess as _sp
     prompt = (
         f"A CI or build step just failed for work order {wo_id}. "
@@ -92,6 +89,85 @@ async def _analyze_failure(wo_id: str, context: str) -> str:
             return ""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run)
+
+
+async def _generate_validation_steps(wo_id: str, title: str, pr_url: str, worktree: str, wo_spec: dict) -> list[str]:
+    """Ask Claude to write specific, human-readable verification steps for the validation banner."""
+    import subprocess as _sp
+
+    # Get changed files
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "diff", "main...HEAD", "--name-only", "--diff-filter=ACM",
+            cwd=worktree,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await proc.communicate()
+        changed = out.decode(errors="replace").strip().splitlines()
+    except Exception:
+        changed = []
+
+    ui_files = [f for f in changed if f.startswith("frontend/src/")]
+    api_files = [f for f in changed if any(f.startswith(p) for p in (
+        "src/clarion/api/routes/", "src/clarion/api/schemas/",
+        "services/data-service/routes/", "services/gateway/routes/",
+    ))]
+    backend_files = [f for f in changed if f not in ui_files and f not in api_files]
+
+    spec_context = "\n".join(filter(None, [
+        f"Notes: {wo_spec.get('notes', '')}" if wo_spec.get("notes") else "",
+        f"Services: {wo_spec.get('services', '')}" if wo_spec.get("services") else "",
+    ]))
+
+    file_lines = []
+    if ui_files:   file_lines.append(f"UI ({len(ui_files)}): {', '.join(ui_files[:5])}")
+    if api_files:  file_lines.append(f"API ({len(api_files)}): {', '.join(api_files[:4])}")
+    if backend_files: file_lines.append(f"Backend ({len(backend_files)}): {', '.join(backend_files[:5])}")
+
+    prompt = f"""Write a short verification checklist for a product owner reviewing this completed work order.
+They are NOT a developer. Be specific, plain English, no code.
+
+WO: {wo_id} — {title}
+PR: {pr_url}
+Files changed: {chr(10).join(file_lines) if file_lines else 'unknown'}
+{spec_context}
+
+Write 3-5 numbered steps. Each step must:
+- Start from the Clarion app at https://localhost (login: admin / Clarion#Admin1)
+- Name the EXACT page, menu, or element (e.g. "click Devices in the top nav > open any endpoint")
+- State what SUCCESS looks like for that step
+
+End with one line starting "Approve when: " summarising the pass condition.
+
+If this is a backend/migration-only change with no visible UI impact, write:
+"No visual verification needed — this is a backend-only change. The code review and CI gates confirmed correctness."
+Then "Approve when: you have reviewed the PR diff and it matches the WO description."
+
+Keep the total response under 300 words."""
+
+    def _run() -> str:
+        try:
+            result = _sp.run(
+                ["claude", "-p", prompt],
+                capture_output=True, text=True, timeout=90,
+            )
+            return result.stdout.strip()
+        except Exception:
+            return ""
+
+    loop = asyncio.get_running_loop()
+    text = await loop.run_in_executor(None, _run)
+
+    if text and len(text) > 50:
+        # Return as a list of lines for the steps field
+        return [line for line in text.splitlines() if line.strip()]
+
+    # Fallback
+    steps = [f"Open PR #{pr_url.split('/')[-1]}: {pr_url}"]
+    if ui_files:
+        steps.append("Open https://localhost → log in as admin / Clarion#Admin1 and verify the UI changes look correct")
+    steps.append("Confirm the implementation matches the WO specification")
+    return steps
 
 
 async def _checkin_loop(wo_id: str, interval: int = 90) -> None:
@@ -440,28 +516,44 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     if not gate["ci_passed"] or not gate["security_passed"]:
         failures = []
         if not gate["ci_passed"]:
-            failures.append("CI failed")
+            failures.append("CI tests failed")
         if not gate["security_passed"]:
-            failures.append(f"{gate['finding_count']} CRITICAL/HIGH security findings")
+            count = gate.get("finding_count", 0)
+            failures.append(f"{count} CRITICAL/HIGH security issue{'s' if count != 1 else ''} found")
         failure_str = ", ".join(failures)
         _log(f"{wo_id} quality gate FAILED: {failure_str} — not submitting for validation")
         await checkin(wo_id, f"quality gate failed: {failure_str}")
+
+        # Extract only the most meaningful error lines — don't dump 1000 chars of raw output
+        raw_output = gate.get("ci_output", "")
+        error_lines = [
+            l.rstrip() for l in raw_output.splitlines()
+            if l.strip() and any(w in l.lower() for w in
+               ("error", "failed", "assert", "exception", "traceback", "import", "syntax"))
+        ]
+        error_excerpt = "\n".join(error_lines[:8]) if error_lines else raw_output[-400:].strip()
+
         await post_thread_message(
             wo_id,
-            f"❌ Quality gate failed: {failure_str}\n\n"
-            + (f"CI output:\n```\n{gate['ci_output'][-1000:]}\n```" if not gate["ci_passed"] else ""),
+            f"❌ **Quality gate failed — the agent will fix this automatically**\n\n"
+            f"**What failed:** {failure_str}\n\n"
+            + (f"**Key errors:**\n```\n{error_excerpt}\n```\n\n" if not gate["ci_passed"] and error_excerpt else "")
+            + "Analyzing root cause...",
             msg_type="ci_result",
             metadata={"ci_passed": gate["ci_passed"], "security_passed": gate["security_passed"],
                       "findings": gate["bandit_findings"][:5]},
         )
-        # Analyze the failure so the next attempt's prompt knows exactly what to fix
-        failure_detail = gate.get("ci_output", "") if not gate["ci_passed"] else str(gate.get("bandit_findings", ""))
+        failure_detail = raw_output if not gate["ci_passed"] else str(gate.get("bandit_findings", ""))
         ci_analysis = await _analyze_failure(
             wo_id,
             f"CI/security gate failed for {wo_id}.\n\nFailure: {failure_str}\n\nOutput:\n{failure_detail[-3000:]}"
         )
         if ci_analysis:
-            await post_thread_message(wo_id, f"🔍 **Failure analysis:**\n\n{ci_analysis}", msg_type="ci_analysis")
+            await post_thread_message(
+                wo_id,
+                f"🔍 **Root cause & fix:**\n\n{ci_analysis}",
+                msg_type="ci_analysis"
+            )
         await release_dispatch(wo_id)
         return
 
@@ -541,16 +633,12 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         return
 
     # Request human validation with the PR URL attached
-    change_summary = await _build_change_summary(worktree_path)
-    thread_summary = f"{title} — {change_summary}"
+    validation_steps = await _generate_validation_steps(wo_id, title, pr_url, worktree_path, wo_spec)
+    thread_summary = title
     validated = await request_validate(
         wo_id,
         verify_url=pr_url,
-        steps=[
-            f"Open the PR: {pr_url}",
-            "Review committed files — confirm they match the WO spec",
-            "Verify the running system at https://localhost if UI changed",
-        ],
+        steps=validation_steps,
         ci_passed=gate["ci_passed"],
         security_passed=gate["security_passed"],
         thread_summary=thread_summary,

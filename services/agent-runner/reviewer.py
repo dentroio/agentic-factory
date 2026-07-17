@@ -246,6 +246,113 @@ async def _wo_title(wo: str) -> str:
     return wo
 
 
+async def _fetch_wo_spec(wo: str) -> dict:
+    """Return the full WO queue entry (title, notes, services, etc.)."""
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/queue/{wo}")
+            if r.status_code == 200:
+                return r.json()
+    except Exception:
+        pass
+    return {}
+
+
+def _generate_verification_guide(
+    wo_id: str,
+    title: str,
+    pr_url: str,
+    pr_num: int | None,
+    diff: str,
+    wo_spec: dict,
+) -> str:
+    """Ask Claude to write specific, plain-English verification steps for a human reviewer."""
+    changed_files = _changed_files(diff)
+    ui_files  = [f for f in changed_files if any(f.startswith(p) for p in UI_PATHS)]
+    api_files = [f for f in changed_files if any(f.startswith(p) for p in API_SURFACE_PATHS)]
+    other_files = [f for f in changed_files if f not in ui_files and f not in api_files]
+
+    spec_context = "\n".join(filter(None, [
+        f"Title: {wo_spec.get('title', title)}",
+        f"Notes: {wo_spec.get('notes', '')}" if wo_spec.get("notes") else "",
+        f"Services: {wo_spec.get('services', '')}" if wo_spec.get("services") else "",
+        f"Priority: {wo_spec.get('priority', '')}" if wo_spec.get("priority") else "",
+    ]))
+
+    file_summary = []
+    if ui_files:
+        file_summary.append(f"UI components ({len(ui_files)}): {', '.join(ui_files[:6])}")
+    if api_files:
+        file_summary.append(f"API routes/schemas ({len(api_files)}): {', '.join(api_files[:4])}")
+    if other_files:
+        file_summary.append(f"Backend ({len(other_files)}): {', '.join(other_files[:6])}")
+
+    prompt = f"""You are writing a verification checklist for a product owner who will manually test a completed feature.
+They are not a developer. Write in plain English. Be specific and concrete.
+
+Work Order: {wo_id}
+PR #{pr_num}: {pr_url}
+
+Changed files:
+{chr(10).join(file_summary) if file_summary else "No files detected."}
+
+WO Context:
+{spec_context}
+
+Diff (first 8000 chars):
+{diff[:8000]}
+
+Write a structured verification guide with these exact sections:
+
+## What Was Built
+2-3 plain-English sentences describing what changed and why, no code or jargon.
+
+## How to Test
+Numbered steps. Start from "Open https://localhost → log in as **admin / Clarion#Admin1**".
+- Name the EXACT page, menu, button, or field to interact with
+- For each step, describe what **success looks like** and what **failure looks like**
+- Include 3-5 meaningful steps, not generic ones like "check everything works"
+- If a specific screen path applies (e.g. Devices > click endpoint > Device Profile tab), spell it out
+
+## Quick Sanity Checks
+2-3 bullet points verifying nothing else broke (navigation still works, no blank screens, no console errors).
+
+## ✅ Approve When
+One sentence: the specific condition that means this is ready to merge.
+
+If this is a backend-only change with NO visible UI impact, say that clearly in "What Was Built"
+and replace "How to Test" with a note that visual verification is not required — the code review
+and CI gates already confirmed correctness."""
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt],
+            capture_output=True, text=True, timeout=120,
+        )
+        text = result.stdout.strip()
+        if text and len(text) > 100:
+            return text
+    except Exception as e:
+        _log(f"generate_verification_guide failed: {e}")
+
+    # Fallback — better than nothing
+    areas = " + ".join(filter(None, [
+        f"{len(ui_files)} UI file(s)" if ui_files else "",
+        f"{len(api_files)} API file(s)" if api_files else "",
+    ])) or "backend changes"
+    return (
+        f"## {wo_id}: {title}\n\n"
+        f"**PR #{pr_num}:** {pr_url}\n\n"
+        f"**Changes:** {areas}\n\n"
+        f"**To verify:**\n"
+        f"1. Open **https://localhost** → log in as **admin / Clarion#Admin1**\n"
+        f"2. Navigate to the area this WO affects\n"
+        f"3. Confirm the described feature works correctly\n"
+        f"4. Check nothing else appears broken\n\n"
+        f"Approve if everything looks correct."
+    )
+
+
 async def review_one(v: dict) -> None:
     wo = v["wo"]
     pr_url = v["pr_url"]
@@ -266,20 +373,27 @@ async def review_one(v: dict) -> None:
 
     if not approved:
         _log(f"{wo}: REJECT — {notes[:120]}")
-        await _post_thread(wo, f"🔴 **Claude reviewer rejected**\n\n{notes}")
+        reject_msg = (
+            f"🔴 **Code review failed — agent must fix before this can merge**\n\n"
+            f"**Issue found:**\n{notes}\n\n"
+            f"The agent will pick this up automatically and address the problem."
+        )
+        await _post_thread(wo, reject_msg)
         await _reject(wo, notes)
         return
 
     # --- Determine if human verification is needed -------------------------
-    # UI changes: always need visual sign-off
-    # API surface changes: backend changes that alter routes/schemas the frontend
-    #   consumes — we rebuild + smoke-test first, then still ask for UI verification
     needs_human = has_ui or has_api_surface
 
     if has_api_surface and not has_ui:
-        # Rebuild affected containers and smoke-test before routing to human
         _log(f"{wo}: API surface changed — rebuilding {services} and smoke-testing")
-        await _post_thread(wo, f"✅ **Code review passed** — {notes}\n\n🔄 API routes/schemas changed — rebuilding containers and running smoke-test...")
+        await _post_thread(
+            wo,
+            f"✅ **Code review passed**\n\n"
+            f"API routes or schemas changed — rebuilding the affected containers and running "
+            f"smoke tests to confirm nothing broke before asking for your review...\n\n"
+            f"Services being rebuilt: `{'`, `'.join(services)}`"
+        )
 
         repo = LOCAL_REPO_PATH
         if services and repo:
@@ -287,39 +401,48 @@ async def review_one(v: dict) -> None:
                 None, _rebuild_and_smoke, repo, services
             )
             if not build_ok:
-                msg = f"🔴 **Container rebuild/smoke-test failed** after API surface change — rejecting.\n\n```\n{build_out}\n```"
+                # Extract just the first meaningful error line from raw output
+                error_lines = [l for l in build_out.splitlines() if l.strip() and
+                               any(w in l.lower() for w in ("error", "failed", "exception", "traceback"))]
+                error_summary = "\n".join(error_lines[:5]) if error_lines else build_out[-400:]
+                msg = (
+                    f"🔴 **Container build failed** — rejecting until the agent fixes this.\n\n"
+                    f"**Error:**\n```\n{error_summary}\n```\n\n"
+                    f"Services that failed to rebuild: `{'`, `'.join(services)}`"
+                )
                 await _post_thread(wo, msg)
-                await _reject(wo, f"Container rebuild failed: {build_out[:400]}")
+                await _reject(wo, f"Container rebuild failed: {error_summary[:300]}")
                 return
-            await _post_thread(wo, f"✅ **Smoke-test passed** after rebuild of: {', '.join(services)}")
+            await _post_thread(
+                wo,
+                f"✅ **Containers rebuilt and smoke tests passed** — "
+                f"`{'`, `'.join(services)}` are healthy."
+            )
         else:
             _log(f"{wo}: LOCAL_REPO_PATH not set — skipping rebuild; routing to human anyway")
 
     if needs_human:
-        reason = []
-        if has_ui:
-            reason.append("UI changes")
-        if has_api_surface:
-            reason.append("API contract changes (routes/schemas that the UI consumes)")
-        reason_str = " + ".join(reason)
-
-        _log(f"{wo}: code OK, {reason_str} — requesting human visual verification")
-        msg = (
-            f"✅ **Code review passed** — {notes}\n\n"
-            f"⚠️ **Human visual verification required** — {reason_str}.\n\n"
-            f"Please:\n"
-            f"1. Open **https://localhost** (admin / Clarion#Admin1)\n"
-            f"2. Review PR #{pr_num}: {pr_url}\n"
-            f"3. Exercise the affected UI flows and confirm everything still works\n"
-            f"4. Approve or reject in the **factory dashboard**"
+        wo_spec = await _fetch_wo_spec(wo)
+        guide = _generate_verification_guide(wo, title, pr_url, pr_num, diff, wo_spec)
+        _log(f"{wo}: code OK — requesting human visual verification")
+        await _post_thread(
+            wo,
+            f"✅ **Code review passed** — ready for your sign-off.\n\n"
+            f"---\n\n"
+            f"{guide}\n\n"
+            f"---\n\n"
+            f"Use the **Approve** or **Reject** buttons in the factory dashboard when done."
         )
-        await _post_thread(wo, msg)
-        # Leave pending — human must approve
         return
 
     # Pure backend with no API surface changes — auto-approve
     _log(f"{wo}: APPROVE (backend-only, no API surface changes) — {notes[:120]}")
-    await _post_thread(wo, f"✅ **Claude reviewer auto-approved** — {notes}")
+    await _post_thread(
+        wo,
+        f"✅ **Auto-approved** — backend-only change, no UI or API surface impact.\n\n"
+        f"**Review summary:** {notes}\n\n"
+        f"This PR will be merged automatically."
+    )
     ok = await _approve(wo, notes)
     _log(f"{wo}: orchestrator {'accepted' if ok else 'FAILED'} approve")
 
