@@ -447,8 +447,80 @@ async def review_one(v: dict) -> None:
     _log(f"{wo}: orchestrator {'accepted' if ok else 'FAILED'} approve")
 
 
+async def _cleanup_stale_prs() -> None:
+    """Close open PRs whose WO is deferred or whose dispatch entry is complete/stale-orphan."""
+    if not GITHUB_REPO:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            dispatch_r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch")
+            held_r = await client.get(f"{ORCHESTRATOR_URL}/api/held-wos")
+            queue_r = await client.get(f"{ORCHESTRATOR_URL}/api/queue")
+            if not all(r.status_code == 200 for r in (dispatch_r, held_r, queue_r)):
+                return
+            dispatch = dispatch_r.json()
+            held = set(str(w).lstrip("WO-") for w in held_r.json())
+            # Build set of WO IDs that are in deferred phase
+            deferred_wos: set[str] = set()
+            for entry in queue_r.json() if isinstance(queue_r.json(), list) else []:
+                if entry.get("phase") == "deferred":
+                    wo = str(entry.get("wo", "")).lstrip("WO-")
+                    deferred_wos.add(wo)
+
+        # Fetch open PRs
+        result = subprocess.run(
+            ["gh", "pr", "list", "--repo", GITHUB_REPO, "--state", "open",
+             "--json", "number,title,headRefName"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return
+        import json as _json
+        open_prs = _json.loads(result.stdout)
+
+        for pr in open_prs:
+            num = pr["number"]
+            title = pr.get("title", "")
+            branch = pr.get("headRefName", "")
+
+            # Extract WO number from title or branch name
+            m = re.search(r"WO-(\d+)", title, re.I) or re.search(r"wo[/-](\d+)", branch, re.I)
+            if not m:
+                continue
+            wo_num = m.group(1)
+            wo_id = f"WO-{wo_num}"
+
+            # Case 1: WO is deferred → close PR
+            if wo_num in deferred_wos:
+                _log(f"closing PR#{num} — {wo_id} is deferred")
+                subprocess.run(
+                    ["gh", "pr", "close", str(num), "--repo", GITHUB_REPO,
+                     "--comment", f"Auto-closed: {wo_id} moved to Deferred. PR will be reopened when WO is re-activated."],
+                    capture_output=True, timeout=30,
+                )
+                continue
+
+            # Case 2: dispatch entry is complete but PR is still open (orphaned)
+            entry = dispatch.get(wo_id, {})
+            if entry.get("status") == "complete":
+                pr_url = entry.get("pr_url", "")
+                # Only close if this PR is NOT the one recorded as the merged PR
+                merged_pr_num = _pr_number(pr_url) if pr_url else None
+                if merged_pr_num and merged_pr_num != num:
+                    _log(f"closing PR#{num} — {wo_id} already completed via PR#{merged_pr_num}")
+                    subprocess.run(
+                        ["gh", "pr", "close", str(num), "--repo", GITHUB_REPO,
+                         "--comment", f"Auto-closed: {wo_id} was completed via PR#{merged_pr_num}. This PR is an orphan."],
+                        capture_output=True, timeout=30,
+                    )
+
+    except Exception as e:
+        _log(f"stale PR cleanup error: {e}")
+
+
 async def main() -> None:
     _log(f"started — polling every {POLL_INTERVAL}s | orchestrator={ORCHESTRATOR_URL}")
+    _cleanup_cycle = 0
     while True:
         pending = await _get_pending()
         for v in pending:
@@ -460,6 +532,10 @@ async def main() -> None:
                 await review_one(v)
             except Exception as e:
                 _log(f"error reviewing {v['wo']}: {e}")
+        # Run stale PR cleanup every 10 cycles (~5 min at default 30s interval)
+        _cleanup_cycle += 1
+        if _cleanup_cycle % 10 == 0:
+            await _cleanup_stale_prs()
         await asyncio.sleep(POLL_INTERVAL)
 
 

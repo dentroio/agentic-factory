@@ -26,6 +26,7 @@ from notifications import (
     notify_wo_error,
     notify_dependabot,
     notify_test,
+    notify_factory_alert,
 )
 from plan_engine import next_wo, sorted_queue
 
@@ -1221,6 +1222,26 @@ async def notifications_test():
     return {"ok": True}
 
 
+class _AlertRequest(BaseModel):
+    title: str
+    body: str
+    level: str = "warning"
+    source: str = "health-agent"
+
+
+@app.post("/api/notifications/alert")
+async def notifications_alert(req: _AlertRequest):
+    """Post a factory health/infrastructure alert to ntfy and Slack."""
+    await notify_factory_alert(
+        title=req.title,
+        body=req.body,
+        level=req.level,
+        source=req.source,
+        secrets=_load_secrets(),
+    )
+    return {"ok": True}
+
+
 @app.get("/api/slack/status")
 async def slack_status():
     """Return whether the Slack bot is currently connected."""
@@ -2237,12 +2258,31 @@ async def poll() -> None:
         _orchestrator_output = {**_prev_output, "generated_at": now_str, "stale": True}
         return
 
-    # Auto-reconcile: merged PRs → complete stale dispatch entries
+    # Auto-reconcile: merged PRs → complete dispatch entries.
+    # Creates stub entries for WOs that were merged without going through the
+    # dispatch flow (e.g. cursor-runner completed and dispatch entry was lost).
     reconciled = 0
     for wo_num, pr_url in merged_wo_prs.items():
         wo_id = f"WO-{wo_num}"
-        entry = _dispatch_state.get(wo_id, {})
-        if entry and entry.get("status") not in ("complete", "rejected"):
+        entry = _dispatch_state.get(wo_id)
+        if entry is None:
+            _dispatch_state[wo_id] = {
+                "wo": wo_id,
+                "slug": "",
+                "agent": "unknown",
+                "backend": "",
+                "workstation": "",
+                "claimed_at": _utcnow(),
+                "status": "complete",
+                "step": "PR merged",
+                "last_seen": None,
+                "completed_at": _utcnow(),
+                "pr_url": pr_url,
+                "pr_number": None,
+            }
+            _db_append_step(wo_id, "complete", step="PR merged (back-fill)")
+            reconciled += 1
+        elif entry.get("status") not in ("complete", "rejected"):
             entry["status"] = "complete"
             entry["completed_at"] = _utcnow()
             entry["step"] = "PR merged"
@@ -2507,6 +2547,89 @@ async def get_anthropic_usage():
             "today_cost_usd": round(sum(r.get("cost_usd", 0) for r in today), 4),
             "today_calls": len(today),
         },
+    }
+
+
+@app.get("/api/budget")
+async def get_budget():
+    """Aggregate token/spend budget across all configured AI providers."""
+    now = datetime.now(UTC)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    # ── Anthropic ──────────────────────────────────────────────────────────────
+    anthropic: dict = {
+        "available": True,
+        "billing_type": "pay_as_you_go",
+        "source": "local_tracking",
+        "note": "Factory API calls only — does not include Claude Code CLI usage.",
+    }
+    try:
+        records: list = json.loads(ANTHROPIC_USAGE_PATH.read_text()) if ANTHROPIC_USAGE_PATH.exists() else []
+        month_recs = [r for r in records if r.get("ts", "") >= month_start]
+        anthropic.update({
+            "month_input_tokens":  sum(r.get("input_tokens",  0) for r in month_recs),
+            "month_output_tokens": sum(r.get("output_tokens", 0) for r in month_recs),
+            "month_cost_usd":      round(sum(r.get("cost_usd", 0) for r in month_recs), 4),
+            "month_calls":         len(month_recs),
+            "all_time_input_tokens":  sum(r.get("input_tokens",  0) for r in records),
+            "all_time_output_tokens": sum(r.get("output_tokens", 0) for r in records),
+            "all_time_cost_usd":      round(sum(r.get("cost_usd", 0) for r in records), 4),
+        })
+    except Exception as exc:
+        anthropic["error"] = str(exc)
+
+    # ── OpenAI ─────────────────────────────────────────────────────────────────
+    openai_key = os.getenv("OPENAI_API_KEY") or _load_secrets().get("OPENAI_API_KEY", "")
+    openai: dict = {"available": bool(openai_key)}
+    if openai_key:
+        try:
+            import httpx as _httpx
+            start_ts = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+            async with _httpx.AsyncClient(timeout=10) as _hc:
+                _r = await _hc.get(
+                    "https://api.openai.com/v1/organization/usage/completions",
+                    params={"start_time": start_ts},
+                    headers={"Authorization": f"Bearer {openai_key}"},
+                )
+            if _r.status_code == 200:
+                _buckets = _r.json().get("data", [])
+                openai.update({
+                    "month_input_tokens":  sum(b.get("input_tokens",  0) for b in _buckets),
+                    "month_output_tokens": sum(b.get("output_tokens", 0) for b in _buckets),
+                    "billing_type": "pay_as_you_go",
+                })
+            else:
+                openai["error"] = f"HTTP {_r.status_code}: {_r.text[:120]}"
+        except Exception as exc:
+            openai["error"] = str(exc)
+    else:
+        openai["note"] = "Set OPENAI_API_KEY in Settings → Authentication to enable"
+
+    # ── Cursor ─────────────────────────────────────────────────────────────────
+    cursor: dict = {
+        "available": False,
+        "billing_type": "monthly_quota",
+        "known_limit_label": "500 fast requests / month (Pro)",
+        "note": "No public API — check manually",
+        "dashboard_url": "https://cursor.sh/settings",
+    }
+
+    # ── Gemini ─────────────────────────────────────────────────────────────────
+    gemini_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                  or _load_secrets().get("GEMINI_API_KEY", ""))
+    gemini: dict = {"available": bool(gemini_key)}
+    if not gemini_key:
+        gemini["note"] = "Set GEMINI_API_KEY in Settings → Authentication to enable"
+    else:
+        gemini["note"] = "Usage via Google Cloud Monitoring — not yet implemented"
+
+    return {
+        "anthropic": anthropic,
+        "openai":    openai,
+        "cursor":    cursor,
+        "gemini":    gemini,
+        "generated_at": now.isoformat(),
+        "month_start":  month_start,
     }
 
 

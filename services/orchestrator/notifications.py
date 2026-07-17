@@ -171,6 +171,31 @@ async def notify_dependabot(
         )
 
 
+async def notify_factory_alert(
+    title: str,
+    body: str,
+    level: str = "warning",
+    source: str = "health-agent",
+    secrets: dict | None = None,
+) -> None:
+    """General-purpose factory health/infrastructure alert — posts to ntfy and Slack."""
+    priority_map = {"critical": "urgent", "warning": "high", "info": "default", "low": "low"}
+    tag_map = {"critical": "rotating_light", "warning": "warning", "info": "information_source", "low": "white_check_mark"}
+    await _send_ntfy(
+        title=title,
+        body=body,
+        priority=priority_map.get(level, "default"),
+        tags=f"factory,{tag_map.get(level, 'robot')}",
+        secrets=secrets,
+    )
+    icon = {"critical": ":rotating_light:", "warning": ":warning:", "info": ":information_source:", "low": ":white_check_mark:"}.get(level, ":robot_face:")
+    blocks = [{
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": f"{icon} *[{source}] {title}*\n{body}"},
+    }]
+    await _send_slack(f"{icon} *[{source}] {title}* — {body}", blocks, secrets=secrets)
+
+
 async def notify_test(secrets: dict | None = None) -> bool:
     """Send a test notification. Returns True if ntfy or Slack is configured."""
     topic = _ntfy_topic(secrets)

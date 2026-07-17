@@ -286,12 +286,24 @@ def _apply_live_status(
     branches: list[dict],
     prs: list[dict],
     dispatch: dict | None = None,
+    merged_prs: list[dict] | None = None,
 ) -> None:
     branch_wo_map = {b["wo_number"]: b for b in branches if b["wo_number"]}
     pr_wo_map: dict[int, dict] = {}
     for pr in prs:
         if pr["wo_number"]:
             pr_wo_map[pr["wo_number"]] = pr
+
+    # Build set of WO numbers with merged PRs — authoritative "done" signal.
+    merged_wo_nums: set[int] = set()
+    for p in (merged_prs or []):
+        m = re.search(r"WO-(\d+)", p.get("title", ""))
+        if m:
+            merged_wo_nums.add(int(m.group(1)))
+        if p.get("merged_at"):
+            m2 = re.search(r"wo[/-](\d+)", p.get("head", {}).get("ref", ""), re.I)
+            if m2:
+                merged_wo_nums.add(int(m2.group(1)))
 
     # Build a map from WO number → dispatch entry so we can mark active WOs
     # even when the branch hasn't been pushed to GitHub yet (which is the normal
@@ -305,6 +317,15 @@ def _apply_live_status(
             pass
 
     for num, spec in wos.items():
+        # Merged PRs are the strongest signal — always wins over spec-file status.
+        if num in merged_wo_nums:
+            spec.status = "✅ Done"
+            spec.merged_at = next(
+                (p.get("merged_at", "") for p in (merged_prs or [])
+                 if re.search(rf"WO-{num}\b", p.get("title", ""))),
+                "",
+            )
+            continue
         if num in pr_wo_map:
             pr = pr_wo_map[num]
             spec.pr_number = pr["number"]
@@ -345,6 +366,9 @@ def _board_columns(wos: dict[int, WOSpec]) -> dict[str, list[WOSpec]]:
     cols: dict[str, list[WOSpec]] = defaultdict(list)
     for spec in sorted(wos.values(), key=lambda s: s.number, reverse=True):
         cols[spec.board_column].append(spec)
+    # Sort done column by merged_at descending so recent completions appear first
+    if "done" in cols:
+        cols["done"].sort(key=lambda s: s.merged_at or "", reverse=True)
     return cols
 
 
@@ -380,17 +404,18 @@ async def dashboard(request: Request):
             pass
         return {}
 
-    wos_result, branches, prs, ci, agent_runner_online, dispatch = await asyncio.gather(
+    wos_result, branches, prs, merged_prs_board, ci, agent_runner_online, dispatch = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
+        gh.list_merged_prs(days=56),
         _load_ci_health(),
         _load_runner_status(),
         _load_dispatch(),
     )
     wos, wos_available = wos_result
 
-    _apply_live_status(wos, branches, prs, dispatch)
+    _apply_live_status(wos, branches, prs, dispatch, merged_prs=merged_prs_board)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
     validations = _load_validations()
@@ -474,6 +499,30 @@ async def wo_detail(request: Request, number: int):
     except Exception:
         pass
 
+    # Extract peer review summary from thread
+    _review_msgs = [m for m in thread_messages if m.get("type") == "review"]
+    _final_msgs = [m for m in thread_messages
+                   if m.get("author") == "claude-reviewer" and m.get("type") == "text"]
+    _reviewer_map: dict[str, dict] = {}
+    for m in _review_msgs:
+        meta = m.get("metadata") or {}
+        name = meta.get("reviewer", "unknown")
+        _reviewer_map[name] = {
+            "name": name,
+            "backend": meta.get("backend", "?"),
+            "passed": meta.get("passed", False),
+            "findings": meta.get("findings") or [],
+            "timestamp": m.get("timestamp", ""),
+        }
+    _chain_order = ["security", "architecture", "correctness", "performance", "documentation"]
+    peer_review = {
+        "has_reviews": bool(_reviewer_map),
+        "reviewers": [_reviewer_map[k] for k in _chain_order if k in _reviewer_map]
+                   + [v for k, v in _reviewer_map.items() if k not in _chain_order],
+        "overall_passed": all(r["passed"] for r in _reviewer_map.values()) if _reviewer_map else None,
+        "final_review": _final_msgs[-1] if _final_msgs else None,
+    }
+
     return templates.TemplateResponse(
         request=request,
         name="wo_detail.html",
@@ -484,6 +533,7 @@ async def wo_detail(request: Request, number: int):
             "github_repo": GITHUB_REPO,
             "thread_messages": thread_messages,
             "wo_id": f"WO-{number}",
+            "peer_review": peer_review,
         },
     )
 
@@ -513,7 +563,7 @@ async def pm_dashboard(request: Request):
         _pm_dispatch(),
     )
     wos, wos_available = wos_result
-    _apply_live_status(wos, branches, prs, dispatch)
+    _apply_live_status(wos, branches, prs, dispatch, merged_prs=merged_prs)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
 
@@ -1115,14 +1165,21 @@ async def settings_agents_save(request: Request):
 @app.get("/usage", response_class=HTMLResponse)
 async def usage_page(request: Request):
     data = {"records": [], "summary": {"per_backend": {}}}
+    budget: dict = {}
     orchestrator_offline = False
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/usage")
-            if r.status_code == 200:
-                data = r.json()
+        async with httpx.AsyncClient(timeout=10) as client:
+            usage_r, budget_r = await asyncio.gather(
+                client.get(f"{ORCHESTRATOR_URL}/api/usage"),
+                client.get(f"{ORCHESTRATOR_URL}/api/budget"),
+                return_exceptions=True,
+            )
+            if not isinstance(usage_r, Exception) and usage_r.status_code == 200:
+                data = usage_r.json()
             else:
                 orchestrator_offline = True
+            if not isinstance(budget_r, Exception) and budget_r.status_code == 200:
+                budget = budget_r.json()
     except Exception:
         orchestrator_offline = True
 
@@ -1160,6 +1217,7 @@ async def usage_page(request: Request):
         "backend_cards": backend_cards,
         "recent_records": data.get("records", []),
         "orchestrator_offline": orchestrator_offline,
+        "budget": budget,
     })
 
 
@@ -1629,15 +1687,10 @@ async def proxy_thread_image(wo: str, filename: str):
 # ── Factory Floor ─────────────────────────────────────────────────────────────
 
 def _log_line_matches_wo(line: str, wo_number: str) -> bool:
-    """True if a log line is relevant to a specific WO, or a general runner line."""
+    """True if a log line is relevant to a specific WO."""
     if not wo_number:
         return True
-    if f"WO-{wo_number}" in line:
-        return True
-    # Include general runner/agent lines that don't mention any specific WO
-    if "WO-" not in line and ("[factory-agent]" in line or "[runner]" in line or "[draft-server]" in line):
-        return True
-    return False
+    return f"WO-{wo_number}" in line
 
 
 def _log_line_matches_agent(line: str, agent: str) -> bool:
@@ -1701,6 +1754,19 @@ async def api_anthropic_usage():
     except Exception:
         pass
     return {"records": [], "summary": {"call_count": 0}}
+
+
+@app.get("/api/budget")
+async def api_budget():
+    """Proxy orchestrator /api/budget — AI provider token/spend summary."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/budget")
+            if r.status_code == 200:
+                return r.json()
+    except Exception:
+        pass
+    return {}
 
 
 @app.get("/api/factory/dispatch")

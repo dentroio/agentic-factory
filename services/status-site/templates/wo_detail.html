@@ -93,6 +93,77 @@
     <pre class="whitespace-pre-wrap text-xs text-slate-300 font-mono bg-slate-950/70 p-5 overflow-auto max-h-[500px] leading-relaxed select-all">{{ spec.raw }}</pre>
   </details>
 
+  {# ── Peer Review ──────────────────────────────────────────────────── #}
+  {% if peer_review.has_reviews %}
+  <div class="glass-panel overflow-hidden mb-4">
+    <div class="px-5 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between">
+      <span class="text-xs font-mono text-slate-400 uppercase tracking-widest">Peer Review</span>
+      {% if peer_review.overall_passed %}
+      <span class="text-xs font-semibold text-emerald-400">✅ All reviewers signed off</span>
+      {% else %}
+      <span class="text-xs font-semibold text-rose-400">🔴 Blocking issues found</span>
+      {% endif %}
+    </div>
+    <div class="divide-y divide-slate-800/30">
+      {% for r in peer_review.reviewers %}
+      <div class="px-5 py-3">
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex items-center gap-2">
+            <span class="text-sm">{% if r.passed %}✅{% else %}🔴{% endif %}</span>
+            <span class="text-xs font-semibold text-slate-200 capitalize">{{ r.name }}</span>
+            <span class="text-xs text-slate-600">via</span>
+            <span class="text-xs font-mono
+              {% if r.backend == 'claude' %}text-violet-400
+              {% elif r.backend == 'cursor' %}text-sky-400
+              {% elif r.backend == 'codex' %}text-emerald-400
+              {% elif r.backend == 'gemini' %}text-amber-400
+              {% else %}text-slate-400{% endif %}">{{ r.backend }}</span>
+          </div>
+          <div class="flex items-center gap-3">
+            {% if not r.findings %}
+            <span class="text-xs text-emerald-600 font-mono">LGTM</span>
+            {% else %}
+            <span class="text-xs text-slate-500">{{ r.findings | length }} finding{{ 's' if r.findings | length != 1 }}</span>
+            {% endif %}
+            <span class="text-xs text-slate-700 font-mono">{{ r.timestamp[:16].replace('T',' ') if r.timestamp }}</span>
+          </div>
+        </div>
+        {% if r.findings %}
+        <div class="mt-2 ml-6 space-y-1.5">
+          {% for f in r.findings %}
+          <div class="text-xs pl-3 py-1 border-l-2 leading-snug
+            {% if f.severity == 'CRITICAL' %}border-rose-500 text-rose-300
+            {% elif f.severity == 'HIGH' %}border-orange-500 text-orange-300
+            {% elif f.severity == 'MEDIUM' %}border-yellow-500 text-yellow-300
+            {% else %}border-blue-500/50 text-blue-300{% endif %}">
+            <span class="font-bold uppercase text-[10px] tracking-wide opacity-70">{{ f.severity }}</span>
+            <span class="font-mono text-slate-500 ml-1">{{ f.file }}:{{ f.line }}</span>
+            <span class="ml-1">— {{ f.issue }}</span>
+            {% if f.fix %}<div class="text-slate-500 mt-0.5 text-[11px]">↳ {{ f.fix }}</div>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% if peer_review.final_review %}
+    <div class="px-5 py-4 border-t border-slate-800/40 bg-slate-950/20">
+      <div class="text-xs font-mono uppercase tracking-widest text-slate-600 mb-2">Final Review Pass</div>
+      <div class="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">{{ peer_review.final_review.content }}</div>
+    </div>
+    {% endif %}
+  </div>
+  {% elif spec.board_column in ('in_progress', 'review') %}
+  <div class="glass-panel px-5 py-3 mb-4">
+    <div class="flex items-center gap-2 text-xs text-slate-600">
+      <span class="font-mono uppercase tracking-widest">Peer Review</span>
+      <span>·</span>
+      <span>Not yet run — review chain runs after the quality gate passes</span>
+    </div>
+  </div>
+  {% endif %}
+
   {# ── Agent Console ────────────────────────────────────────────────── #}
   <div class="glass-panel overflow-hidden mb-4" id="console-panel">
     <div class="px-5 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between">
@@ -126,7 +197,8 @@
     const lineCountEl = document.getElementById('console-line-count');
     const autoscroll = document.getElementById('console-autoscroll');
     let lineCount = 0;
-    let connected = false;
+    let hasData = false;
+    let idleTimer = null;
 
     function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -139,22 +211,23 @@
         return `<span class="text-amber-400">${esc(text)}</span>`;
       if (/Claiming WO|quality gate|peer review/i.test(text))
         return `<span class="text-violet-300">${esc(text)}</span>`;
-      if (text.startsWith('[factory-agent]'))
-        return `<span class="text-sky-400">${esc(text)}</span>`;
-      if (text.startsWith('[runner]'))
-        return `<span class="text-indigo-300">${esc(text)}</span>`;
-      if (text.startsWith('[draft-server]'))
-        return `<span class="text-slate-600">${esc(text)}</span>`;
       if (/\[WO-\d+\]/.test(text))
         return `<span class="text-cyan-300">${esc(text)}</span>`;
       return `<span class="text-slate-400">${esc(text)}</span>`;
     }
 
+    function setIdle() {
+      if (hasData) return;
+      output.innerHTML = '<div class="text-slate-600 italic">No recent log activity for this WO — runner is idle or log buffer was recycled. Live logs will appear here when the agent resumes work.</div>';
+      dotWrap.innerHTML = '<span class="inline-flex rounded-full h-2 w-2 bg-slate-600"></span>';
+    }
+
     function append(text) {
-      if (!text.trim()) return;
-      if (!connected) {
+      if (!text || !text.trim()) return;
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      if (!hasData) {
+        hasData = true;
         output.innerHTML = '';
-        connected = true;
         dotWrap.innerHTML = '<span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>';
       }
       lineCount++;
@@ -167,12 +240,23 @@
     }
 
     const es = new EventSource(`/api/runner/log/stream?wo=${encodeURIComponent(WO_NUM)}`);
+
+    es.onopen = function () {
+      // Connected but no data yet — show amber dot and set idle fallback
+      dotWrap.innerHTML = '<span class="inline-flex rounded-full h-2 w-2 bg-amber-500"></span>';
+      output.innerHTML = '<div class="text-slate-600 italic">Connected — waiting for WO-{{ spec.number }} log activity…</div>';
+      idleTimer = setTimeout(setIdle, 6000);
+    };
+
     es.onmessage = function (e) {
       try { append(JSON.parse(e.data)); } catch (_) {}
     };
+
     es.onerror = function () {
       dotWrap.innerHTML = '<span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>';
-      connected = false;
+      if (!hasData) {
+        output.innerHTML = '<div class="text-slate-600 italic">Runner connection lost. Retrying…</div>';
+      }
     };
 
     window.clearConsole = function () { output.innerHTML = ''; lineCount = 0; lineCountEl.textContent = '—'; };
