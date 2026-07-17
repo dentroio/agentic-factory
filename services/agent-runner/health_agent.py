@@ -127,13 +127,19 @@ async def _notify(title: str, body: str, priority: str = "default") -> None:
 # ── SSH helper ────────────────────────────────────────────────────────────────
 def _ssh(cmd: str, timeout: int = 30) -> tuple[int, str]:
     """Run a command on the GitHub runner host via SSH."""
+    ssh_opts = [
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "ConnectTimeout=10",
+        "-o", "PreferredAuthentications=password",
+        "-o", "PubkeyAuthentication=no",
+        "-o", "GSSAPIAuthentication=no",
+        "-o", "BatchMode=no",
+    ]
     if RUNNER_PASS:
-        args = ["sshpass", "-p", RUNNER_PASS, "ssh",
-                "-o", "StrictHostKeyChecking=no", "-o", f"ConnectTimeout=10",
+        args = ["sshpass", "-p", RUNNER_PASS, "ssh", *ssh_opts,
                 f"{RUNNER_USER}@{RUNNER_HOST}", cmd]
     else:
-        args = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", f"ConnectTimeout=10",
-                f"{RUNNER_USER}@{RUNNER_HOST}", cmd]
+        args = ["ssh", *ssh_opts, f"{RUNNER_USER}@{RUNNER_HOST}", cmd]
     try:
         r = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         return r.returncode, (r.stdout + r.stderr).strip()
