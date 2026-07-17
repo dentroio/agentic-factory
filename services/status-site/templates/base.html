@@ -170,12 +170,12 @@
     {# Header #}
     <div class="px-4 py-3 bg-slate-900/60 border-b border-slate-800/60 flex items-center justify-between flex-shrink-0">
       <div class="flex items-center gap-2.5">
-        <div class="w-6 h-6 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-[10px]">◆</div>
+        <div class="w-6 h-6 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-xs">◆</div>
         <span class="text-sm font-semibold text-slate-200">PM Assistant</span>
-        <span class="text-[10px] text-slate-600 font-mono hidden sm:inline">ask · create WOs</span>
+        <span class="text-xs text-slate-600 font-mono hidden sm:inline">ask · create WOs</span>
       </div>
       <div class="flex items-center gap-3">
-        <button onclick="clearPMChat()" class="text-[10px] text-slate-600 hover:text-slate-300 font-mono transition-colors">clear</button>
+        <button onclick="clearPMChat()" class="text-xs text-slate-600 hover:text-slate-300 font-mono transition-colors">clear</button>
         <button onclick="togglePMPanel(false)" class="text-slate-600 hover:text-slate-300 transition-colors p-0.5" title="Close">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
@@ -185,8 +185,8 @@
     {# Messages #}
     <div id="pm-messages" class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
       <div id="pm-welcome" class="flex gap-3">
-        <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
-        <div class="text-sm text-slate-300 leading-relaxed">I'm your Factory PM. Ask me what's running, what's next, or describe a feature and I'll draft a work order for you.<br><span class="text-[10px] text-slate-600 font-mono">Conversation persists across page loads.</span></div>
+        <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-xs flex-shrink-0 mt-0.5">◆</div>
+        <div class="text-sm text-slate-300 leading-relaxed">I'm your Factory PM. Ask me what's running, what's next, or describe a feature and I'll draft a work order for you.<br><span class="text-xs text-slate-600 font-mono">Conversation persists across page loads.</span></div>
       </div>
     </div>
 
@@ -205,18 +205,18 @@
       <div id="wo-hints-panel" class="hidden px-3 pb-2">
         <div class="rounded-xl border border-indigo-500/20 bg-indigo-950/20 px-3 py-2.5">
           <div class="flex items-center justify-between mb-2">
-            <span class="text-[9px] font-bold text-indigo-300 uppercase tracking-widest">WO Metadata <span class="text-indigo-500 font-normal normal-case">(optional — AI fills in blanks)</span></span>
-            <button onclick="toggleWOHints()" class="text-[9px] text-slate-600 hover:text-slate-300 transition-colors">✕ hide</button>
+            <span class="text-xs font-bold text-indigo-300 uppercase tracking-widest">WO Metadata <span class="text-indigo-500 font-normal normal-case">(optional — AI fills in blanks)</span></span>
+            <button onclick="toggleWOHints()" class="text-xs text-slate-600 hover:text-slate-300 transition-colors">✕ hide</button>
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div>
-              <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Program</label>
+              <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Program</label>
               <input type="text" id="hint-program" list="pm-programs-list" placeholder="e.g. Launch Program"
                 class="w-full bg-slate-900/80 border border-slate-700/60 rounded px-2 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
               <datalist id="pm-programs-list"></datalist>
             </div>
             <div>
-              <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Priority</label>
+              <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Priority</label>
               <select id="hint-priority" class="w-full bg-slate-900/80 border border-slate-700/60 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
                 <option value="">AI decides</option>
                 <option value="P1">P1 — Core / schema</option>
@@ -225,13 +225,13 @@
               </select>
             </div>
             <div>
-              <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Phase</label>
+              <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Phase</label>
               <select id="hint-phase" class="w-full bg-slate-900/80 border border-slate-700/60 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
                 <option value="">Unassigned</option>
               </select>
             </div>
             <div>
-              <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Effort</label>
+              <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Effort</label>
               <select id="hint-effort" class="w-full bg-slate-900/80 border border-slate-700/60 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
                 <option value="">AI decides</option>
                 <option value="XS">XS — &lt;1h</option>
@@ -243,7 +243,7 @@
             </div>
           </div>
           <div class="mt-1.5">
-            <label class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Depends On</label>
+            <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Depends On</label>
             <input type="text" id="hint-depends-on" placeholder="e.g. WO-370, WO-371"
               class="w-full bg-slate-900/80 border border-slate-700/60 rounded px-2 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500/50">
           </div>
@@ -385,7 +385,7 @@
         const welcome = document.getElementById('pm-welcome');
         if (welcome) welcome.remove();
         const divider = document.createElement('div');
-        divider.className = 'text-center text-[10px] text-slate-700 font-mono py-1';
+        divider.className = 'text-center text-xs text-slate-700 font-mono py-1';
         divider.textContent = `↑ ${saved.length} messages from previous session`;
         messagesEl.appendChild(divider);
         saved.slice(-8).forEach(m => appendPMMsg(m.role, m.content));
@@ -411,7 +411,7 @@
         wrap.innerHTML = `<div class="pm-bubble-user">${imgHtml}${content ? esc(content) : ''}</div>`;
       } else {
         wrap.className = 'pm-msg-assistant';
-        wrap.innerHTML = `<div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+        wrap.innerHTML = `<div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-xs flex-shrink-0 mt-0.5">◆</div>
           <div class="pm-bubble-assistant">${esc(content)}</div>`;
       }
       messagesEl.appendChild(wrap);
@@ -426,21 +426,21 @@
       const card = document.createElement('div');
       card.className = 'pm-msg-assistant';
       card.innerHTML = `
-        <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+        <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-xs flex-shrink-0 mt-0.5">◆</div>
         <div class="flex-1 min-w-0">
           <div class="bg-slate-900 border border-indigo-500/30 rounded-2xl rounded-tl-sm overflow-hidden">
             <div class="px-4 py-2.5 bg-indigo-500/10 border-b border-indigo-500/20 flex items-center justify-between">
-              <span class="text-[10px] font-mono text-indigo-400 uppercase tracking-widest">Work Order Draft</span>
+              <span class="text-xs font-mono text-indigo-400 uppercase tracking-widest">Work Order Draft</span>
               <div class="flex items-center gap-2">
-                <span class="text-[9px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300">${esc(draft.priority||'P2')}</span>
-                <span class="text-[9px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400">${esc(draft.effort||'M')}</span>
+                <span class="text-xs font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300">${esc(draft.priority||'P2')}</span>
+                <span class="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400">${esc(draft.effort||'M')}</span>
               </div>
             </div>
             <div class="px-4 py-3 space-y-1.5">
               <div class="text-sm font-semibold text-slate-100">${esc(draft.title||'')}</div>
               <div class="text-xs text-slate-400">${esc(draft.problem||'')}</div>
               ${ac ? `<ul class="text-xs list-disc list-inside space-y-0.5 mt-1">${ac}</ul>` : ''}
-              <div class="text-[10px] font-mono text-slate-600">Services: ${esc(draft.services||'—')}</div>
+              <div class="text-xs font-mono text-slate-600">Services: ${esc(draft.services||'—')}</div>
             </div>
             <div class="px-4 py-2.5 border-t border-slate-800/60 flex gap-2">
               <button onclick="publishWO(this, ${JSON.stringify(draft).replace(/"/g,'&quot;')})"
@@ -478,7 +478,7 @@
 
       const typing = document.createElement('div');
       typing.className = 'pm-msg-assistant';
-      typing.innerHTML = `<div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+      typing.innerHTML = `<div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-xs flex-shrink-0 mt-0.5">◆</div>
         <div class="pm-bubble-assistant text-slate-600 italic text-xs">Thinking…</div>`;
       messagesEl.appendChild(typing);
       messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -572,7 +572,7 @@
 
     window.clearPMChat = function() {
       messagesEl.innerHTML = `<div id="pm-welcome" class="flex gap-3">
-        <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-[10px] flex-shrink-0 mt-0.5">◆</div>
+        <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-500/30 flex items-center justify-center text-xs flex-shrink-0 mt-0.5">◆</div>
         <div class="text-sm text-slate-300 leading-relaxed">I'm your Factory PM. Ask me what's running, what's next, or describe a feature and I'll draft a work order for you.</div>
       </div>`;
       pmHistory = [];
@@ -601,7 +601,7 @@
         const wrap = document.createElement('div');
         wrap.className = 'relative group';
         wrap.innerHTML = `<img src="${img.dataUrl}" class="h-14 w-auto rounded border border-slate-700/60 object-cover">
-          <button onclick="window._removePMImage(${i})" class="absolute -top-1 -right-1 w-4 h-4 bg-red-600 hover:bg-red-500 rounded-full text-white text-[9px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">✕</button>`;
+          <button onclick="window._removePMImage(${i})" class="absolute -top-1 -right-1 w-4 h-4 bg-red-600 hover:bg-red-500 rounded-full text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">✕</button>`;
         imageStrip.appendChild(wrap);
       });
     }
@@ -666,7 +666,7 @@
 
     <div class="px-4 py-3 border-t border-slate-800/40 flex-shrink-0">
       <a href="https://github.com/{{ github_repo.split('/')[0] if github_repo is defined else 'dentroio' }}/agentic-factory/wiki" target="_blank"
-        class="text-[10px] font-mono text-slate-600 hover:text-indigo-400 transition-colors">
+        class="text-xs font-mono text-slate-600 hover:text-indigo-400 transition-colors">
         Full wiki documentation →
       </a>
     </div>

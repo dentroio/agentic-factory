@@ -46,7 +46,7 @@
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Backend</label>
+          <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Backend</label>
           <select name="preferred"
                   class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100
                          focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
@@ -64,24 +64,24 @@
             </option>
             {% endfor %}
           </select>
-          <p class="text-[10px] text-slate-600 mt-1">Which AI executes work orders end-to-end. Only installed backends are selectable.</p>
+          <p class="text-xs text-slate-600 mt-1">Which AI executes work orders end-to-end. Only installed backends are selectable.</p>
         </div>
 
         <div>
-          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Agent Name</label>
+          <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Agent Name</label>
           <input type="text" name="name" value="{{ cfg.get('name', 'factory-agent') }}"
                  class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
                         focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
-          <p class="text-[10px] text-slate-600 mt-1">Display name shown in the factory dashboard</p>
+          <p class="text-xs text-slate-600 mt-1">Display name shown in the factory dashboard</p>
         </div>
       </div>
 
       <div>
-        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Timeout (seconds)</label>
+        <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Timeout (seconds)</label>
         <input type="number" name="timeout" value="{{ cfg.get('timeout', 7200) }}" min="300" max="86400"
                class="w-48 bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
                       focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
-        <p class="text-[10px] text-slate-600 mt-1">Max seconds before a WO run is forcibly stopped (7200 = 2 hours)</p>
+        <p class="text-xs text-slate-600 mt-1">Max seconds before a WO run is forcibly stopped (7200 = 2 hours)</p>
       </div>
 
     </div>
@@ -108,12 +108,12 @@
                    class="w-4 h-4 rounded border-slate-700 bg-slate-950 text-violet-500 focus:ring-violet-500/30">
             <span class="text-xs font-bold text-slate-200">Force cross-LLM review</span>
           </label>
-          <p class="text-[10px] text-slate-400 mt-1 ml-6">Automatically assigns reviewers to backends <em>different</em> from the coding agent. When enabled, manual assignments below are used only as fallback if no alternative backend is available.</p>
+          <p class="text-xs text-slate-400 mt-1 ml-6">Automatically assigns reviewers to backends <em>different</em> from the coding agent. When enabled, manual assignments below are used only as fallback if no alternative backend is available.</p>
         </div>
       </div>
 
       <div id="cross-llm-notice" {% if not force_cross %}style="display:none"{% endif %}
-           class="text-[10px] text-violet-300 bg-violet-900/20 border border-violet-500/20 rounded-lg px-3 py-2">
+           class="text-xs text-violet-300 bg-violet-900/20 border border-violet-500/20 rounded-lg px-3 py-2">
         Auto mode: reviewers are rotated across available backends that differ from the execution agent. Manual assignments below are ignored while this is enabled.
       </div>
 
@@ -127,10 +127,10 @@
 
       <div id="manual-reviewers" class="grid grid-cols-1 md:grid-cols-2 gap-4 transition-opacity"
            style="{% if force_cross %}opacity:0.35{% endif %}">
-        <p class="col-span-full text-[10px] font-bold text-slate-500 uppercase tracking-wider">Manual assignments (used when force cross-LLM is off)</p>
+        <p class="col-span-full text-xs font-bold text-slate-500 uppercase tracking-wider">Manual assignments (used when force cross-LLM is off)</p>
         {% for role_key, role_label, role_desc in reviewer_roles %}
         <div>
-          <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">{{ role_label }} Reviewer</label>
+          <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">{{ role_label }} Reviewer</label>
           <select name="reviewer_{{ role_key }}"
                   class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100
                          focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
@@ -142,7 +142,7 @@
             </option>
             {% endfor %}
           </select>
-          <p class="text-[10px] text-slate-600 mt-1">{{ role_desc }}</p>
+          <p class="text-xs text-slate-600 mt-1">{{ role_desc }}</p>
         </div>
         {% endfor %}
       </div>
@@ -156,19 +156,19 @@
     </div>
     <div class="px-5 py-5">
       <div class="max-w-md">
-        <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+        <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
           Anthropic API Key
           {% if anthropic_key_set %}
-          <span class="ml-2 text-[9px] font-mono text-emerald-400 bg-emerald-900/20 border border-emerald-500/20 rounded px-1.5 py-0.5">● set</span>
+          <span class="ml-2 text-xs font-mono text-emerald-400 bg-emerald-900/20 border border-emerald-500/20 rounded px-1.5 py-0.5">● set</span>
           {% else %}
-          <span class="ml-2 text-[9px] font-mono text-slate-500 bg-slate-800/50 border border-slate-700/30 rounded px-1.5 py-0.5">not set</span>
+          <span class="ml-2 text-xs font-mono text-slate-500 bg-slate-800/50 border border-slate-700/30 rounded px-1.5 py-0.5">not set</span>
           {% endif %}
         </label>
         <input type="password" name="anthropic_key" autocomplete="off"
                placeholder="{% if anthropic_key_set %}Enter new key to replace current{% else %}sk-ant-api03-...{% endif %}"
                class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
                       focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
-        <p class="text-[10px] text-slate-600 mt-1">
+        <p class="text-xs text-slate-600 mt-1">
           Used when "Claude (API key)" is selected for WO spec generation. Leave blank to keep the current key.
           {% if not anthropic_key_set %}
           Get one at <span class="text-slate-500">console.anthropic.com/settings/keys</span>

@@ -97,11 +97,11 @@
     {% for alert in watchdog.alerts[:10] %}
     <div class="flex items-start gap-4 px-5 py-3 transition-colors hover:bg-slate-900/20">
       {% if alert.severity == "error" %}
-      <span class="text-[10px] font-bold tracking-wider px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 flex-shrink-0 mt-0.5">ERROR</span>
+      <span class="text-xs font-bold tracking-wider px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 flex-shrink-0 mt-0.5">ERROR</span>
       {% elif alert.severity == "warning" %}
-      <span class="text-[10px] font-bold tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 flex-shrink-0 mt-0.5">WARN</span>
+      <span class="text-xs font-bold tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 flex-shrink-0 mt-0.5">WARN</span>
       {% else %}
-      <span class="text-[10px] font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 flex-shrink-0 mt-0.5">INFO</span>
+      <span class="text-xs font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 flex-shrink-0 mt-0.5">INFO</span>
       {% endif %}
       <div class="flex-1 min-w-0">
         <span class="text-xs text-slate-300">
@@ -109,10 +109,10 @@
           {{ alert.message }}
         </span>
         {% if alert.detail %}
-        <span class="text-[11px] text-slate-500 ml-2 font-mono">{{ alert.detail }}</span>
+        <span class="text-xs text-slate-500 ml-2 font-mono">{{ alert.detail }}</span>
         {% endif %}
       </div>
-      <span class="text-[11px] text-slate-500 font-mono flex-shrink-0">{{ alert.rule | replace("-", " ") }}</span>
+      <span class="text-xs text-slate-500 font-mono flex-shrink-0">{{ alert.rule | replace("-", " ") }}</span>
     </div>
     {% endfor %}
     {% if watchdog.alerts | length > 10 %}
@@ -125,28 +125,28 @@
 {# ── Header stats ────────────────────────────────────────────────────── #}
 <div class="grid grid-cols-3 md:grid-cols-6 gap-3 mb-4">
   <div class="glass-panel px-4 py-3 flex flex-col justify-between">
-    <div class="text-[10px] text-slate-400 font-display font-medium uppercase tracking-wider">Total WOs</div>
+    <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">Total WOs</div>
     <div class="text-2xl font-display font-bold text-slate-100 mt-1">{{ total_wos }}</div>
   </div>
   <div class="glass-panel px-4 py-3 flex flex-col justify-between border-l-2 border-l-emerald-500/50">
-    <div class="text-[10px] text-slate-400 font-display font-medium uppercase tracking-wider">Completed</div>
+    <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">Completed</div>
     <div class="text-2xl font-display font-bold text-emerald-400 mt-1 text-glow-green">{{ done_count }}</div>
   </div>
   <div class="glass-panel px-4 py-3 flex flex-col justify-between border-l-2 border-l-indigo-500/50">
-    <div class="text-[10px] text-slate-400 font-display font-medium uppercase tracking-wider">In Progress</div>
+    <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">In Progress</div>
     <div class="text-2xl font-display font-bold text-indigo-400 mt-1 text-glow-blue">{{ columns.in_progress | length }}</div>
   </div>
   <div class="glass-panel px-4 py-3 flex flex-col justify-between border-l-2 border-l-amber-500/50">
-    <div class="text-[10px] text-slate-400 font-display font-medium uppercase tracking-wider">In Review</div>
+    <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">In Review</div>
     <div class="text-2xl font-display font-bold text-amber-400 mt-1 text-glow-amber">{{ columns.review | length }}</div>
   </div>
   <div class="glass-panel px-4 py-3 flex flex-col justify-between border-l-2 border-l-red-500/50">
-    <div class="text-[10px] text-slate-400 font-display font-medium uppercase tracking-wider">Blocked</div>
+    <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">Blocked</div>
     <div class="text-2xl font-display font-bold text-red-400 mt-1 text-glow-red">{{ columns.blocked | length }}</div>
   </div>
   {% if ci.pass_rate is not none %}
   <div class="glass-panel px-4 py-3 flex flex-col justify-between bg-gradient-to-br from-slate-900/60 to-slate-950/80">
-    <div class="text-[10px] text-slate-400 font-display font-medium uppercase tracking-wider">CI Pass Rate</div>
+    <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">CI Pass Rate</div>
     <div class="text-2xl font-display font-bold mt-1 {% if ci.pass_rate >= 90 %}text-emerald-400 text-glow-green{% elif ci.pass_rate >= 70 %}text-amber-400 text-glow-amber{% else %}text-red-400 text-glow-red{% endif %}">
       {{ ci.pass_rate }}%
     </div>
@@ -174,29 +174,29 @@
     {% for label, key, col_class in board %}
     <div class="glass-panel {{ col_class }} p-3 flex flex-col">
       <div class="flex items-center justify-between mb-3 pb-2 border-b border-slate-800/40">
-        <span class="text-[11px] font-display font-bold text-slate-200 uppercase tracking-wider">{{ label }}</span>
-        <span class="text-[10px] font-mono font-bold bg-slate-800 text-slate-300 rounded-full px-2 py-0.5">{{ columns[key] | length }}</span>
+        <span class="text-xs font-display font-bold text-slate-200 uppercase tracking-wider">{{ label }}</span>
+        <span class="text-xs font-mono font-bold bg-slate-800 text-slate-300 rounded-full px-2 py-0.5">{{ columns[key] | length }}</span>
       </div>
       <div class="space-y-2 flex-1 overflow-y-auto max-h-[360px] pr-0.5">
         {% for spec in columns[key] %}
         <a href="/wo/{{ spec.number }}" class="block p-2.5 rounded-lg bg-slate-900/40 border border-slate-800/60 hover:border-slate-700/80 hover:bg-slate-900/80 transition-all duration-200 group">
           <div class="flex items-center justify-between gap-1.5 mb-1.5">
-            <span class="text-[9px] font-bold px-1.5 py-0.5 rounded font-mono uppercase {{ spec.priority_class }}">
+            <span class="text-xs font-bold px-1.5 py-0.5 rounded font-mono uppercase {{ spec.priority_class }}">
               {{ spec.priority or "—" }}
             </span>
             <div class="flex items-center gap-1.5">
-              <span class="text-[10px] text-slate-500 font-mono group-hover:text-indigo-400 transition-colors">WO-{{ spec.number }}</span>
+              <span class="text-xs text-slate-500 font-mono group-hover:text-indigo-400 transition-colors">WO-{{ spec.number }}</span>
               {% if spec.repo %}
               {% set _rn = spec.repo.split("/")[-1] %}
               {% if "factory" in _rn %}
-              <span class="text-[8px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 font-mono border border-amber-800/40">factory</span>
+              <span class="text-xs px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 font-mono border border-amber-800/40">factory</span>
               {% else %}
-              <span class="text-[8px] px-1.5 py-0.5 rounded bg-indigo-900/50 text-indigo-300 font-mono border border-indigo-800/40">{{ _rn }}</span>
+              <span class="text-xs px-1.5 py-0.5 rounded bg-indigo-900/50 text-indigo-300 font-mono border border-indigo-800/40">{{ _rn }}</span>
               {% endif %}
               {% endif %}
             </div>
           </div>
-          <div class="text-[11px] text-slate-200 font-medium leading-snug mb-1.5">{{ spec.title }}</div>
+          <div class="text-xs text-slate-200 font-medium leading-snug mb-1.5">{{ spec.title }}</div>
 
           {% if spec.agent_name %}
           <div class="flex items-center gap-1.5 bg-indigo-950/20 border border-indigo-900/40 rounded px-2 py-1 mt-1.5">
@@ -204,12 +204,12 @@
               <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
               <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-500"></span>
             </span>
-            <span class="text-[10px] text-indigo-300 font-semibold truncate flex-1">{{ spec.agent_name }}</span>
+            <span class="text-xs text-indigo-300 font-semibold truncate flex-1">{{ spec.agent_name }}</span>
           </div>
           {% endif %}
 
           {% if spec.effort %}
-          <div class="text-[10px] text-slate-600 font-mono mt-1.5">{{ spec.effort }}</div>
+          <div class="text-xs text-slate-600 font-mono mt-1.5">{{ spec.effort }}</div>
           {% endif %}
         </a>
         {% else %}
@@ -228,7 +228,7 @@
 
   {# Active Work #}
   <div class="glass-panel p-4">
-    <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest mb-3">Active Work</h2>
+    <h2 class="text-xs font-display font-bold text-slate-400 uppercase tracking-widest mb-3">Active Work</h2>
     {% if branches %}
     <div class="space-y-3 max-h-[280px] overflow-y-auto">
       {% for b in branches %}
@@ -237,13 +237,13 @@
           <span class="text-xs font-mono text-indigo-400 font-bold">
             {% if b.wo_number %}WO-{{ b.wo_number }}{% else %}—{% endif %}
           </span>
-          <span class="text-[10px] text-slate-500 font-mono">{{ b.last_commit_ago }} ago</span>
+          <span class="text-xs text-slate-500 font-mono">{{ b.last_commit_ago }} ago</span>
         </div>
-        <div class="text-[11px] text-slate-300 truncate font-mono mb-1.5 bg-slate-950/40 border border-slate-900/60 rounded px-2 py-0.5">{{ b.branch }}</div>
+        <div class="text-xs text-slate-300 truncate font-mono mb-1.5 bg-slate-950/40 border border-slate-900/60 rounded px-2 py-0.5">{{ b.branch }}</div>
         {% if b.agent_status %}
         <div class="flex items-center gap-2 bg-indigo-950/20 border border-indigo-900/30 rounded px-2 py-1">
           <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse flex-shrink-0"></span>
-          <span class="text-[10px] text-indigo-300 font-medium truncate">{{ b.agent_status.agent }} · {{ b.agent_status.step }}</span>
+          <span class="text-xs text-indigo-300 font-medium truncate">{{ b.agent_status.agent }} · {{ b.agent_status.step }}</span>
         </div>
         {% endif %}
       </div>
@@ -256,19 +256,19 @@
 
   {# PR Queue #}
   <div class="glass-panel p-4">
-    <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between">
+    <h2 class="text-xs font-display font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between">
       <span>PR Queue</span>
-      <span class="text-[10px] font-mono bg-slate-800 text-slate-400 rounded-full px-2 py-0.5">{{ prs | length }}</span>
+      <span class="text-xs font-mono bg-slate-800 text-slate-400 rounded-full px-2 py-0.5">{{ prs | length }}</span>
     </h2>
     {% if prs %}
     <div class="space-y-3 max-h-[280px] overflow-y-auto">
       {% for pr in prs %}
       <div class="border-b border-slate-800/40 pb-3 last:border-0 last:pb-0">
         <div class="flex items-start justify-between gap-2">
-          <a href="{{ pr.url }}" target="_blank" class="text-[11px] text-slate-200 hover:text-indigo-400 font-medium leading-snug flex-1">
+          <a href="{{ pr.url }}" target="_blank" class="text-xs text-slate-200 hover:text-indigo-400 font-medium leading-snug flex-1">
             <span class="font-mono text-indigo-400 font-bold mr-1">#{{ pr.number }}</span>{{ pr.title }}
           </a>
-          <span class="text-[10px] flex-shrink-0 font-bold px-1.5 py-0.5 rounded font-mono
+          <span class="text-xs flex-shrink-0 font-bold px-1.5 py-0.5 rounded font-mono
             {% if pr.ci_state == 'passing' %}ci-pill-success
             {% elif pr.ci_state == 'failing' %}ci-pill-failure
             {% elif pr.ci_state == 'pending' %}ci-pill-pending
@@ -279,7 +279,7 @@
             {% else %}?{% endif %}
           </span>
         </div>
-        <div class="flex items-center gap-2 text-[10px] text-slate-500 mt-1.5">
+        <div class="flex items-center gap-2 text-xs text-slate-500 mt-1.5">
           {% if pr.wo_number %}<span class="font-mono bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded text-slate-400">WO-{{ pr.wo_number }}</span>{% endif %}
           <span>{{ pr.age }} ago</span>
           {% for label in pr.labels[:2] %}
@@ -296,7 +296,7 @@
 
   {# CI Health #}
   <div class="glass-panel p-4">
-    <h2 class="text-[10px] font-display font-bold text-slate-400 uppercase tracking-widest mb-3">CI Health (Last 20 Runs)</h2>
+    <h2 class="text-xs font-display font-bold text-slate-400 uppercase tracking-widest mb-3">CI Health (Last 20 Runs)</h2>
     {% if ci.error %}
     <p class="text-xs text-rose-400 text-center py-4">Could not load CI workflow runs.</p>
     {% else %}
@@ -304,15 +304,15 @@
       {% for run in ci.runs %}
       <div class="flex items-center justify-between gap-3 text-xs border-b border-slate-800/20 pb-1.5 last:border-0 last:pb-0">
         <div class="flex items-center gap-2 min-w-0">
-          <span class="flex-shrink-0 w-4 h-4 flex items-center justify-center rounded-full font-bold text-[9px]
+          <span class="flex-shrink-0 w-4 h-4 flex items-center justify-center rounded-full font-bold text-xs
             {% if run.conclusion == 'success' %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/20
             {% elif run.conclusion in ['failure','timed_out'] %}bg-rose-500/10 text-rose-400 border border-rose-500/20
             {% else %}bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse{% endif %}">
             {% if run.conclusion == 'success' %}✓{% elif run.conclusion in ['failure','timed_out'] %}✗{% else %}…{% endif %}
           </span>
-          <a href="{{ run.url }}" target="_blank" class="text-slate-300 hover:text-indigo-400 font-mono truncate text-[10px]">{{ run.branch }}</a>
+          <a href="{{ run.url }}" target="_blank" class="text-slate-300 hover:text-indigo-400 font-mono truncate text-xs">{{ run.branch }}</a>
         </div>
-        <span class="text-[9px] text-slate-600 font-mono flex-shrink-0">{{ run.ago }} ago</span>
+        <span class="text-xs text-slate-600 font-mono flex-shrink-0">{{ run.ago }} ago</span>
       </div>
       {% endfor %}
     </div>

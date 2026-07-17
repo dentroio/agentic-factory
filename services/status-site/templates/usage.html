@@ -20,6 +20,139 @@
 </div>
 {% endif %}
 
+{% if budget %}
+{# ── API Budget / Billing Panel ──────────────────────────────────────────── #}
+<div class="mb-8">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-xs font-display font-bold text-slate-400 uppercase tracking-widest">API Budget</h2>
+    {% if budget.generated_at %}
+    <span class="text-xs text-slate-600 font-mono">Updated {{ budget.generated_at[:16] | replace('T',' ') }} UTC</span>
+    {% endif %}
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+
+    {# ── Anthropic / Claude ── #}
+    {% set anth = budget.anthropic or {} %}
+    <div class="glass-panel p-5 border-indigo-500/20">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center flex-shrink-0">
+          <div class="w-2.5 h-2.5 rounded-full bg-indigo-400"></div>
+        </div>
+        <div>
+          <div class="text-sm font-bold text-slate-100">Claude</div>
+          <div class="text-xs text-slate-500">Pay-as-you-go</div>
+        </div>
+      </div>
+      {% if anth.error %}
+      <div class="text-xs text-rose-400">{{ anth.error }}</div>
+      {% else %}
+      <div class="space-y-2">
+        <div class="flex justify-between items-baseline">
+          <span class="text-xs text-slate-500 uppercase tracking-wider">This month — input</span>
+          <span class="text-xs font-mono text-slate-200">{{ "{:,}".format(anth.month_input_tokens or 0) }}</span>
+        </div>
+        <div class="flex justify-between items-baseline">
+          <span class="text-xs text-slate-500 uppercase tracking-wider">This month — output</span>
+          <span class="text-xs font-mono text-slate-200">{{ "{:,}".format(anth.month_output_tokens or 0) }}</span>
+        </div>
+        <div class="flex justify-between items-baseline border-t border-slate-800/50 pt-2">
+          <span class="text-xs text-slate-500 uppercase tracking-wider">Month cost</span>
+          <span class="text-sm font-bold text-indigo-400">${{ "%.4f"|format(anth.month_cost_usd or 0) }}</span>
+        </div>
+        <div class="flex justify-between items-baseline">
+          <span class="text-xs text-slate-500 uppercase tracking-wider">All-time cost</span>
+          <span class="text-xs font-mono text-slate-400">${{ "%.4f"|format(anth.all_time_cost_usd or 0) }}</span>
+        </div>
+      </div>
+      {% if anth.note %}
+      <div class="mt-3 px-2 py-1.5 rounded-lg bg-indigo-500/8 border border-indigo-500/15 text-xs text-indigo-400">
+        {{ anth.note }}
+      </div>
+      {% endif %}
+      {% endif %}
+    </div>
+
+    {# ── OpenAI / Codex ── #}
+    {% set oai = budget.openai or {} %}
+    <div class="glass-panel p-5 border-sky-500/20">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center flex-shrink-0">
+          <div class="w-2.5 h-2.5 rounded-full bg-sky-400"></div>
+        </div>
+        <div>
+          <div class="text-sm font-bold text-slate-100">Codex</div>
+          <div class="text-xs text-slate-500">Pay-as-you-go</div>
+        </div>
+      </div>
+      {% if not oai.available %}
+      <div class="text-xs text-slate-500 leading-relaxed">{{ oai.note or "Not configured" }}</div>
+      <div class="mt-3 px-2 py-1.5 rounded-lg bg-sky-500/8 border border-sky-500/15 text-xs text-sky-400">
+        Codex runs via GitHub Actions — usage visible in OpenAI dashboard
+      </div>
+      {% elif oai.error %}
+      <div class="text-xs text-rose-400">{{ oai.error }}</div>
+      {% else %}
+      <div class="space-y-2">
+        <div class="flex justify-between items-baseline">
+          <span class="text-xs text-slate-500 uppercase tracking-wider">This month — input</span>
+          <span class="text-xs font-mono text-slate-200">{{ "{:,}".format(oai.month_input_tokens or 0) }}</span>
+        </div>
+        <div class="flex justify-between items-baseline">
+          <span class="text-xs text-slate-500 uppercase tracking-wider">This month — output</span>
+          <span class="text-xs font-mono text-slate-200">{{ "{:,}".format(oai.month_output_tokens or 0) }}</span>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    {# ── Cursor ── #}
+    {% set cur = budget.cursor or {} %}
+    <div class="glass-panel p-5 border-violet-500/20">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center flex-shrink-0">
+          <div class="w-2.5 h-2.5 rounded-full bg-violet-400"></div>
+        </div>
+        <div>
+          <div class="text-sm font-bold text-slate-100">Cursor</div>
+          <div class="text-xs text-slate-500">Monthly quota</div>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <div class="flex justify-between items-baseline">
+          <span class="text-xs text-slate-500 uppercase tracking-wider">Plan limit</span>
+          <span class="text-xs font-mono text-violet-400">{{ cur.known_limit_label or "—" }}</span>
+        </div>
+      </div>
+      <div class="mt-3 px-2 py-1.5 rounded-lg bg-violet-500/8 border border-violet-500/15 text-xs text-violet-400">
+        {{ cur.note or "No public API" }} —
+        <a href="{{ cur.dashboard_url or 'https://cursor.sh/settings' }}" target="_blank" class="underline hover:text-violet-300">open dashboard</a>
+      </div>
+    </div>
+
+    {# ── Gemini ── #}
+    {% set gem = budget.gemini or {} %}
+    <div class="glass-panel p-5 border-emerald-500/20">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
+          <div class="w-2.5 h-2.5 rounded-full bg-emerald-400"></div>
+        </div>
+        <div>
+          <div class="text-sm font-bold text-slate-100">Gemini</div>
+          <div class="text-xs text-slate-500">Pay-as-you-go</div>
+        </div>
+      </div>
+      {% if not gem.available %}
+      <div class="text-xs text-slate-500 leading-relaxed">{{ gem.note or "Not configured" }}</div>
+      {% else %}
+      <div class="text-xs text-slate-500 leading-relaxed">{{ gem.note }}</div>
+      {% endif %}
+    </div>
+
+  </div>
+</div>
+{% endif %}
+
 {% if not backend_cards %}
 <div class="glass-panel p-8 text-center text-slate-500 text-sm mb-6">
   No usage data yet. Run a WO with the agent runner to see stats here.
@@ -45,37 +178,37 @@
       </div>
       <div>
         <div class="text-sm font-bold text-slate-100">{{ label }}</div>
-        <div class="text-[10px] text-slate-500 font-mono">{{ card.name }}</div>
+        <div class="text-xs text-slate-500 font-mono">{{ card.name }}</div>
       </div>
     </div>
 
     <div class="space-y-2.5">
       <div class="flex items-center justify-between">
-        <span class="text-[10px] text-slate-500 uppercase tracking-wider">Runs this week</span>
+        <span class="text-xs text-slate-500 uppercase tracking-wider">Runs this week</span>
         <span class="text-xs font-bold text-slate-100">{{ card.runs_this_week }}</span>
       </div>
       <div class="flex items-center justify-between">
-        <span class="text-[10px] text-slate-500 uppercase tracking-wider">All time</span>
+        <span class="text-xs text-slate-500 uppercase tracking-wider">All time</span>
         <span class="text-xs font-mono text-slate-300">{{ card.runs_all_time }}</span>
       </div>
       <div class="flex items-center justify-between">
-        <span class="text-[10px] text-slate-500 uppercase tracking-wider">Success rate</span>
+        <span class="text-xs text-slate-500 uppercase tracking-wider">Success rate</span>
         <span class="text-xs font-mono {% if card.success_rate >= 80 %}text-emerald-400{% elif card.success_rate >= 50 %}text-amber-400{% else %}text-rose-400{% endif %}">
           {{ card.success_rate }}%
         </span>
       </div>
       <div class="flex items-center justify-between">
-        <span class="text-[10px] text-slate-500 uppercase tracking-wider">Total time</span>
+        <span class="text-xs text-slate-500 uppercase tracking-wider">Total time</span>
         <span class="text-xs font-mono text-slate-300">{{ card.total_duration }}</span>
       </div>
       <div class="border-t border-slate-800/50 pt-2.5 flex items-center justify-between">
-        <span class="text-[10px] text-slate-500 uppercase tracking-wider">Est. requests</span>
+        <span class="text-xs text-slate-500 uppercase tracking-wider">Est. requests</span>
         <span class="text-xs font-bold text-{{ color }}-400">{{ card.estimated_requests }}</span>
       </div>
     </div>
 
     {% if card.name == 'cursor' %}
-    <div class="mt-3 px-2.5 py-1.5 rounded-lg bg-violet-500/8 border border-violet-500/15 text-[10px] text-violet-400">
+    <div class="mt-3 px-2.5 py-1.5 rounded-lg bg-violet-500/8 border border-violet-500/15 text-xs text-violet-400">
       Cursor Pro limit: 500 fast requests/month
     </div>
     {% endif %}
@@ -88,7 +221,7 @@
 <div class="glass-panel overflow-hidden">
   <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
     <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Recent Runs (last 20)</span>
-    <span class="text-[10px] text-slate-500">Stored in orchestrator /data/usage.json</span>
+    <span class="text-xs text-slate-500">Stored in orchestrator /data/usage.json</span>
   </div>
 
   {% if not recent_records %}
@@ -98,12 +231,12 @@
     <table class="w-full text-xs">
       <thead>
         <tr class="border-b border-slate-800/60">
-          <th class="px-5 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">WO</th>
-          <th class="px-4 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Backend</th>
-          <th class="px-4 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Duration</th>
-          <th class="px-4 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Result</th>
-          <th class="px-4 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Reviews</th>
-          <th class="px-5 py-2.5 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Timestamp</th>
+          <th class="px-5 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">WO</th>
+          <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Backend</th>
+          <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Duration</th>
+          <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Result</th>
+          <th class="px-4 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Reviews</th>
+          <th class="px-5 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Timestamp</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-800/30">
@@ -114,7 +247,7 @@
           </td>
           <td class="px-4 py-2.5">
             {% set color = {'claude': 'indigo', 'cursor': 'violet', 'codex': 'sky', 'gemini': 'emerald'}.get(rec.backend, 'slate') %}
-            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-{{ color }}-500/10 text-{{ color }}-400 border border-{{ color }}-500/20">
+            <span class="text-xs font-mono px-1.5 py-0.5 rounded bg-{{ color }}-500/10 text-{{ color }}-400 border border-{{ color }}-500/20">
               {{ rec.backend }}
             </span>
           </td>
@@ -130,7 +263,7 @@
             {% endif %}
           </td>
           <td class="px-4 py-2.5 font-mono text-slate-500">{{ rec.ask_calls | length }}</td>
-          <td class="px-5 py-2.5 text-slate-500 font-mono text-[10px]">{{ rec.ts[:16] | replace('T', ' ') }}</td>
+          <td class="px-5 py-2.5 text-slate-500 font-mono text-xs">{{ rec.ts[:16] | replace('T', ' ') }}</td>
         </tr>
         {% endfor %}
       </tbody>

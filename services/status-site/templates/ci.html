@@ -27,7 +27,7 @@
           </span>
           <span class="text-xs font-semibold text-slate-200 font-mono">{{ r.name }}</span>
         </div>
-        <span class="text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-full uppercase
+        <span class="text-xs font-bold tracking-wider px-2 py-0.5 rounded-full uppercase
           {% if r.status != 'online' %}bg-rose-500/15 text-rose-400 border border-rose-500/30
           {% elif r.busy %}bg-amber-500/15 text-amber-300 border border-amber-500/30
           {% else %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/20{% endif %}">
@@ -60,7 +60,7 @@
     <h2 class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest mb-4 flex items-center justify-between">
       <span>Workflow Queue</span>
       {% if active_runs %}
-      <span class="text-[10px] font-mono bg-slate-800 text-slate-400 rounded-full px-2 py-0.5">{{ active_runs | length }}</span>
+      <span class="text-xs font-mono bg-slate-800 text-slate-400 rounded-full px-2 py-0.5">{{ active_runs | length }}</span>
       {% endif %}
     </h2>
     {% if active_runs %}
@@ -77,9 +77,9 @@
         </span>
         <div class="flex-1 min-w-0">
           <div class="text-xs font-semibold text-slate-200 truncate leading-snug">{{ run.name }}</div>
-          <div class="text-[10px] text-slate-500 truncate font-mono mt-1">{{ run.head_branch }}</div>
+          <div class="text-xs text-slate-500 truncate font-mono mt-1">{{ run.head_branch }}</div>
         </div>
-        <span class="text-[9px] font-bold font-mono tracking-wider text-slate-400 uppercase bg-slate-950/60 border border-slate-900 px-1.5 py-0.5 rounded flex-shrink-0">{{ run.status }}</span>
+        <span class="text-xs font-bold font-mono tracking-wider text-slate-400 uppercase bg-slate-950/60 border border-slate-900 px-1.5 py-0.5 rounded flex-shrink-0">{{ run.status }}</span>
       </div>
       {% endfor %}
     </div>
@@ -96,7 +96,7 @@
       <div class="text-3xl font-display font-bold tracking-tight {% if ci.pass_rate >= 90 %}text-emerald-400 text-glow-green{% elif ci.pass_rate >= 70 %}text-amber-400 text-glow-amber{% else %}text-red-400 text-glow-red{% endif %}">
         {{ ci.pass_rate }}%
       </div>
-      <div class="text-[10px] text-slate-500 font-display uppercase tracking-wider mt-1">Rolling Pass Rate</div>
+      <div class="text-xs text-slate-500 font-display uppercase tracking-wider mt-1">Rolling Pass Rate</div>
     </div>
     {% endif %}
     
@@ -104,7 +104,7 @@
       {% for run in ci.runs[:10] %}
       <div class="flex items-center justify-between gap-3 text-xs border-b border-slate-800/10 pb-2 last:border-0 last:pb-0">
         <div class="flex items-center gap-2 min-w-0">
-          <span class="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full font-bold text-[10px]
+          <span class="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-full font-bold text-xs
             {% if run.conclusion == 'success' %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/20
             {% elif run.conclusion in ['failure','timed_out'] %}bg-rose-500/10 text-rose-400 border border-rose-500/20
             {% else %}bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse{% endif %}">
@@ -112,9 +112,9 @@
             {% elif run.conclusion in ['failure','timed_out'] %}✗
             {% else %}…{% endif %}
           </span>
-          <a href="{{ run.url }}" target="_blank" class="text-slate-300 hover:text-indigo-400 font-mono text-[11px] truncate">{{ run.branch }}</a>
+          <a href="{{ run.url }}" target="_blank" class="text-slate-300 hover:text-indigo-400 font-mono text-xs truncate">{{ run.branch }}</a>
         </div>
-        <span class="text-[10px] text-slate-500 font-mono flex-shrink-0">{{ run.ago }} ago</span>
+        <span class="text-xs text-slate-500 font-mono flex-shrink-0">{{ run.ago }} ago</span>
       </div>
       {% endfor %}
     </div>
@@ -128,7 +128,7 @@
     <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">PR Checks Status ({{ pr_checks | length }} Open PRs)</span>
     {% set flaky_count = pr_checks | selectattr('is_flaky') | list | length %}
     {% if flaky_count > 0 %}
-    <span class="text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full">⚠ {{ flaky_count }} flaky</span>
+    <span class="text-xs font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full">⚠ {{ flaky_count }} flaky</span>
     {% endif %}
   </div>
 
@@ -143,12 +143,12 @@
         </div>
         <div class="flex items-center gap-2 flex-shrink-0">
           {% if pr.auto_merge %}
-          <span class="text-[10px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded">⚡ Auto-merge</span>
+          <span class="text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded">⚡ Auto-merge</span>
           {% endif %}
           {% if pr.is_flaky %}
-          <span class="text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded">⚠ Flaky checks</span>
+          <span class="text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded">⚠ Flaky checks</span>
           {% endif %}
-          <span class="text-[10px] text-slate-500 font-mono">{{ pr.age }} ago</span>
+          <span class="text-xs text-slate-500 font-mono">{{ pr.age }} ago</span>
         </div>
       </div>
       
@@ -156,7 +156,7 @@
       <div class="flex flex-wrap gap-2">
         {% for check in pr.checks %}
         <a href="{{ check.url }}" target="_blank"
-           class="inline-flex items-center gap-2 text-[10px] font-semibold font-mono px-2.5 py-1 rounded border transition-all duration-200 hover:scale-[1.02]
+           class="inline-flex items-center gap-2 text-xs font-semibold font-mono px-2.5 py-1 rounded border transition-all duration-200 hover:scale-[1.02]
              {% if check.conclusion == 'success' %}ci-pill-success
              {% elif check.conclusion in ['failure','timed_out'] %}ci-pill-failure
              {% elif check.status in ['queued','in_progress'] %}ci-pill-pending
