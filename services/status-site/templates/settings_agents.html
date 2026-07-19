@@ -35,6 +35,193 @@
 </div>
 {% endif %}
 
+{# ── Agent Roster ──────────────────────────────────────────────────────────── #}
+<div class="glass-panel overflow-hidden mb-6">
+  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
+    <div>
+      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Agent Roster</span>
+      <p class="text-xs text-slate-500 mt-0.5">Install, configure, and start/stop AI agent daemons on this machine.</p>
+    </div>
+    <button type="button" onclick="refreshRoster()" class="text-xs font-mono text-slate-600 hover:text-slate-300 transition-colors">↻ refresh</button>
+  </div>
+  <div id="agent-roster" class="divide-y divide-slate-800/40">
+    <div class="px-5 py-8 text-center text-xs text-slate-600 font-mono">Loading agents…</div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const AUTH_BADGES = {
+    both: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-violet-500/15 text-violet-400">Sub + API</span>',
+    subscription: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-sky-500/15 text-sky-400">Subscription</span>',
+    api: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400">API Key</span>',
+  };
+  const AGENT_ORDER = ['claude', 'cursor', 'codex', 'gemini'];
+
+  async function refreshRoster() {
+    const roster = document.getElementById('agent-roster');
+    try {
+      const r = await fetch('/api/factory/agents');
+      if (!r.ok) throw new Error(`${r.status}`);
+      const { agents } = await r.json();
+      if (!agents || !Object.keys(agents).length) {
+        roster.innerHTML = '<div class="px-5 py-8 text-center text-xs text-slate-600 font-mono">Runner offline — the agent runner daemon must be running on this machine to manage agents</div>';
+        return;
+      }
+      const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      roster.innerHTML = AGENT_ORDER.map(name => {
+        const a = agents[name];
+        if (!a) return '';
+        const isRunning = a.daemon_loaded && a.daemon_pid != null;
+        const installed = a.plist_exists;
+        const authBadge = AUTH_BADGES[a.auth_type] || '';
+        const cliDot = a.cli_detected
+          ? '<span class="text-emerald-400 text-xs" title="CLI found">● cli</span>'
+          : '<span class="text-slate-600 text-xs" title="CLI not found in PATH">○ cli not found</span>';
+        const keyBadge = a.api_key_env
+          ? a.api_key_in_plist
+            ? `<span class="text-emerald-400 text-xs">● ${esc(a.api_key_env)}</span>`
+            : `<span class="text-rose-400 text-xs">✗ ${esc(a.api_key_env)}</span>`
+          : '';
+        const daemonStatus = isRunning
+          ? `<span class="text-emerald-400 text-xs font-mono">● running · PID ${a.daemon_pid}</span>`
+          : a.daemon_loaded
+          ? '<span class="text-amber-400 text-xs font-mono">● loaded · idle</span>'
+          : '<span class="text-slate-600 text-xs font-mono">○ stopped</span>';
+        const keyField = a.api_key_env ? `
+          <div>
+            <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">${esc(a.api_key_env)}</label>
+            <input type="password" id="agt-${name}-key" autocomplete="off"
+              placeholder="${a.api_key_in_plist ? 'Enter new key to replace' : `Paste ${esc(a.api_key_env)}…`}"
+              class="w-full bg-slate-950/80 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+                     focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+            <p class="text-xs text-slate-700 mt-1">Leave blank to keep current key</p>
+          </div>` : '';
+        const domainField = `
+          <div>
+            <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Domain Filter</label>
+            <input type="text" id="agt-${name}-domain" value="${esc(a.domain_filter || '')}"
+              placeholder="e.g. frontend  (blank = all WOs)"
+              class="w-full bg-slate-950/80 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+                     focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+            <p class="text-xs text-slate-700 mt-1">This agent only picks up WOs in this domain. Blank = any WO.</p>
+          </div>`;
+
+        if (!installed) {
+          return `<div class="px-5 py-5">
+            <div class="flex items-center gap-3 mb-4 flex-wrap">
+              <span class="text-sm font-bold text-slate-400 capitalize w-14">${esc(name)}</span>
+              ${authBadge} ${cliDot}
+              <span class="text-xs font-mono text-slate-600 bg-slate-800/40 px-2 py-0.5 rounded">not installed</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mb-4">
+              ${keyField}
+              ${domainField}
+            </div>
+            <div class="flex items-center gap-3">
+              <button type="button" onclick="installAgent('${name}')"
+                class="text-xs px-3 py-1.5 rounded font-mono bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/20 transition-colors">
+                + Install &amp; Start
+              </button>
+              <span id="agt-${name}-msg" class="text-xs font-mono text-slate-500"></span>
+            </div>
+          </div>`;
+        }
+
+        const startStopBtn = (isRunning || a.daemon_loaded)
+          ? `<button type="button" onclick="agentDaemon('${name}','stop',this)"
+              class="text-xs px-2.5 py-1 rounded font-mono border border-slate-700/60 text-slate-400 hover:text-rose-400 hover:border-rose-500/40 transition-colors">
+              Stop</button>`
+          : `<button type="button" onclick="agentDaemon('${name}','start',this)"
+              class="text-xs px-2.5 py-1 rounded font-mono bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/20 transition-colors">
+              Start</button>`;
+
+        return `<div class="px-5 py-5">
+          <div class="flex items-center gap-3 mb-4 flex-wrap">
+            <span class="text-sm font-bold text-slate-200 capitalize w-14">${esc(name)}</span>
+            ${authBadge} ${cliDot} ${keyBadge} ${daemonStatus}
+            <div class="ml-auto flex items-center gap-2">
+              ${startStopBtn}
+              <button type="button" onclick="removeAgent('${name}')"
+                class="text-xs px-2.5 py-1 rounded font-mono border border-slate-700/60 text-slate-500 hover:text-rose-400 hover:border-rose-500/40 transition-colors">
+                Remove</button>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mb-4">
+            ${keyField}
+            ${domainField}
+          </div>
+          <div class="flex items-center gap-3">
+            <button type="button" onclick="saveAgent('${name}')"
+              class="text-xs px-3 py-1.5 rounded font-mono bg-violet-600/30 text-violet-300 hover:bg-violet-600/50 border border-violet-500/30 transition-colors">
+              Save${isRunning ? ' &amp; Restart' : ''}
+            </button>
+            <span id="agt-${name}-msg" class="text-xs font-mono text-slate-500"></span>
+          </div>
+        </div>`;
+      }).join('');
+    } catch(err) {
+      roster.innerHTML = `<div class="px-5 py-8 text-center text-xs text-rose-400 font-mono">Error loading agents: ${err.message}</div>`;
+    }
+  }
+
+  window.installAgent = async function(name) {
+    const keyEl = document.getElementById(`agt-${name}-key`);
+    const domEl = document.getElementById(`agt-${name}-domain`);
+    const msgEl = document.getElementById(`agt-${name}-msg`);
+    msgEl.textContent = 'Installing…';
+    try {
+      const r = await fetch(`/api/factory/agents/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ api_key: keyEl?.value.trim() || '', domain_filter: domEl?.value.trim() || '', start: true }),
+      });
+      const data = await r.json();
+      if (r.ok) { msgEl.textContent = ''; await refreshRoster(); }
+      else { msgEl.textContent = `⚠ ${data.detail || data.error || 'error'}`; }
+    } catch(err) { msgEl.textContent = `⚠ ${err.message}`; }
+  };
+
+  window.saveAgent = async function(name) {
+    const keyEl = document.getElementById(`agt-${name}-key`);
+    const domEl = document.getElementById(`agt-${name}-domain`);
+    const msgEl = document.getElementById(`agt-${name}-msg`);
+    msgEl.textContent = 'Saving…';
+    try {
+      const r = await fetch(`/api/factory/agents/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ api_key: keyEl?.value.trim() || '', domain_filter: domEl?.value.trim() ?? '' }),
+      });
+      const data = await r.json();
+      if (r.ok) { msgEl.textContent = '✓ saved'; if (keyEl) keyEl.value = ''; setTimeout(refreshRoster, 1200); }
+      else { msgEl.textContent = `⚠ ${data.detail || data.error || 'error'}`; }
+    } catch(err) { msgEl.textContent = `⚠ ${err.message}`; }
+  };
+
+  window.removeAgent = async function(name) {
+    if (!confirm(`Remove ${name}? This stops the daemon and deletes its plist.`)) return;
+    try {
+      const r = await fetch(`/api/factory/agents/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      if (r.ok) { await refreshRoster(); }
+      else { const d = await r.json(); alert(d.detail || d.error || 'Remove failed'); }
+    } catch(err) { alert(`Error: ${err.message}`); }
+  };
+
+  window.agentDaemon = async function(name, action, btn) {
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const r = await fetch(`/api/factory/agents/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
+      if (r.ok) { await refreshRoster(); }
+      else { const d = await r.json(); btn.textContent = `⚠ ${d.detail || d.error || 'err'}`; btn.disabled = false; }
+    } catch(err) { btn.textContent = '⚠ error'; btn.disabled = false; }
+  };
+
+  window.refreshRoster = refreshRoster;
+  refreshRoster();
+})();
+</script>
+
 <form method="post" action="/settings/agents">
 
   {# Execution Backend #}

@@ -1972,6 +1972,33 @@ async def api_factory_agents():
         return JSONResponse(content={"agents": {}}, status_code=200)
 
 
+@app.put("/api/factory/agents/{name}")
+async def api_factory_agent_configure(name: str, request: Request):
+    """Create/update agent plist config (API key, domain filter) and optionally start."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.put(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}", json=body)
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=503)
+
+
+@app.delete("/api/factory/agents/{name}")
+async def api_factory_agent_remove(name: str):
+    """Stop and uninstall an agent daemon."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.delete(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}")
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=503)
+
+
 @app.post("/api/factory/agents/{name}/start")
 async def api_factory_agent_start(name: str):
     async with httpx.AsyncClient(timeout=10) as client:

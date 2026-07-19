@@ -329,6 +329,7 @@ class _DraftHandler(BaseHTTPRequestHandler):
             self._json(500, {"error": str(e)})
 
     def _get_agents_status(self) -> None:
+        import plistlib
         clis = _probe_backends()
         try:
             result = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=5)
@@ -351,19 +352,148 @@ class _DraftHandler(BaseHTTPRequestHandler):
                     except (ValueError, IndexError):
                         daemon_pid = None
                     break
-            api_key_set = None
-            if meta["api_key_env"]:
-                api_key_set = bool(os.getenv(meta["api_key_env"]))
+            # Read plist env vars for key presence + domain filter
+            api_key_in_plist = False
+            domain_filter = ""
+            if os.path.isfile(plist_path):
+                try:
+                    with open(plist_path, "rb") as f:
+                        pdata = plistlib.load(f)
+                    penv = pdata.get("EnvironmentVariables", {})
+                    if meta["api_key_env"]:
+                        api_key_in_plist = bool(penv.get(meta["api_key_env"]))
+                    domain_filter = penv.get("DOMAIN_FILTER", "")
+                except Exception:
+                    pass
             agents[name] = {
                 "auth_type": meta["auth_type"],
                 "api_key_env": meta["api_key_env"],
                 "cli_detected": clis.get(name, False),
-                "api_key_set": api_key_set,
+                "api_key_in_plist": api_key_in_plist,
                 "plist_exists": os.path.isfile(plist_path),
                 "daemon_loaded": daemon_loaded,
                 "daemon_pid": daemon_pid,
+                "domain_filter": domain_filter,
             }
         self._json(200, {"agents": agents})
+
+    def do_PUT(self):
+        if self.path.startswith("/api/agents/"):
+            parts = self.path.split("/")
+            if len(parts) == 4:
+                self._handle_agents_configure(parts[3])
+            else:
+                self._json(404, {"error": "not found"})
+        else:
+            self._json(404, {"error": "not found"})
+
+    def do_DELETE(self):
+        if self.path.startswith("/api/agents/"):
+            parts = self.path.split("/")
+            if len(parts) == 4:
+                self._handle_agents_remove(parts[3])
+            else:
+                self._json(404, {"error": "not found"})
+        else:
+            self._json(404, {"error": "not found"})
+
+    def _handle_agents_configure(self, name: str) -> None:
+        import plistlib, time
+        meta = _AGENT_META.get(name)
+        if not meta:
+            self._json(404, {"error": f"Unknown agent: {name}"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._json(400, {"error": "invalid JSON body"})
+            return
+
+        api_key = str(body.get("api_key", "")).strip()
+        domain_filter = body.get("domain_filter", None)  # None means "don't touch"
+        should_start = bool(body.get("start", False))
+
+        plist_path = os.path.join(_PLIST_DIR, f"{meta['label']}.plist")
+
+        # Create plist if it doesn't exist
+        if not os.path.isfile(plist_path):
+            try:
+                os.makedirs(_PLIST_LOG_DIR, exist_ok=True)
+                with open(plist_path, "w") as f:
+                    f.write(_plist_content(name, meta))
+            except Exception as e:
+                self._json(500, {"error": f"Failed to create plist: {e}"})
+                return
+
+        # Update plist EnvironmentVariables if anything to write
+        if api_key or domain_filter is not None:
+            try:
+                with open(plist_path, "rb") as f:
+                    pdata = plistlib.load(f)
+                penv = pdata.get("EnvironmentVariables", {})
+                if api_key and meta["api_key_env"]:
+                    penv[meta["api_key_env"]] = api_key
+                if domain_filter is not None:
+                    if domain_filter:
+                        penv["DOMAIN_FILTER"] = domain_filter
+                    else:
+                        penv.pop("DOMAIN_FILTER", None)
+                pdata["EnvironmentVariables"] = penv
+                with open(plist_path, "wb") as f:
+                    plistlib.dump(pdata, f, fmt=plistlib.FMT_XML)
+            except Exception as e:
+                self._json(500, {"error": f"Failed to update plist: {e}"})
+                return
+
+        # Determine current daemon state
+        uid = os.getuid()
+        label = meta["label"]
+        try:
+            ls = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=5)
+            is_running = any(
+                line.split("\t")[2] == label
+                for line in ls.stdout.splitlines()
+                if len(line.split("\t")) == 3
+            )
+        except Exception:
+            is_running = False
+
+        if is_running:
+            # Restart to pick up new env vars
+            subprocess.run(["launchctl", "bootout", f"gui/{uid}/{label}"],
+                           capture_output=True, timeout=10)
+            time.sleep(1)
+            subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", plist_path],
+                           capture_output=True, timeout=10)
+        elif should_start:
+            r = subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", plist_path],
+                               capture_output=True, text=True, timeout=10)
+            if r.returncode != 0 and "already bootstrapped" not in (r.stdout + r.stderr).lower():
+                self._json(500, {"error": r.stderr.strip() or "launchctl bootstrap failed"})
+                return
+
+        print(f"[draft-server] agent configure: {name}", flush=True)
+        self._json(200, {"ok": True, "agent": name, "action": "configure"})
+
+    def _handle_agents_remove(self, name: str) -> None:
+        meta = _AGENT_META.get(name)
+        if not meta:
+            self._json(404, {"error": f"Unknown agent: {name}"})
+            return
+        uid = os.getuid()
+        plist_path = os.path.join(_PLIST_DIR, f"{meta['label']}.plist")
+        # Stop daemon first (ignore errors — may already be stopped)
+        subprocess.run(["launchctl", "bootout", f"gui/{uid}/{meta['label']}"],
+                       capture_output=True, timeout=10)
+        if os.path.isfile(plist_path):
+            try:
+                os.remove(plist_path)
+            except Exception as e:
+                self._json(500, {"error": f"Failed to remove plist: {e}"})
+                return
+        print(f"[draft-server] agent remove: {name}", flush=True)
+        self._json(200, {"ok": True, "agent": name, "action": "remove"})
 
     def _handle_agents_start(self, name: str) -> None:
         meta = _AGENT_META.get(name)

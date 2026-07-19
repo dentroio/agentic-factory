@@ -3423,6 +3423,33 @@ async def get_runner_agents():
     return {"agents": {}}
 
 
+@app.put("/api/runner/agents/{name}")
+async def configure_runner_agent(name: str, request: Request):
+    """Create/update agent plist (API key, domain filter) and optionally start it."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.put(f"{AGENT_RUNNER_URL}/api/agents/{name}", json=body)
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Agent runner unreachable: {e}")
+
+
+@app.delete("/api/runner/agents/{name}")
+async def remove_runner_agent(name: str):
+    """Stop and uninstall an agent daemon (bootout + delete plist)."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.delete(f"{AGENT_RUNNER_URL}/api/agents/{name}")
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Agent runner unreachable: {e}")
+
+
 @app.post("/api/runner/agents/{name}/start")
 async def start_runner_agent(name: str):
     """Bootstrap an agent LaunchAgent daemon via the host runner."""
