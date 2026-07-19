@@ -228,7 +228,6 @@
       const data = await r.json();
       const allWos = Object.values(data).sort((a, b) => (b.claimed_at||'').localeCompare(a.claimed_at||''));
       const activeWos = allWos.filter(w => w.status !== 'complete');
-      const doneWos = allWos.filter(w => w.status === 'complete');
       const list = document.getElementById('active-wo-list');
       document.getElementById('active-wo-count').textContent = activeWos.length;
       const sbCount = document.getElementById('sb-active-count');
@@ -283,12 +282,11 @@
         try { const r = await fetch(`/api/dispatch/${woId}/retry`, {method:'POST'}); if(r.ok) refreshDispatch(); } catch(_){}
       }
 
-      if (!activeWos.length && !doneWos.length) {
+      if (!activeWos.length) {
         list.innerHTML = `<div class="px-4 py-10 text-center"><div class="text-slate-700 text-2xl mb-2">⬜</div><div class="text-xs text-slate-600 font-mono">No active jobs</div></div>`;
         return;
       }
-      const donePart = doneWos.length ? `<div class="px-4 py-1.5 text-xs font-mono text-slate-600 uppercase tracking-widest border-t border-slate-800/40">Recently done</div>${doneWos.map(woCard).join('')}` : '';
-      list.innerHTML = activeWos.map(woCard).join('') + donePart;
+      list.innerHTML = activeWos.map(woCard).join('');
     } catch(_) {}
   }
   setInterval(refreshDispatch, 10000);
