@@ -1805,6 +1805,22 @@ def _is_done(status: str) -> bool:
     )
 
 
+def _is_ready(status: str) -> bool:
+    """Return True if the WO is ready to dispatch (Open or explicitly marked Ready).
+
+    📋 Planned WOs exist in the spec file but are not yet actionable — they
+    must be promoted to 📋 Ready (or a plain 'open'/'ready' text status) before
+    the orchestrator will put them in the dispatch queue.
+    """
+    s = status.strip().lstrip("*").strip()
+    sl = s.lower()
+    return (
+        sl.startswith(("ready", "open"))
+        or s.startswith("📋 Ready")
+        or s.startswith("📋 Open")
+    )
+
+
 def _is_blocked(status: str) -> bool:
     s = status.strip()
     return s.startswith(("🔴", "❌")) or s.lower().startswith("blocked")
@@ -2043,9 +2059,9 @@ async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient) -> int:
 
 
 async def _fetch_recently_merged_wo_prs(client: httpx.AsyncClient) -> dict[int, str]:
-    """Return {wo_number: pr_html_url} for WO PRs merged in the last 14 days."""
+    """Return {wo_number: pr_html_url} for WO PRs merged in the last 90 days."""
     from datetime import timedelta
-    since = (datetime.now(UTC) - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    since = (datetime.now(UTC) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         prs = await _cached_get(client, f"/repos/{GITHUB_REPO}/pulls",
                                  {"state": "closed", "per_page": 50, "sort": "updated", "direction": "desc"},
@@ -2113,10 +2129,25 @@ def _validate_spec(wo_num: int, spec: dict) -> list[str]:
     return errors
 
 
-def _resolve_dependencies(specs: dict[int, dict], done_wos: set[int]) -> tuple[list[dict], list[dict], list[str]]:
+def _resolve_dependencies(
+    specs: dict[int, dict],
+    done_wos: set[int],
+    dispatch_state: dict[str, dict] | None = None,
+) -> tuple[list[dict], list[dict], list[str]]:
     dispatch: list[dict] = []
     holding: list[dict] = []
     warnings: list[str] = []
+
+    # WOs with an active dispatch entry are already claimed/running — skip them
+    # so we don't issue a second dispatch for the same WO.
+    claimed_wos: set[int] = set()
+    if dispatch_state:
+        for wo_id, entry in dispatch_state.items():
+            if entry.get("status") in ("claimed", "complete", "rejected"):
+                try:
+                    claimed_wos.add(int(wo_id.replace("WO-", "")))
+                except ValueError:
+                    pass
 
     def has_cycle(num: int, visiting: set[int]) -> bool:
         if num in visiting:
@@ -2126,6 +2157,17 @@ def _resolve_dependencies(specs: dict[int, dict], done_wos: set[int]) -> tuple[l
 
     for num, spec in sorted(specs.items(), key=lambda x: (x[1]["priority"], x[0])):
         if _is_done(spec["status"]):
+            continue
+        if num in claimed_wos:
+            claimed_status = (dispatch_state or {}).get(f"WO-{num}", {}).get("status", "?")
+            print(f"[dispatch] WO-{num} skipped — dispatch entry exists (status: {claimed_status})")
+            continue
+        if not _is_ready(spec["status"]):
+            holding.append({
+                "wo": num, "title": spec["title"], "priority": spec["priority"],
+                "dependencies_met": False, "blocked_by": [],
+                "reason": "Status is Planned — mark Ready to dispatch",
+            })
             continue
         if has_cycle(num, set()):
             warnings.append(f"WO-{num} has a circular dependency — skipping")
@@ -2358,6 +2400,7 @@ async def poll() -> None:
 
     dispatch_queue, holding_queue, cycle_warnings = _resolve_dependencies(
         {num: s for num, s in specs.items() if num in primary_open_wos}, done_wos,
+        dispatch_state=_dispatch_state,
     )
 
     # Build runtime overlay — spec-file WOs not registered in the DB queue.
