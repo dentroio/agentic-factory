@@ -37,6 +37,9 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
 MAX_PARALLEL_WOS = int(os.getenv("MAX_PARALLEL_WOS", "2"))
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
+SPEC_MIN_BODY_LENGTH = int(os.getenv("SPEC_MIN_BODY_LENGTH", "300"))
+SPEC_REQUIRED_SECTIONS = ["## Background", "## What to Build", "## Acceptance Criteria"]
+SPEC_MIN_AC_ITEMS = int(os.getenv("SPEC_MIN_AC_ITEMS", "3"))
 
 # Optional: comma-separated secondary repos to include in the WO board.
 # Format: "owner/repo" or "owner/repo:docs/work_orders" to override WO path.
@@ -1829,6 +1832,7 @@ def _read_local_wo_specs(repo_root: str, wo_path: str, repo: str) -> dict[int, d
                 "priority": _parse_priority(content),
                 "effort": _parse_effort(content),
                 "depends_on": _parse_depends_on(content),
+                "_raw_body": content,
             }
         except Exception as e:
             print(f"[orchestrator] Failed to read local WO-{num}: {e}")
@@ -1866,6 +1870,7 @@ async def _fetch_wo_specs(client: httpx.AsyncClient, repo: str = GITHUB_REPO, wo
                 "priority": _parse_priority(content),
                 "effort": _parse_effort(content),
                 "depends_on": _parse_depends_on(content),
+                "_raw_body": content,
             }
         except Exception as e:
             print(f"[orchestrator] Failed to fetch WO-{num} from {repo}: {e}")
@@ -2090,6 +2095,24 @@ def _build_wo_statuses(specs: dict[int, dict], active_branch_wos: set[int],
     return result
 
 
+def _validate_spec(wo_num: int, spec: dict) -> list[str]:
+    """Return a list of validation errors for a WO spec; empty list means spec is complete."""
+    errors: list[str] = []
+    raw = spec.get("_raw_body", "")
+    if len(raw) < SPEC_MIN_BODY_LENGTH:
+        errors.append(f"spec too short ({len(raw)} chars < {SPEC_MIN_BODY_LENGTH} minimum) — likely a stub")
+    raw_lower = raw.lower()
+    for section in SPEC_REQUIRED_SECTIONS:
+        if section.lower() not in raw_lower:
+            errors.append(f"missing section: {section}")
+    ac_lines = [ln for ln in raw.splitlines() if ln.strip().startswith("- [ ]")]
+    if len(ac_lines) < SPEC_MIN_AC_ITEMS:
+        errors.append(
+            f"acceptance criteria has only {len(ac_lines)} checkbox item(s) — need at least {SPEC_MIN_AC_ITEMS}"
+        )
+    return errors
+
+
 def _resolve_dependencies(specs: dict[int, dict], done_wos: set[int]) -> tuple[list[dict], list[dict], list[str]]:
     dispatch: list[dict] = []
     holding: list[dict] = []
@@ -2106,6 +2129,16 @@ def _resolve_dependencies(specs: dict[int, dict], done_wos: set[int]) -> tuple[l
             continue
         if has_cycle(num, set()):
             warnings.append(f"WO-{num} has a circular dependency — skipping")
+            continue
+        spec_errors = _validate_spec(num, spec)
+        if spec_errors:
+            reason = "; ".join(spec_errors)
+            warnings.append(f"WO-{num} spec incomplete — holding: {reason}")
+            holding.append({
+                "wo": num, "title": spec["title"], "priority": spec["priority"],
+                "dependencies_met": False, "blocked_by": [],
+                "reason": f"Spec incomplete: {reason}",
+            })
             continue
         unmet = [d for d in spec.get("depends_on", []) if d not in done_wos]
         if unmet:
