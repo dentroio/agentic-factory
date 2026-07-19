@@ -5,6 +5,7 @@
 **Effort:** S
 **Services:** clarion/Makefile, clarion/scripts/
 **Depends on:** none
+**Status:** ✅ Done
 
 ---
 

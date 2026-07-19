@@ -5,6 +5,7 @@
 **Effort:** M
 **Services:** pr-watchdog, orchestrator
 **Depends on:** WO-1024
+**Status:** ✅ Done
 
 ---
 

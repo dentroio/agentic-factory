@@ -5,6 +5,7 @@
 **Effort:** S
 **Services:** clarion/scripts/wo_start.sh
 **Depends on:** none
+**Status:** ✅ Done
 
 ---
 

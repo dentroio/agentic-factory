@@ -5,6 +5,7 @@
 **Effort:** M
 **Services:** clarion/scripts, orchestrator
 **Depends on:** WO-1026
+**Status:** ✅ Done
 
 ---
 

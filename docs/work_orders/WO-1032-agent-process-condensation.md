@@ -5,6 +5,7 @@
 **Effort:** M
 **Services:** clarion/docs (no code change)
 **Depends on:** WO-1027, WO-1028
+**Status:** ✅ Done
 
 ---
 

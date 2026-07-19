@@ -5,6 +5,7 @@
 **Effort:** S
 **Services:** orchestrator
 **Depends on:** WO-1025
+**Status:** ✅ Done
 
 ---
 

@@ -5,6 +5,7 @@
 **Effort:** M
 **Services:** orchestrator, status-site
 **Depends on:** WO-1024
+**Status:** ✅ Done
 
 ---
 

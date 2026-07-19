@@ -5,6 +5,7 @@
 **Effort:** L
 **Services:** agent-runner, orchestrator
 **Depends on:** —
+**Status:** ✅ Done
 
 ---
 
@@ -122,6 +123,7 @@ Create `docs/work_orders/TEMPLATE.md` — the single reference for what a comple
 **Effort:** XS | S | M | L | XL
 **Services:** frontend | data-service | connector-service | docs | none
 **Depends on:** WO-NNN (or —)
+**Status:** ✅ Done
 
 ## Background
 Why this exists. What pain it solves. What went wrong without it.

@@ -5,6 +5,7 @@
 **Effort:** S
 **Services:** clarion/services/data-service
 **Depends on:** none
+**Status:** ✅ Done
 
 ---
 
