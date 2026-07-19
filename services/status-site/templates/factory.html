@@ -14,6 +14,18 @@
     <a href="/usage" class="text-slate-600 hover:text-slate-400 transition-colors text-xs uppercase tracking-wider">full usage →</a>
   </div>
 
+  {# ── Pending Approvals Panel ─────────────────────────────────────────────── #}
+  <div id="approvals-panel" class="hidden glass-panel overflow-hidden border-t-2 border-t-amber-500/50">
+    <div class="px-4 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-amber-400">⏳</span>
+        <span class="text-xs font-mono text-amber-300 uppercase tracking-widest">Pending Approval</span>
+        <span id="approvals-count" class="text-xs font-mono text-slate-600"></span>
+      </div>
+    </div>
+    <div id="approvals-list" class="divide-y divide-slate-800/30"></div>
+  </div>
+
   {# ── Factory Status Bar ──────────────────────────────────────────────────── #}
   {% set exhausted = backends.get('exhausted_backends', []) %}
   {% set cur_backend = 'Cursor' if backends.get('cursor') else 'Codex' if backends.get('codex') else 'Gemini' if backends.get('gemini') else '—' %}
@@ -263,6 +275,51 @@
     } catch(_) {}
   }
   setInterval(refreshDispatch, 10000);
+
+  /* ── Approvals panel ────────────────────────────────────────────── */
+  async function refreshApprovals() {
+    try {
+      const r = await fetch('/api/factory/approvals');
+      if (!r.ok) return;
+      const { approvals } = await r.json();
+      const panel = document.getElementById('approvals-panel');
+      const list = document.getElementById('approvals-list');
+      const cnt = document.getElementById('approvals-count');
+      if (!approvals || !approvals.length) { panel.classList.add('hidden'); return; }
+      panel.classList.remove('hidden');
+      cnt.textContent = `${approvals.length}`;
+      const e = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      list.innerHTML = approvals.map(a => `
+        <div class="px-4 py-3 hover:bg-slate-800/20 transition-colors">
+          <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+            <a href="/wo/${(a.wo||'').replace('WO-','')}" class="text-xs font-mono font-bold text-indigo-400 hover:underline">${e(a.wo)}</a>
+            <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400">${e(a.priority||'')}</span>
+            ${a.effort ? `<span class="text-xs font-mono text-slate-500">effort: ${e(a.effort)}</span>` : ''}
+            ${a.services ? `<span class="text-xs font-mono text-slate-600">services: ${e(a.services)}</span>` : ''}
+          </div>
+          <div class="text-xs text-slate-300 mb-2 truncate">${e(a.title||a.wo)}</div>
+          <div class="flex gap-2 flex-wrap">
+            <a href="/wo/${(a.wo||'').replace('WO-','')}" class="text-xs px-2 py-0.5 rounded font-mono border border-slate-700/50 text-slate-400 hover:text-slate-200 transition-colors">View spec →</a>
+            <button onclick="approvalAction('${e(a.wo)}','approve',this)"
+              class="text-xs px-2 py-0.5 rounded font-mono bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 transition-colors">Approve →</button>
+            <button onclick="approvalAction('${e(a.wo)}','skip',this)"
+              class="text-xs px-2 py-0.5 rounded font-mono border border-slate-700/50 text-slate-500 hover:text-slate-300 transition-colors">Skip</button>
+            <button onclick="approvalAction('${e(a.wo)}','hold',this)"
+              class="text-xs px-2 py-0.5 rounded font-mono border border-slate-700/50 text-slate-500 hover:text-rose-400 transition-colors">Hold</button>
+          </div>
+        </div>`).join('');
+    } catch(_) {}
+  }
+  window.approvalAction = async function(woId, action, btn) {
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const r = await fetch(`/api/factory/approvals/${encodeURIComponent(woId)}/${action}`, { method: 'POST' });
+      if (r.ok) { await refreshApprovals(); await refreshDispatch(); }
+      else { btn.textContent = '⚠ error'; btn.disabled = false; }
+    } catch(_) { btn.textContent = '⚠ error'; btn.disabled = false; }
+  };
+  refreshApprovals();
+  setInterval(refreshApprovals, 15000);
 
   /* ── Anthropic API usage banner ────────────────────────────────── */
   async function refreshUsage() {

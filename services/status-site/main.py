@@ -1932,6 +1932,35 @@ async def api_factory_dependabot_approve_merge(number: int):
         return JSONResponse(content={"error": str(e)}, status_code=503)
 
 
+@app.get("/api/factory/approvals")
+async def api_factory_approvals():
+    """List WOs pending pre-dispatch approval."""
+    async with httpx.AsyncClient(timeout=4) as client:
+        r = await client.get(f"{ORCHESTRATOR_URL}/api/approvals")
+    return JSONResponse(content=r.json() if r.status_code == 200 else {"approvals": []}, status_code=200)
+
+
+@app.post("/api/factory/approvals/{wo_id}/approve")
+async def api_factory_approve_wo(wo_id: str):
+    async with httpx.AsyncClient(timeout=4) as client:
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/approvals/{wo_id}/approve")
+    return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
+@app.post("/api/factory/approvals/{wo_id}/skip")
+async def api_factory_skip_approval(wo_id: str):
+    async with httpx.AsyncClient(timeout=4) as client:
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/approvals/{wo_id}/skip")
+    return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
+@app.post("/api/factory/approvals/{wo_id}/hold")
+async def api_factory_hold_from_approval(wo_id: str):
+    async with httpx.AsyncClient(timeout=4) as client:
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/approvals/{wo_id}/hold")
+    return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
 @app.get("/factory", response_class=HTMLResponse)
 async def factory_floor(request: Request):
     backends = {

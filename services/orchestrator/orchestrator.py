@@ -5,7 +5,7 @@ import os
 import re
 import sqlite3
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -37,6 +37,7 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
 CLAIM_TIMEOUT_SECONDS = int(os.getenv("CLAIM_TIMEOUT_SECONDS", "600"))
 MAX_PARALLEL_WOS = int(os.getenv("MAX_PARALLEL_WOS", "2"))
+REQUIRE_APPROVAL_FOR: set[str] = {p.strip() for p in os.getenv("REQUIRE_APPROVAL_FOR", "P1").split(",") if p.strip()}
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 SPEC_MIN_BODY_LENGTH = int(os.getenv("SPEC_MIN_BODY_LENGTH", "300"))
 SPEC_REQUIRED_SECTIONS = ["## Background", "## What to Build", "## Acceptance Criteria"]
@@ -81,6 +82,7 @@ _held_wos: set[str] = set()            # WO IDs on hold (skip, don't claim)
 _specs_cache: dict[int, dict] = {}     # all merged WO specs from last poll (primary + secondary)
 _pm_dispatch: dict | None = None       # PM-requested direct dispatch {wo, backend, title}
 _plan_overlay: list[dict] = []         # spec-file WOs not in PLAN.json — runtime-only, never written to disk
+_approval_skips: dict[str, str] = {}   # wo_id → ISO timestamp until approval is bypassed
 
 HOLD_PATH = DATA_DIR / "held_wos.json"
 PAUSE_PATH = DATA_DIR / "factory_paused.json"
@@ -978,6 +980,53 @@ async def claim_wo(req: ClaimRequest):
             detail=f"{wo_id} already claimed by {existing['agent']} on {existing.get('workstation', '?')}",
         )
 
+    # Pre-dispatch approval gate: P1 WOs (and any in REQUIRE_APPROVAL_FOR) need human sign-off
+    # unless already approved or skipped.
+    wo_num = int(wo_id.replace("WO-", "")) if wo_id.replace("WO-", "").isdigit() else -1
+    wo_spec = _specs_cache.get(wo_num, {})
+    wo_priority = wo_spec.get("priority", "P2")
+    skip_entry = _approval_skips.get(wo_id)
+    skip_active = skip_entry and datetime.now(UTC) < datetime.fromisoformat(skip_entry)
+    already_approved = existing.get("status") == "approved"
+    needs_approval = (
+        REQUIRE_APPROVAL_FOR
+        and wo_priority in REQUIRE_APPROVAL_FOR
+        and not already_approved
+        and not skip_active
+    )
+    if needs_approval:
+        is_new = existing.get("status") not in ("pending_approval",)
+        _dispatch_state[wo_id] = {
+            **existing,
+            "wo": wo_id,
+            "slug": req.slug or existing.get("slug", ""),
+            "agent": req.agent,
+            "workstation": req.workstation,
+            "status": "pending_approval",
+            "priority": wo_priority,
+            "title": wo_spec.get("title", wo_id),
+            "services": wo_spec.get("services", ""),
+            "effort": wo_spec.get("effort", ""),
+            "pending_since": existing.get("pending_since") or _utcnow(),
+        }
+        _save_dispatch()
+        if is_new:
+            thread_store.append_message(wo_id, thread_store.system_message(
+                f"⏳ {wo_id} ({wo_priority}) awaiting pre-dispatch approval"
+            ))
+            asyncio.create_task(notify_factory_alert(
+                title=f"{wo_id} needs approval before dispatch",
+                body=f"{wo_spec.get('title', wo_id)} | Priority: {wo_priority} | Effort: {wo_spec.get('effort', '?')}",
+                level="info",
+                source="approval-gate",
+                secrets=_load_secrets(),
+            ))
+        raise HTTPException(status_code=423, detail=f"{wo_id} is pending pre-dispatch approval")
+
+    # Clear approval entry now that claim proceeds
+    if already_approved:
+        _dispatch_state.pop(wo_id, None)
+
     _dispatch_state[wo_id] = {
         "wo": wo_id,
         "slug": req.slug,
@@ -1007,6 +1056,65 @@ async def checkin(wo: str, agent: str, step: str = ""):
     _dispatch_state[wo]["last_seen"] = _utcnow()
     _save_dispatch()
     return {"ok": True}
+
+
+@app.get("/api/approvals")
+async def list_approvals():
+    """List WOs pending pre-dispatch approval."""
+    pending = [
+        entry for entry in _dispatch_state.values()
+        if entry.get("status") == "pending_approval"
+    ]
+    return {"approvals": pending}
+
+
+@app.post("/api/approvals/{wo_id}/approve")
+async def approve_wo(wo_id: str):
+    """Approve a WO for dispatch — agent will claim it on next poll."""
+    wo_id = wo_id.upper()
+    if not wo_id.startswith("WO-"):
+        wo_id = f"WO-{wo_id}"
+    entry = _dispatch_state.get(wo_id, {})
+    if entry.get("status") != "pending_approval":
+        raise HTTPException(status_code=404, detail=f"{wo_id} not in pending_approval state")
+    _dispatch_state[wo_id]["status"] = "approved"
+    _save_dispatch()
+    thread_store.append_message(wo_id, thread_store.system_message(
+        f"✅ {wo_id} approved for dispatch — agent will pick it up shortly"
+    ))
+    return {"ok": True, "wo": wo_id, "status": "approved"}
+
+
+@app.post("/api/approvals/{wo_id}/skip")
+async def skip_approval(wo_id: str):
+    """Skip approval for 24h — WO re-enters queue and bypasses the gate temporarily."""
+    wo_id = wo_id.upper()
+    if not wo_id.startswith("WO-"):
+        wo_id = f"WO-{wo_id}"
+    _dispatch_state.pop(wo_id, None)
+    skip_until = (datetime.now(UTC) + timedelta(hours=24)).isoformat()
+    _approval_skips[wo_id] = skip_until
+    _save_dispatch()
+    thread_store.append_message(wo_id, thread_store.system_message(
+        f"⏭ {wo_id} approval skipped — WO re-queued (approval bypassed for 24h)"
+    ))
+    return {"ok": True, "wo": wo_id, "skip_until": skip_until}
+
+
+@app.post("/api/approvals/{wo_id}/hold")
+async def hold_via_approval(wo_id: str):
+    """Hold a WO from the approval queue — moves to held state."""
+    wo_id = wo_id.upper()
+    if not wo_id.startswith("WO-"):
+        wo_id = f"WO-{wo_id}"
+    _dispatch_state.pop(wo_id, None)
+    _held_wos.add(wo_id)
+    _save_dispatch()
+    _save_held()
+    thread_store.append_message(wo_id, thread_store.system_message(
+        f"🚫 {wo_id} moved to held from approval queue"
+    ))
+    return {"ok": True, "wo": wo_id, "status": "held"}
 
 
 @app.post("/api/validate")
@@ -2254,7 +2362,7 @@ def _resolve_dependencies(
     claimed_wos: set[int] = set()
     if dispatch_state:
         for wo_id, entry in dispatch_state.items():
-            if entry.get("status") in ("claimed", "complete", "rejected"):
+            if entry.get("status") in ("claimed", "complete", "rejected", "pending_approval"):
                 try:
                     claimed_wos.add(int(wo_id.replace("WO-", "")))
                 except ValueError:
