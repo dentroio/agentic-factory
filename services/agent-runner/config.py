@@ -14,3 +14,8 @@ HOSTNAME = socket.gethostname()
 
 # Maximum seconds to wait for a single agent run before giving up
 AGENT_TIMEOUT = int(os.getenv("AGENT_TIMEOUT", str(60 * 120)))  # 2 hours
+
+# Domain filter: runner only claims WOs whose services field matches.
+# Empty string (default) means no filter — claim any WO.
+# Example: "frontend" or "data-service,src"
+DOMAIN_FILTER = os.getenv("DOMAIN_FILTER", "")

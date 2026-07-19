@@ -10,10 +10,11 @@ def _utcnow() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
-async def get_next() -> dict | None:
+async def get_next(domain: str = "") -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{ORCHESTRATOR_URL}/api/next")
+            params = {"domain": domain} if domain else {}
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/next", params=params)
             resp.raise_for_status()
             data = resp.json()
             return data if data.get("wo") else None

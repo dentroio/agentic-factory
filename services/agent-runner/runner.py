@@ -17,6 +17,7 @@ import os as _os
 from config import (
     AGENT_NAME,
     AGENT_TIMEOUT,
+    DOMAIN_FILTER,
     GITHUB_REPO,
     HOSTNAME,
     LOCAL_REPO_PATH,
@@ -686,7 +687,7 @@ async def main(once: bool = False) -> None:
     while True:
         # Check for a PM-dispatched WO — use its backend override if present
         dispatched = draft_server.pop_dispatch()
-        next_wo = await get_next()
+        next_wo = await get_next(domain=DOMAIN_FILTER)
         if next_wo and next_wo.get("wo"):
             backend_override = (
                 next_wo.pop("_dispatch_backend", None)   # from /api/next when PM-dispatched

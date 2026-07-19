@@ -90,6 +90,34 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST_DEST"
 
 echo ""
 echo "Factory agent installed and started."
+
+# ── Domain-scoped runner plists ───────────────────────────────────────────────
+# Generate four specialised runner plists so multiple agents can run in parallel
+# without claiming the same WO. Each LaunchAgent stays unloaded by default — run
+# `launchctl bootstrap gui/$(id -u) <plist>` to start a specific domain runner.
+declare -A DOMAIN_RUNNERS=(
+  ["com.dentroio.factory-agent-frontend"]="frontend"
+  ["com.dentroio.factory-agent-data"]="data-service"
+  ["com.dentroio.factory-agent-connector"]="connector-service"
+  ["com.dentroio.factory-agent-docs"]="docs,P3"
+)
+
+for domain_label in "${!DOMAIN_RUNNERS[@]}"; do
+    domain_filter="${DOMAIN_RUNNERS[$domain_label]}"
+    domain_plist="$HOME/Library/LaunchAgents/${domain_label}.plist"
+    if [ -f "$SCRIPT_DIR/com.dentroio.factory-agent.plist" ]; then
+        # Build plist with DOMAIN_FILTER env var injected before </dict>
+        sed \
+            -e "s|AGENT_RUNNER_PATH|$AGENT_RUNNER|g" \
+            -e "s|LOG_PATH|$LOG_DIR|g" \
+            -e "s|com.dentroio.factory-agent|${domain_label}|g" \
+            -e "s|</dict>|    <key>EnvironmentVariables</key>\n    <dict>\n        <key>DOMAIN_FILTER</key>\n        <string>${domain_filter}</string>\n    </dict>\n\n</dict>|" \
+            "$SCRIPT_DIR/com.dentroio.factory-agent.plist" \
+        > "$domain_plist"
+        echo "Domain plist written: $domain_plist"
+    fi
+done
+
 echo ""
 echo "Commands:"
 echo "  make agent-logs    # tail live logs"
@@ -97,3 +125,9 @@ echo "  make agent-status  # show launchd status"
 echo "  make agent-stop    # stop (will restart at next login)"
 echo "  make agent-start   # restart now"
 echo "  make agent-remove  # uninstall completely"
+echo ""
+echo "Domain runners (not auto-started — load manually):"
+echo "  com.dentroio.factory-agent-frontend  (frontend domain)"
+echo "  com.dentroio.factory-agent-data      (data-service domain)"
+echo "  com.dentroio.factory-agent-connector (connector-service domain)"
+echo "  com.dentroio.factory-agent-docs      (docs/P3 domain)"

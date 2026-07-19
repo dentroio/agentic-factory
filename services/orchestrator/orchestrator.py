@@ -819,8 +819,8 @@ async def get_metrics():
 
 
 @app.get("/api/next")
-async def get_next():
-    """Return the highest-priority unclaimed WO, or null if none available."""
+async def get_next(domain: str = ""):
+    """Return the highest-priority unclaimed WO matching the optional domain filter."""
     global _pm_dispatch
     if _factory_paused:
         return {"wo": None, "reason": "factory paused — drain mode active"}
@@ -855,6 +855,8 @@ async def get_next():
     if active_count >= MAX_PARALLEL_WOS:
         return {"wo": None, "reason": f"at capacity ({active_count}/{MAX_PARALLEL_WOS} active)"}
 
+    domain_tokens = [t.lower() for t in domain.split(",") if t.strip()] if domain else []
+
     for wo in queue:
         wo_id = wo.get("wo", "")
         if wo_id in _held_wos:
@@ -869,6 +871,18 @@ async def get_next():
         unmet = [d for d in deps if _dispatch_state.get(d, {}).get("status") != "complete"]
         if unmet:
             continue
+        # Domain filter — skip WOs not in this runner's domain
+        if domain_tokens:
+            wo_services = wo.get("services", "").lower()
+            wo_priority = wo.get("priority", "").upper()
+            docs_domain = any(t in ("docs", "p3") for t in domain_tokens)
+            if docs_domain:
+                # docs domain: match WOs with services=none/docs or priority=P3
+                if not ("none" in wo_services or "docs" in wo_services or wo_priority == "P3"):
+                    continue
+            else:
+                if not any(t in wo_services for t in domain_tokens):
+                    continue
         return {**wo, "repo": GITHUB_REPO}
 
     return {"wo": None, "reason": "queue empty or all candidates claimed/blocked"}
