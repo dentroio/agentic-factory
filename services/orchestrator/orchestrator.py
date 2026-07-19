@@ -35,6 +35,7 @@ load_dotenv()
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
+CLAIM_TIMEOUT_SECONDS = int(os.getenv("CLAIM_TIMEOUT_SECONDS", "600"))
 MAX_PARALLEL_WOS = int(os.getenv("MAX_PARALLEL_WOS", "2"))
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 SPEC_MIN_BODY_LENGTH = int(os.getenv("SPEC_MIN_BODY_LENGTH", "300"))
@@ -2442,6 +2443,39 @@ async def poll() -> None:
         print("[orchestrator] poll: GitHub returned empty specs — keeping last-good output (rate limit?)")
         _orchestrator_output = {**_prev_output, "generated_at": now_str, "stale": True}
         return
+
+    # Stale claim sweep: release WOs whose agent stopped checking in.
+    stale_released = []
+    for wo_id, entry in list(_dispatch_state.items()):
+        if entry.get("status") not in ("in_progress", "claimed"):
+            continue
+        last_seen = entry.get("last_seen")
+        if not last_seen:
+            continue
+        try:
+            age = (datetime.now(UTC) - datetime.fromisoformat(last_seen.replace("Z", "+00:00"))).total_seconds()
+        except Exception:
+            continue
+        if age > CLAIM_TIMEOUT_SECONDS:
+            agent_name = entry.get("agent", "unknown")
+            age_min = int(age / 60)
+            print(f"[orchestrator] {wo_id} stale claim ({age_min}m, agent={agent_name}) — releasing")
+            _dispatch_state[wo_id]["status"] = "stale"
+            _dispatch_state[wo_id]["stale_at"] = _utcnow()
+            stale_released.append((wo_id, agent_name, age_min))
+            thread_store.append_message(wo_id, thread_store.system_message(
+                f"⚠️ Claim expired after {age_min} minutes — agent `{agent_name}` appears dead. Re-queuing."
+            ))
+    if stale_released:
+        _save_dispatch()
+        for wo_id, agent_name, age_min in stale_released:
+            asyncio.create_task(notify_factory_alert(
+                title=f"{wo_id} claim expired",
+                body=f"Agent `{agent_name}` last checked in {age_min}m ago. WO re-queued.",
+                level="warning",
+                source="stale-claim-sweep",
+                secrets=_load_secrets(),
+            ))
 
     # Auto-reconcile: merged PRs → complete dispatch entries.
     # Creates stub entries for WOs that were merged without going through the

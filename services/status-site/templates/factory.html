@@ -295,6 +295,7 @@
 
       function statusClass(s) {
         if (s === 'awaiting_human') return 'bg-amber-500/15 text-amber-400';
+        if (s === 'stale') return 'bg-amber-500/15 text-amber-400';
         if (s === 'complete') return 'bg-emerald-500/15 text-emerald-400';
         if (s === 'rejected') return 'bg-rose-500/15 text-rose-400';
         return 'bg-indigo-500/15 text-indigo-400';
@@ -305,20 +306,24 @@
         const slug = (wo.slug||'').replace(wo.wo+'-','').replace(/-/g,' ');
         const sc = statusClass(wo.status);
         const isFailed = (wo.step||'').toLowerCase().includes('failed');
-        const step = wo.step ? `<div class="flex items-center gap-1.5 mt-1.5"><span class="w-1 h-1 rounded-full ${isFailed?'bg-rose-500':'bg-indigo-500'} flex-shrink-0"></span><span class="text-xs ${isFailed?'text-rose-400 font-semibold':'text-slate-500'} font-mono truncate">${e(wo.step.slice(0,70))}</span></div>` : '';
+        const ageSec = wo.last_seen ? Math.round((Date.now() - new Date(wo.last_seen)) / 1000) : 0;
+        const isStale = wo.status === 'stale' || (ageSec > 600 && ['in_progress','claimed'].includes(wo.status));
+        const dotColor = isFailed ? 'bg-rose-500' : isStale ? 'bg-amber-500' : 'bg-indigo-500';
+        const step = wo.step ? `<div class="flex items-center gap-1.5 mt-1.5"><span class="w-1 h-1 rounded-full ${dotColor} flex-shrink-0"></span><span class="text-xs ${isFailed?'text-rose-400 font-semibold':isStale?'text-amber-400':'text-slate-500'} font-mono truncate">${e(wo.step.slice(0,70))}</span></div>` : '';
         const tsRel = wo.last_seen ? (() => {
-          const diff = Math.round((Date.now() - new Date(wo.last_seen)) / 1000);
+          const diff = ageSec;
           if (diff < 60) return `${diff}s ago`;
           if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
           return `${Math.floor(diff/3600)}h ${Math.floor((diff%3600)/60)}m ago`;
         })() : '';
-        const ts = wo.last_seen ? `<div class="text-xs text-slate-500 font-mono mt-1">${wo.last_seen.slice(11,16)} UTC · ${tsRel}</div>` : '';
+        const ts = wo.last_seen ? `<div class="text-xs ${isStale?'text-amber-500/70':'text-slate-500'} font-mono mt-1">${wo.last_seen.slice(11,16)} UTC · ${tsRel}</div>` : '';
+        const staleLabel = isStale ? `<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400">⚠ stale ${Math.floor(ageSec/60)}m</span>` : '';
         const retryBtn = isFailed ? `<button onclick="retryWO('${e(wo.wo)}')" class="text-xs px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 hover:bg-amber-500/30 font-mono transition-all" title="Re-queue">↺ retry</button>` : '';
         return `<div class="px-4 py-3 hover:bg-slate-800/20 transition-colors group">
           <div class="flex items-center gap-2 mb-1.5">
             <a href="/wo/${num}" class="text-xs font-mono font-bold text-indigo-400 hover:underline">${e(wo.wo)}</a>
             <span class="text-xs px-1.5 py-0.5 rounded font-mono ${sc}">${e((wo.status||'').replace(/_/g,' '))}</span>
-            ${retryBtn}
+            ${staleLabel}${retryBtn}
             <button onclick="releaseWO('${e(wo.wo)}')" class="ml-auto text-xs text-slate-700 hover:text-rose-400 font-mono opacity-0 group-hover:opacity-100 transition-all" title="Release">✕</button>
           </div>
           <a href="/wo/${num}" class="block text-xs text-slate-300 truncate hover:text-white transition-colors">${e(slug)}</a>
