@@ -45,7 +45,10 @@ from orchestrator_client import (
     release_dispatch,
     request_validate,
 )
-from prompt_builder import build_prompt, format_prior_context, slug_from_title
+from prompt_builder import (
+    build_prompt, format_prior_context, slug_from_title,
+    update_memory_after_completion, update_memory_after_failure,
+)
 from quality_gate import run_container_rebuild, run_quality_gate, _ci_env
 from review_chain import get_worktree_diff, run_review_chain
 from thread_monitor import ThreadMonitor, _is_question
@@ -555,6 +558,7 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
                 f"🔍 **Root cause & fix:**\n\n{ci_analysis}",
                 msg_type="ci_analysis"
             )
+        update_memory_after_failure(wo_id, failure_str, services=wo_spec.get("services", ""))
         await release_dispatch(wo_id)
         return
 
@@ -659,6 +663,7 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         await checkin(wo_id, "approved: marking complete")
         await complete(wo_id)
         _log(f"{wo_id} complete")
+        update_memory_after_completion(wo_id, wo_spec)
         await usage_tracker.record_run(ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, True, ask_calls)
     elif decision == "rejected":
         _log(f"{wo_id} rejected — check the factory dashboard for guidance")

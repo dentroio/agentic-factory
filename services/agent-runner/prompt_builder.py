@@ -1,6 +1,94 @@
 import base64
+import json
 import re
+from datetime import UTC, datetime
+from pathlib import Path
+
 from config import ORCHESTRATOR_URL, GITHUB_REPO
+
+_RUNNER_DIR = Path(__file__).parent
+MEMORY_PATH = _RUNNER_DIR / "memory" / "factory_memory.json"
+PATTERNS_FILE = _RUNNER_DIR / "clarion_patterns.md"
+
+_FALLBACK_PATTERNS = """## Clarion codebase patterns — see clarion_patterns.md for full details
+### DB write: always call db.commit() after db.execute()
+### Parameterized queries: never use f-strings in SQL
+### API route: every new endpoint needs require_role() dependency
+### Migrations: see clarion_patterns.md for current auto-discovery pattern
+"""
+
+
+def _load_memory() -> dict:
+    try:
+        if MEMORY_PATH.exists():
+            return json.loads(MEMORY_PATH.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _load_patterns() -> str:
+    try:
+        if PATTERNS_FILE.exists():
+            return PATTERNS_FILE.read_text().strip()
+    except Exception:
+        pass
+    return _FALLBACK_PATTERNS.strip()
+
+
+def format_memory_context(memory: dict, wo_spec: dict) -> str:
+    """Build the ## Factory Memory section for the agent prompt."""
+    if not memory:
+        return ""
+
+    wo_services = wo_spec.get("services", "").lower()
+    parts: list[str] = []
+
+    # Relevant lessons (matching WO services or applies_to="all")
+    lessons = memory.get("lessons", [])
+    relevant = [
+        l for l in lessons
+        if any(
+            svc.lower() in wo_services or wo_services in svc.lower() or svc == "all"
+            for svc in l.get("applies_to", [])
+        )
+    ]
+    if relevant:
+        items = "\n".join(
+            f"- {l['content']} [from {l.get('source_wo', '?')}]"
+            for l in relevant
+        )
+        parts.append(f"### Lessons learned (relevant to this WO)\n{items}")
+
+    # Environment state
+    env = memory.get("environment", {})
+    if env:
+        conn = ", ".join(env.get("connected_connectors", [])) or "none"
+        not_conn = ", ".join(env.get("NOT_connected", [])) or "—"
+        svcs = ", ".join(env.get("healthy_services", [])) or "—"
+        recent_migrations = env.get("recent_migrations", [])
+        recent_routes = env.get("recent_routes", [])
+        env_lines = [
+            f"- Connected connectors: {conn}",
+            f"- NOT configured: {not_conn}",
+            f"- Healthy services: {svcs}",
+        ]
+        if recent_migrations:
+            env_lines.append(f"- Recently added DB migrations: {', '.join(recent_migrations)}")
+        if recent_routes:
+            env_lines.append(f"- Recently added routes: {', '.join(recent_routes)}")
+        parts.append(f"### Environment state (as of {env.get('last_updated', '?')[:10]})\n" + "\n".join(env_lines))
+
+    # Recently completed WOs (last 5)
+    done = memory.get("completed_wos", [])[-5:]
+    if done:
+        items = "\n".join(f"- {d['wo']}: {d['summary']}" for d in reversed(done))
+        parts.append(f"### Recently completed WOs\n{items}")
+
+    if not parts:
+        return ""
+
+    return "## Factory Memory\n\n" + "\n\n".join(parts)
 
 
 QUALITY_MANDATE = """
@@ -94,45 +182,9 @@ without updating the lock file — `npm ci` in the Docker build will fail otherw
 """.strip()
 
 
-CLARION_PATTERNS = """
-## Clarion codebase patterns — copy these exactly, do not invent alternatives
-
-### DB write (ALWAYS call db.commit() after execute())
-```python
-db.execute(text("INSERT INTO my_table (col) VALUES (:val)"), {"val": value})
-db.commit()
-```
-
-### Parameterized queries (NEVER use f-strings or % formatting in SQL)
-```python
-# CORRECT
-result = db.execute(text("SELECT * FROM endpoints WHERE mac = :mac"), {"mac": mac})
-# WRONG — SQL injection risk
-result = db.execute(text(f"SELECT * FROM endpoints WHERE mac = '{mac}'"))
-```
-
-### API route with auth (every new endpoint needs require_role)
-```python
-from clarion.api.auth import require_role
-
-@router.get("/api/my-resource")
-def get_resource(db: Session = Depends(get_db), _=Depends(require_role("operator"))):
-    ...
-```
-
-### SQLAlchemy raw query — use text(), not Query objects
-```python
-from sqlalchemy import text
-rows = db.execute(text("SELECT id, name FROM table WHERE active = :active"), {"active": True}).fetchall()
-# Access columns by name: row.id, row.name  — NOT row[0]
-```
-
-### Migration file (register in src/clarion/storage/adapter.py after creating)
-```python
-# In adapter.py _MIGRATIONS list:
-"sql/migrations/add_my_table.sql",
-```
-""".strip()
+# Loaded at import time so every prompt gets the current patterns file.
+# Hot-reload is intentional: updating clarion_patterns.md takes effect on next prompt build.
+CLARION_PATTERNS = _load_patterns()
 
 
 def format_prior_context(rejections: list[dict], thread_msgs: list[dict]) -> str:
@@ -183,6 +235,13 @@ def build_prompt(wo_spec: dict, wo_markdown: str, worktree_path: str, agent_name
 
     retry_block = f"{prior_context}\n\n" if prior_context else ""
 
+    memory = _load_memory()
+    memory_section = format_memory_context(memory, wo_spec)
+    memory_block = f"{memory_section}\n\n---\n\n" if memory_section else ""
+
+    # Re-load patterns at call time so file changes are reflected without restart
+    patterns = _load_patterns()
+
     return f"""You are an AI agent working in the Clarion AI Factory.
 
 {retry_block}## Your Assignment
@@ -201,7 +260,7 @@ Worktree: {worktree_path}
 
 ---
 
-{CLARION_PATTERNS}
+{memory_block}{patterns}
 
 ---
 
@@ -219,6 +278,47 @@ Worktree: {worktree_path}
 
 Begin now. Start by reading the WO spec above carefully, then implement it.
 """
+
+
+def update_memory_after_completion(wo_id: str, wo_spec: dict, summary: str = "") -> None:
+    """Append a completed-WO entry to factory_memory.json."""
+    try:
+        memory = _load_memory()
+        done = memory.setdefault("completed_wos", [])
+        entry = {
+            "wo": wo_id,
+            "completed_at": datetime.now(UTC).strftime("%Y-%m-%d"),
+            "summary": summary or wo_spec.get("title", wo_id),
+        }
+        # Deduplicate — replace if already present
+        memory["completed_wos"] = [d for d in done if d.get("wo") != wo_id] + [entry]
+        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        MEMORY_PATH.write_text(json.dumps(memory, indent=2))
+    except Exception as e:
+        print(f"[memory] failed to update after completion: {e}")
+
+
+def update_memory_after_failure(wo_id: str, failure_reason: str, services: str = "") -> None:
+    """Add a failure_pattern lesson to factory_memory.json."""
+    try:
+        memory = _load_memory()
+        lessons = memory.setdefault("lessons", [])
+        # Avoid duplicate lessons for the same WO
+        if any(l.get("source_wo") == wo_id and l.get("category") == "failure_pattern" for l in lessons):
+            return
+        lesson_id = f"lesson-{len(lessons) + 1:03d}"
+        applies = [s.strip() for s in services.split(",") if s.strip()] or ["all"]
+        lessons.append({
+            "id": lesson_id,
+            "added_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source_wo": wo_id,
+            "category": "failure_pattern",
+            "applies_to": applies,
+            "content": f"{wo_id} failed: {failure_reason[:300]}",
+        })
+        MEMORY_PATH.write_text(json.dumps(memory, indent=2))
+    except Exception as e:
+        print(f"[memory] failed to update after failure: {e}")
 
 
 def slug_from_title(title: str, wo_number: int | str) -> str:
