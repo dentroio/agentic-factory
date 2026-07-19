@@ -38,6 +38,8 @@ POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
 CLAIM_TIMEOUT_SECONDS = int(os.getenv("CLAIM_TIMEOUT_SECONDS", "600"))
 MAX_PARALLEL_WOS = int(os.getenv("MAX_PARALLEL_WOS", "2"))
 REQUIRE_APPROVAL_FOR: set[str] = {p.strip() for p in os.getenv("REQUIRE_APPROVAL_FOR", "P1").split(",") if p.strip()}
+CLARION_API_URL = os.getenv("CLARION_API_URL", "http://localhost:8000")
+PREFLIGHT_RETRY_SECONDS = 1800  # re-check held WOs every 30 minutes
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 SPEC_MIN_BODY_LENGTH = int(os.getenv("SPEC_MIN_BODY_LENGTH", "300"))
 SPEC_REQUIRED_SECTIONS = ["## Background", "## What to Build", "## Acceptance Criteria"]
@@ -83,6 +85,7 @@ _specs_cache: dict[int, dict] = {}     # all merged WO specs from last poll (pri
 _pm_dispatch: dict | None = None       # PM-requested direct dispatch {wo, backend, title}
 _plan_overlay: list[dict] = []         # spec-file WOs not in PLAN.json — runtime-only, never written to disk
 _approval_skips: dict[str, str] = {}   # wo_id → ISO timestamp until approval is bypassed
+_preflight_held: dict[str, dict] = {}  # wo_id → {hold_reason, held_at, last_checked}
 
 HOLD_PATH = DATA_DIR / "held_wos.json"
 PAUSE_PATH = DATA_DIR / "factory_paused.json"
@@ -189,6 +192,119 @@ def _save_validations() -> None:
 
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+# ── Pre-flight environment validation ────────────────────────────────────────
+
+def _parse_requires_from_spec(spec: dict) -> dict:
+    """Parse the ## Requirements fenced YAML block from a WO spec's raw body.
+
+    Returns a dict like:
+      {"connectors": [{"type": "palo_alto", "min_count": 1}], "services": ["data-service"]}
+    Returns {} if no ## Requirements section or no `requires:` key found.
+    """
+    body = spec.get("_raw_body", "")
+    # Find the ## Requirements section
+    req_match = re.search(r"^## Requirements\s*\n(.*?)(?=^## |\Z)", body, re.MULTILINE | re.DOTALL)
+    if not req_match:
+        return {}
+    section = req_match.group(1)
+    # Extract content of the first fenced code block in that section
+    fence_match = re.search(r"```(?:yaml)?\s*\n(.*?)```", section, re.DOTALL)
+    if not fence_match:
+        return {}
+    yaml_text = fence_match.group(1)
+    # Check that it has a requires: key
+    if "requires:" not in yaml_text:
+        return {}
+    result: dict = {}
+    # Parse connectors
+    in_connectors = False
+    connectors: list[dict] = []
+    cur_connector: dict = {}
+    in_services = False
+    services: list[str] = []
+    for line in yaml_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("connectors:"):
+            in_connectors = True
+            in_services = False
+            continue
+        if stripped.startswith("services:"):
+            if cur_connector:
+                connectors.append(cur_connector)
+                cur_connector = {}
+            in_services = True
+            in_connectors = False
+            continue
+        if stripped and not stripped.startswith("#") and not stripped.startswith("requires:") and not stripped.startswith("clarion_"):
+            if in_connectors:
+                if stripped.startswith("- type:"):
+                    if cur_connector:
+                        connectors.append(cur_connector)
+                    cur_connector = {"type": stripped.split(":", 1)[1].strip()}
+                elif stripped.startswith("- connector_type:"):
+                    if cur_connector:
+                        connectors.append(cur_connector)
+                    cur_connector = {"type": stripped.split(":", 1)[1].strip()}
+                elif stripped.startswith("min_count:"):
+                    cur_connector["min_count"] = int(stripped.split(":", 1)[1].strip())
+                elif stripped.startswith("-") and not stripped.startswith("- type") and not stripped.startswith("- connector"):
+                    in_connectors = False
+            if in_services:
+                if stripped.startswith("- ") and not stripped.startswith("- {"):
+                    services.append(stripped[2:].strip())
+                elif not stripped.startswith("-"):
+                    in_services = False
+    if cur_connector:
+        connectors.append(cur_connector)
+    if connectors:
+        result["connectors"] = connectors
+    if services:
+        result["services"] = services
+    return result
+
+
+async def _query_clarion_connectors(connector_type: str) -> int:
+    """Query Clarion API for number of connected connectors of the given type.
+    Returns 0 on any error (fail-safe: treat unavailable Clarion as no connectors).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(
+                f"{CLARION_API_URL}/api/connectors",
+                params={"type": connector_type, "status": "connected"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list):
+                    return len(data)
+                if isinstance(data, dict):
+                    return len(data.get("connectors", data.get("items", [])))
+    except Exception as e:
+        print(f"[preflight] Clarion API query failed for connector type '{connector_type}': {e}")
+    return 0
+
+
+async def preflight_check(requires: dict) -> list[str]:
+    """Check WO environment requirements. Returns list of unmet conditions (empty = OK)."""
+    if not requires:
+        return []
+    failures: list[str] = []
+    for req in requires.get("connectors", []):
+        ctype = req.get("type") or req.get("connector_type", "")
+        min_count = req.get("min_count", 1)
+        if not ctype:
+            continue
+        count = await _query_clarion_connectors(ctype)
+        if count < min_count:
+            failures.append(f"connector '{ctype}': need {min_count} connected, found {count}")
+    for svc in requires.get("services", []):
+        # For now, all Clarion services are assumed healthy (we can extend this
+        # with docker compose ps checks if the orchestrator has access).
+        # This is best-effort — service checks are advisory, not blocking.
+        pass
+    return failures
 
 
 # ── SQLite persistence ────────────────────────────────────────────────────────
@@ -994,9 +1110,50 @@ async def claim_wo(req: ClaimRequest):
             detail=f"{wo_id} already claimed by {existing['agent']} on {existing.get('workstation', '?')}",
         )
 
+    wo_num = int(wo_id.replace("WO-", "")) if wo_id.replace("WO-", "").isdigit() else -1
+    wo_spec = _specs_cache.get(wo_num, {})
+
+    # Pre-flight environment check — run before approval gate so unrunnable WOs are held early.
+    if existing.get("status") != "preflight_held":
+        requires = _parse_requires_from_spec(wo_spec)
+        if requires:
+            pf_failures = await preflight_check(requires)
+            if pf_failures:
+                reason_str = "; ".join(pf_failures)
+                _dispatch_state[wo_id] = {
+                    **existing,
+                    "wo": wo_id,
+                    "slug": req.slug or existing.get("slug", ""),
+                    "agent": req.agent,
+                    "workstation": req.workstation,
+                    "status": "preflight_held",
+                    "hold_reason": pf_failures,
+                    "held_at": _utcnow(),
+                    "last_checked": _utcnow(),
+                }
+                _preflight_held[wo_id] = {
+                    "hold_reason": pf_failures,
+                    "held_at": _utcnow(),
+                    "last_checked": _utcnow(),
+                    "requires": requires,
+                }
+                _save_dispatch()
+                thread_store.append_message(wo_id, thread_store.system_message(
+                    f"🚫 {wo_id} held — environment requirements not met:\n"
+                    + "\n".join(f"  • {f}" for f in pf_failures)
+                    + "\n\nWill re-check every 30 minutes."
+                ))
+                asyncio.create_task(notify_factory_alert(
+                    title=f"{wo_id} held — environment not ready",
+                    body=reason_str,
+                    level="warning",
+                    source="preflight-check",
+                    secrets=_load_secrets(),
+                ))
+                raise HTTPException(status_code=423, detail=f"{wo_id} held: {reason_str}")
+
     # Pre-dispatch approval gate: P1 WOs (and any in REQUIRE_APPROVAL_FOR) need human sign-off
     # unless already approved or skipped.
-    wo_num = int(wo_id.replace("WO-", "")) if wo_id.replace("WO-", "").isdigit() else -1
     wo_spec = _specs_cache.get(wo_num, {})
     wo_priority = wo_spec.get("priority", "P2")
     skip_entry = _approval_skips.get(wo_id)
@@ -2376,7 +2533,7 @@ def _resolve_dependencies(
     claimed_wos: set[int] = set()
     if dispatch_state:
         for wo_id, entry in dispatch_state.items():
-            if entry.get("status") in ("claimed", "complete", "rejected", "pending_approval"):
+            if entry.get("status") in ("claimed", "complete", "rejected", "pending_approval", "preflight_held"):
                 try:
                     claimed_wos.add(int(wo_id.replace("WO-", "")))
                 except ValueError:
@@ -2598,6 +2755,46 @@ async def poll() -> None:
                 source="stale-claim-sweep",
                 secrets=_load_secrets(),
             ))
+
+    # Preflight retry sweep: re-check WOs held for unmet environment requirements.
+    for wo_id, pf in list(_preflight_held.items()):
+        last_checked = pf.get("last_checked", pf.get("held_at", ""))
+        try:
+            age = (datetime.now(UTC) - datetime.fromisoformat(last_checked.replace("Z", "+00:00"))).total_seconds()
+        except Exception:
+            continue
+        if age < PREFLIGHT_RETRY_SECONDS:
+            continue  # not time to re-check yet
+        requires = pf.get("requires", {})
+        if not requires:
+            # No requires data — can't re-check, remove from held and let it dispatch
+            del _preflight_held[wo_id]
+            _dispatch_state.pop(wo_id, None)
+            continue
+        new_failures = await preflight_check(requires)
+        pf["last_checked"] = _utcnow()
+        if not new_failures:
+            # Requirements now met — release from hold
+            print(f"[orchestrator] {wo_id} preflight requirements met — re-queuing")
+            del _preflight_held[wo_id]
+            _dispatch_state.pop(wo_id, None)
+            _save_dispatch()
+            thread_store.append_message(wo_id, thread_store.system_message(
+                f"✅ {wo_id} environment requirements now met — re-queuing for dispatch"
+            ))
+            asyncio.create_task(notify_factory_alert(
+                title=f"{wo_id} re-queued — environment ready",
+                body=f"{wo_id} held WO automatically re-queued: all preflight requirements now met.",
+                level="info",
+                source="preflight-retry",
+                secrets=_load_secrets(),
+            ))
+        else:
+            pf["hold_reason"] = new_failures
+            if wo_id in _dispatch_state:
+                _dispatch_state[wo_id]["hold_reason"] = new_failures
+                _dispatch_state[wo_id]["last_checked"] = _utcnow()
+            print(f"[orchestrator] {wo_id} preflight still failing: {'; '.join(new_failures)}")
 
     # Auto-reconcile: merged PRs → complete dispatch entries.
     # Creates stub entries for WOs that were merged without going through the
