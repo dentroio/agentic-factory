@@ -64,6 +64,18 @@ PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 LOCAL_REPO_MOUNT = os.getenv("LOCAL_REPO_MOUNT", "")
 DAILY_SUMMARY_HOUR = os.getenv("DAILY_SUMMARY_HOUR", "")
 SUMMARY_ISSUE_NUMBER = os.getenv("SUMMARY_ISSUE_NUMBER", "")
+
+STUCK_THRESHOLDS: dict[str, timedelta] = {
+    "P0": timedelta(hours=4),
+    "P1": timedelta(hours=12),
+    "P2": timedelta(hours=24),
+    "P3": timedelta(hours=48),
+}
+REVIEW_WAIT_THRESHOLDS: dict[str, timedelta] = {
+    "P0": timedelta(hours=8),
+    "P1": timedelta(hours=48),
+    "P2": timedelta(hours=72),
+}
 API_PORT = int(os.getenv("API_PORT", "8100"))
 
 DATA_DIR = Path("/data")
@@ -1205,6 +1217,7 @@ async def claim_wo(req: ClaimRequest):
         "backend": req.backend or req.agent,
         "workstation": req.workstation,
         "claimed_at": _utcnow(),
+        "last_seen": _utcnow(),
         "status": "claimed",
         "pr_url": "",
     }
@@ -1225,6 +1238,7 @@ async def checkin(wo: str, agent: str, step: str = ""):
     _dispatch_state[wo]["status"] = "in_progress"
     _dispatch_state[wo]["step"] = step
     _dispatch_state[wo]["last_seen"] = _utcnow()
+    _dispatch_state[wo].pop("stuck", None)
     _save_dispatch()
     return {"ok": True}
 
@@ -1286,6 +1300,20 @@ async def hold_via_approval(wo_id: str):
         f"🚫 {wo_id} moved to held from approval queue"
     ))
     return {"ok": True, "wo": wo_id, "status": "held"}
+
+
+@app.post("/api/wos/{wo_id}/heartbeat")
+async def wo_heartbeat(wo_id: str):
+    """Lightweight heartbeat — agent signals it is still active without changing step."""
+    wo_id = wo_id.upper()
+    if not wo_id.startswith("WO-"):
+        wo_id = f"WO-{wo_id}"
+    if wo_id not in _dispatch_state:
+        raise HTTPException(status_code=404, detail=f"{wo_id} not in dispatch state")
+    _dispatch_state[wo_id]["last_seen"] = _utcnow()
+    _dispatch_state[wo_id].pop("stuck", None)
+    _save_dispatch()
+    return {"ok": True, "wo": wo_id, "last_seen": _dispatch_state[wo_id]["last_seen"]}
 
 
 @app.post("/api/validate")
@@ -2450,7 +2478,6 @@ async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient) -> int:
 
 async def _fetch_recently_merged_wo_prs(client: httpx.AsyncClient) -> dict[int, str]:
     """Return {wo_number: pr_html_url} for WO PRs merged in the last 90 days."""
-    from datetime import timedelta
     since = (datetime.now(UTC) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         prs = await _cached_get(client, f"/repos/{GITHUB_REPO}/pulls",
@@ -2909,6 +2936,50 @@ async def poll() -> None:
             "step": claim.get("step"),
             "status": claim.get("status"),
         })
+
+    # Stuck detection: flag claimed WOs with no activity beyond their priority threshold
+    now_dt = datetime.now(UTC)
+    state_changed = False
+    for wo_id, entry in _dispatch_state.items():
+        if entry.get("status") not in ("claimed", "in_progress"):
+            continue
+        last_seen_str = entry.get("last_seen") or entry.get("claimed_at")
+        if not last_seen_str:
+            continue
+        try:
+            last_seen_dt = datetime.fromisoformat(last_seen_str.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        try:
+            wo_num = int(wo_id.replace("WO-", ""))
+        except ValueError:
+            continue
+        spec = primary_specs.get(wo_num, {})
+        priority = spec.get("priority", "P2")
+        threshold = STUCK_THRESHOLDS.get(priority, timedelta(hours=24))
+        idle = now_dt - last_seen_dt
+        was_stuck = entry.get("stuck", False)
+        if idle > threshold:
+            if not was_stuck:
+                entry["stuck"] = True
+                entry["stuck_since"] = last_seen_str
+                _dispatch_state[wo_id] = entry
+                state_changed = True
+                print(f"[orchestrator] ⚠️  {wo_id} STUCK — no activity for {idle} (threshold: {threshold}, priority: {priority})")
+            if idle > threshold * 2:
+                wo_id_str = wo_id
+                if wo_id_str not in _held_wos:
+                    _held_wos.add(wo_id_str)
+                    state_changed = True
+                    print(f"[orchestrator] ⛔ {wo_id} auto-held after {idle} — human must review and un-hold")
+        else:
+            if was_stuck:
+                entry.pop("stuck", None)
+                entry.pop("stuck_since", None)
+                _dispatch_state[wo_id] = entry
+                state_changed = True
+    if state_changed:
+        _save_dispatch()
 
     watchdog = _load_watchdog()
     recommendations: list[str] = []
