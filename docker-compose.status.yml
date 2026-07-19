@@ -39,9 +39,13 @@ services:
       - ANCIENT_DAYS=${ANCIENT_DAYS:-14}
       - QUEUE_WARN_DEPTH=${QUEUE_WARN_DEPTH:-5}
       - POST_COMMENTS=${POST_COMMENTS:-false}
+      - ORCHESTRATOR_URL=http://orchestrator:8100
+      - MARK_DONE_ENABLED=${MARK_DONE_ENABLED:-false}
     volumes:
       - watchdog-data:/data
     restart: unless-stopped
+    depends_on:
+      - orchestrator
 
   agent-runner:
     build:

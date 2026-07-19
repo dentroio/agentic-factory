@@ -1207,6 +1207,116 @@ async def complete_wo(req: CompleteRequest):
     return {"ok": True}
 
 
+@app.post("/api/wos/{wo_id}/auto-mark-done")
+async def auto_mark_done_wo(wo_id: str, pr_number: int | None = None,
+                             merged_at: str | None = None, pr_url: str | None = None):
+    """Push a mark-done commit to the target repo (via GitHub API) when a WO PR merges.
+
+    Updates the WO spec file (Status → ✅ Done) and creates/updates the claim file,
+    then commits both directly to main via GitHub's Contents API.
+    Does not require git CLI — uses the GITHUB_TOKEN env var.
+    """
+    wo_id = wo_id.upper()
+    if not wo_id.startswith("WO-"):
+        wo_id = f"WO-{wo_id}"
+
+    wo_num = wo_id.replace("WO-", "")
+    now_iso = _utcnow()
+    results: list[str] = []
+    errors: list[str] = []
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        # ── 1. Update spec file ──────────────────────────────────────────────
+        try:
+            files = await _cached_get(client, f"/repos/{GITHUB_REPO}/contents/{WO_PATH}",
+                                       ttl=60)
+            spec_file = next(
+                (f for f in files if re.match(rf"WO-{wo_num}-", f["name"])),
+                None,
+            )
+            if spec_file:
+                file_data = await _get(client, f"/repos/{GITHUB_REPO}/contents/{spec_file['path']}")
+                old_content = base64.b64decode(file_data["content"]).decode("utf-8")
+                new_content = re.sub(
+                    r"^\*\*Status:\*\*.*$",
+                    "**Status:** ✅ Done",
+                    old_content,
+                    flags=re.MULTILINE,
+                )
+                if new_content != old_content:
+                    payload: dict = {
+                        "message": f"docs(pm): auto-mark {wo_id} done — PR #{pr_number} merged",
+                        "content": base64.b64encode(new_content.encode()).decode(),
+                        "sha": file_data["sha"],
+                        "branch": "main",
+                    }
+                    resp = await client.put(
+                        f"https://api.github.com/repos/{GITHUB_REPO}/contents/{spec_file['path']}",
+                        headers=_headers(), json=payload,
+                    )
+                    if resp.status_code in (200, 201):
+                        results.append(f"spec {spec_file['name']} → ✅ Done")
+                    else:
+                        errors.append(f"spec push failed: {resp.status_code}")
+                else:
+                    results.append("spec already marked done")
+        except Exception as e:
+            errors.append(f"spec update error: {e}")
+
+        # ── 2. Update / create claim file ────────────────────────────────────
+        claim_path = f"{RUNS_PATH}/{wo_id}.json"
+        try:
+            claim_content = {
+                "wo": int(wo_num) if wo_num.isdigit() else wo_num,
+                "status": "done",
+                "completed_at": merged_at or now_iso,
+                "pr": pr_number,
+                "pr_url": pr_url or "",
+            }
+            try:
+                existing = await _get(client, f"/repos/{GITHUB_REPO}/contents/{claim_path}")
+                old_claim = json.loads(base64.b64decode(existing["content"]).decode())
+                old_claim.update(claim_content)
+                claim_content = old_claim
+                claim_sha: str | None = existing["sha"]
+            except Exception:
+                claim_sha = None
+
+            claim_str = json.dumps(claim_content, indent=2) + "\n"
+            payload = {
+                "message": f"docs(pm): auto-mark {wo_id} done — claim file",
+                "content": base64.b64encode(claim_str.encode()).decode(),
+                "branch": "main",
+            }
+            if claim_sha:
+                payload["sha"] = claim_sha
+            resp = await client.put(
+                f"https://api.github.com/repos/{GITHUB_REPO}/contents/{claim_path}",
+                headers=_headers(), json=payload,
+            )
+            if resp.status_code in (200, 201):
+                results.append(f"claim {wo_id}.json → done")
+            else:
+                errors.append(f"claim push failed: {resp.status_code}")
+        except Exception as e:
+            errors.append(f"claim update error: {e}")
+
+    # ── 3. Mark orchestrator dispatch entry complete ─────────────────────────
+    if wo_id in _dispatch_state:
+        _dispatch_state[wo_id]["status"] = "complete"
+        _dispatch_state[wo_id]["completed_at"] = now_iso
+        if pr_url:
+            _dispatch_state[wo_id]["pr_url"] = pr_url
+        if pr_number:
+            _dispatch_state[wo_id]["pr_number"] = pr_number
+        _save_dispatch()
+        _db_append_step(wo_id, "complete", step="auto-marked done by pr-watchdog")
+        results.append("dispatch entry → complete")
+
+    print(f"[orchestrator] auto-mark-done {wo_id}: {results}, errors: {errors}")
+    return {"ok": not errors, "wo": wo_id, "results": results, "errors": errors}
+
+
 @app.get("/api/notifications/config")
 async def notifications_config():
     """Return ntfy topic and server URL (not sensitive — needed by the UI to display subscribe info)."""
