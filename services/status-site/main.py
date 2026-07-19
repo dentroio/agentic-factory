@@ -1961,6 +1961,31 @@ async def api_factory_hold_from_approval(wo_id: str):
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
+@app.get("/api/factory/agents")
+async def api_factory_agents():
+    """Proxy agent daemon status (launchctl/plist) from orchestrator → runner."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/runner/agents")
+            return JSONResponse(content=r.json() if r.status_code == 200 else {"agents": {}}, status_code=200)
+    except Exception:
+        return JSONResponse(content={"agents": {}}, status_code=200)
+
+
+@app.post("/api/factory/agents/{name}/start")
+async def api_factory_agent_start(name: str):
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}/start")
+    return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
+@app.post("/api/factory/agents/{name}/stop")
+async def api_factory_agent_stop(name: str):
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}/stop")
+    return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
 @app.get("/factory", response_class=HTMLResponse)
 async def factory_floor(request: Request):
     backends = {

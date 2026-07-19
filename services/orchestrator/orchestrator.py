@@ -3410,6 +3410,41 @@ async def get_backends():
     return result
 
 
+@app.get("/api/runner/agents")
+async def get_runner_agents():
+    """Proxy agent daemon status from the host runner (launchctl + plist state)."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{AGENT_RUNNER_URL}/api/agents")
+            if r.status_code == 200:
+                return r.json()
+    except Exception:
+        pass
+    return {"agents": {}}
+
+
+@app.post("/api/runner/agents/{name}/start")
+async def start_runner_agent(name: str):
+    """Bootstrap an agent LaunchAgent daemon via the host runner."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{AGENT_RUNNER_URL}/api/agents/{name}/start")
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Agent runner unreachable: {e}")
+
+
+@app.post("/api/runner/agents/{name}/stop")
+async def stop_runner_agent(name: str):
+    """Bootout an agent LaunchAgent daemon via the host runner."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{AGENT_RUNNER_URL}/api/agents/{name}/stop")
+            return JSONResponse(content=r.json(), status_code=r.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Agent runner unreachable: {e}")
+
+
 @app.post("/api/plan/draft")
 async def plan_draft(req: DraftRequest):
     backend = req.backend or "claude-api"
