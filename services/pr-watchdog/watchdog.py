@@ -20,6 +20,8 @@ ANCIENT_DAYS = int(os.getenv("ANCIENT_DAYS", "14"))
 QUEUE_WARN_DEPTH = int(os.getenv("QUEUE_WARN_DEPTH", "5"))
 POST_COMMENTS = os.getenv("POST_COMMENTS", "false").lower() == "true"
 OUTPUT_PATH = Path(os.getenv("OUTPUT_PATH", "/data/watchdog.json"))
+ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "")
+MARK_DONE_ENABLED = os.getenv("MARK_DONE_ENABLED", "false").lower() == "true"
 
 
 def _headers() -> dict:
@@ -48,8 +50,51 @@ async def _get(client: httpx.AsyncClient, path: str, params: dict | None = None)
     return resp.json()
 
 
+import re as _re
+
+
+def _extract_wo_number(pr_title: str) -> str | None:
+    m = _re.search(r"WO-(\d+)", pr_title, _re.IGNORECASE)
+    return f"WO-{m.group(1)}" if m else None
+
+
 async def _fetch_open_prs(client: httpx.AsyncClient) -> list[dict]:
     return await _get(client, f"/repos/{GITHUB_REPO}/pulls", {"state": "open", "per_page": 100})
+
+
+async def _fetch_recently_merged_prs(client: httpx.AsyncClient, since_seconds: int) -> list[dict]:
+    """Return PRs merged within the last `since_seconds` seconds."""
+    from datetime import timedelta
+    since = (datetime.now(UTC) - timedelta(seconds=since_seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        prs = await _get(client, f"/repos/{GITHUB_REPO}/pulls",
+                         {"state": "closed", "per_page": 50, "sort": "updated", "direction": "desc"})
+        return [p for p in prs if p.get("merged_at") and p["merged_at"] >= since]
+    except Exception as e:
+        print(f"[watchdog] Error fetching merged PRs: {e}")
+        return []
+
+
+async def _notify_mark_done(pr: dict, already_notified: set[str]) -> None:
+    """Call orchestrator auto-mark-done for a merged WO PR (once per WO)."""
+    if not ORCHESTRATOR_URL or not MARK_DONE_ENABLED:
+        return
+    wo_id = _extract_wo_number(pr.get("title", ""))
+    if not wo_id or wo_id in already_notified:
+        return
+    already_notified.add(wo_id)
+    params = {"pr_number": pr["number"], "merged_at": pr.get("merged_at", ""),
+              "pr_url": pr.get("html_url", "")}
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            resp = await c.post(f"{ORCHESTRATOR_URL}/api/wos/{wo_id}/auto-mark-done",
+                                params=params)
+            if resp.status_code == 200:
+                print(f"[watchdog] auto-mark-done {wo_id}: {resp.json().get('results')}")
+            else:
+                print(f"[watchdog] auto-mark-done {wo_id} returned {resp.status_code}")
+    except Exception as e:
+        print(f"[watchdog] auto-mark-done {wo_id} error: {e}")
 
 
 async def _fetch_pr_checks(client: httpx.AsyncClient, pr_number: int) -> list[dict]:
@@ -246,6 +291,9 @@ async def _maybe_post_comment(client: httpx.AsyncClient, pr_number: int, body: s
         )
 
 
+_notified_wo_ids: set[str] = set()  # WOs already sent to auto-mark-done this session
+
+
 async def poll() -> None:
     now_str = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
@@ -270,6 +318,15 @@ async def poll() -> None:
         except Exception as e:
             print(f"[watchdog] API error during initial fetch: {e}")
             return
+
+        # Auto-mark-done: notify orchestrator for WO PRs merged in the last 2× poll intervals
+        if MARK_DONE_ENABLED and ORCHESTRATOR_URL:
+            try:
+                merged = await _fetch_recently_merged_prs(client, POLL_INTERVAL * 2)
+                for pr in merged:
+                    await _notify_mark_done(pr, _notified_wo_ids)
+            except Exception as e:
+                print(f"[watchdog] auto-mark-done sweep error: {e}")
 
         pr_health: list[dict] = []
         all_alerts: list[dict] = []
