@@ -14,71 +14,24 @@
     <a href="/usage" class="text-slate-600 hover:text-slate-400 transition-colors text-xs uppercase tracking-wider">full usage →</a>
   </div>
 
-  {# ── Backend Stations ─────────────────────────────────────────────────────── #}
+  {# ── Factory Status Bar ──────────────────────────────────────────────────── #}
   {% set exhausted = backends.get('exhausted_backends', []) %}
-  {% set visible_backends = [] %}
-  {% for name, label, icon in [('claude','Claude','◆'),('cursor','Cursor','▲'),('codex','Codex','●'),('gemini','Gemini','◉')] %}
-    {% if backends.get(name, False) or name in exhausted %}{% set _ = visible_backends.append((name, label, icon)) %}{% endif %}
-  {% endfor %}
-  {% set n_visible = visible_backends | length %}
-  <div class="grid gap-3
-    {% if n_visible == 1 %}grid-cols-1 max-w-xs
-    {% elif n_visible == 2 %}grid-cols-2 max-w-md
-    {% elif n_visible == 3 %}grid-cols-3
-    {% else %}grid-cols-2 sm:grid-cols-4{% endif %}" id="agent-cards">
-    {% for name, label, icon in visible_backends %}
-    {% set online = backends.get(name, False) %}
-    {% set my_wos = backend_wos.get(name, []) %}
-    {% set working = my_wos | length > 0 %}
-    {% set quota_hit = name in exhausted %}
-    <button data-agent="{{ name }}" onclick="selectAgent('{{ name }}')"
-      class="agent-card glass-panel p-4 flex flex-col gap-2 text-left transition-all
-        {% if quota_hit %}border-t-2 border-t-rose-500/60 opacity-70
-        {% elif online %}border-t-2 {% if working %}border-t-indigo-400/70{% else %}border-t-indigo-500/40{% endif %} hover:border-indigo-400/60 hover:shadow-lg hover:shadow-indigo-900/20
-        {% else %}opacity-40 cursor-not-allowed{% endif %}"
-      {% if not online and not quota_hit %}disabled{% endif %}>
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span class="{% if quota_hit %}text-rose-400{% elif online %}text-indigo-300{% else %}text-slate-700{% endif %}">{{ icon }}</span>
-          <span class="text-xs font-mono font-bold {% if quota_hit %}text-rose-300{% elif online %}text-slate-200{% else %}text-slate-600{% endif %}">{{ label }}</span>
-        </div>
-        {% if quota_hit %}
-        <span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
-        {% elif working %}
-        <span class="relative flex h-2 w-2">
-          <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-indigo-400"></span>
-          <span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-        </span>
-        {% elif online %}
-        <span class="relative flex h-2 w-2">
-          <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span>
-          <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-        </span>
-        {% else %}
-        <span class="inline-flex rounded-full h-2 w-2 bg-slate-800"></span>
-        {% endif %}
-      </div>
-      {% if quota_hit %}
-      <div class="text-xs font-mono text-rose-400">⊘ quota exhausted</div>
-      <div class="text-xs text-slate-600 font-mono">skipped until daemon restart</div>
-      {% elif working %}
-      <div class="text-xs font-mono text-indigo-400">
-        ● working · {{ my_wos | length }} WO{% if my_wos | length > 1 %}s{% endif %}
-      </div>
-      {% for wo in my_wos %}
-      <div class="text-xs font-mono text-slate-400 truncate">{{ wo.wo }} — {{ (wo.step or '') | truncate(32, True, '…') }}</div>
-      {% if wo.last_seen %}<div class="text-xs font-mono text-slate-600">checkin {{ wo.last_seen[11:16] }} UTC</div>{% endif %}
-      {% endfor %}
-      {% elif online %}
-      <div class="text-xs font-mono text-emerald-400">● ready</div>
-      {% else %}
-      <div class="text-xs font-mono text-slate-700">○ offline</div>
-      {% endif %}
-      <div class="agent-filter-badge hidden mt-1 text-xs font-mono px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 w-fit">
-        ▶ filtered
-      </div>
-    </button>
-    {% endfor %}
+  {% set cur_backend = 'Cursor' if backends.get('cursor') else 'Codex' if backends.get('codex') else 'Gemini' if backends.get('gemini') else '—' %}
+  <div class="glass-panel px-4 py-2.5 flex items-center gap-3 flex-wrap">
+    {% if backends.agent_runner_online %}
+    <span class="relative flex h-2 w-2 flex-shrink-0">
+      <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span>
+      <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+    </span>
+    <span class="text-xs font-mono text-emerald-400">Runner online</span>
+    {% else %}
+    <span class="inline-flex rounded-full h-2 w-2 bg-rose-500 flex-shrink-0"></span>
+    <span class="text-xs font-mono text-rose-400">Runner offline</span>
+    {% endif %}
+    <span class="text-slate-700 text-xs">|</span>
+    <span class="text-xs font-mono text-slate-400"><span id="sb-active-count">{{ active_wos | length }}</span> active</span>
+    <span class="text-slate-700 text-xs">|</span>
+    <span class="text-xs font-mono text-slate-500">{{ cur_backend }}</span>
   </div>
 
   {# ── Dependabot PR Queue ──────────────────────────────────────────────────── #}
@@ -138,24 +91,6 @@
           </div>{% endif %}
         </div>
       </div>
-      <div class="glass-panel px-4 py-3 flex items-center justify-between">
-        <span class="text-xs font-mono text-slate-500 uppercase tracking-widest">Dispatch</span>
-        <button onclick="releaseAll()" class="text-xs font-mono text-slate-600 hover:text-rose-400 transition-colors">clear all ✕</button>
-      </div>
-      <div class="glass-panel px-4 py-3 flex items-center justify-between">
-        <span class="text-xs font-mono text-slate-500 uppercase tracking-widest">Claude API</span>
-        <span class="text-xs font-mono {% if backends.get('claude-api') %}text-emerald-400{% else %}text-slate-600{% endif %}">
-          {% if backends.get('claude-api') %}● configured{% else %}○ not set{% endif %}</span>
-      </div>
-      {% if backends.agent_runner_online %}
-      <div class="glass-panel px-4 py-3 flex items-center gap-2">
-        <span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60 bg-emerald-400"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span></span>
-        <span class="text-xs font-mono text-emerald-400">Runner Online</span>
-      </div>{% else %}
-      <div class="glass-panel px-4 py-3 flex items-center gap-2">
-        <span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
-        <span class="text-xs font-mono text-rose-400">Runner Offline</span>
-      </div>{% endif %}
     </div>
 
     {# Live Log Feed #}
@@ -170,16 +105,10 @@
             <span id="feed-line-count" class="text-xs font-mono text-slate-700">0 lines</span>
           </div>
           <div class="flex items-center gap-3">
-            <div class="flex items-center gap-1" id="feed-filters">
-              <button onclick="selectAgent(null)" id="filter-all"
-                class="feed-filter-btn active px-2 py-0.5 text-xs font-mono rounded transition-all">All</button>
-              {% for name, label, icon in [('claude','Claude','◆'),('cursor','Cursor','▲'),('codex','Codex','●'),('gemini','Gemini','◉')] %}
-              {% if backends.get(name, False) or name in exhausted %}
-              <button onclick="selectAgent('{{ name }}')" id="filter-{{ name }}"
-                class="feed-filter-btn px-2 py-0.5 text-xs font-mono rounded transition-all">{{ label }}</button>
-              {% endif %}
-              {% endfor %}
-            </div>
+            <select id="wo-filter" onchange="selectWO(this.value)"
+              class="text-xs font-mono bg-slate-900 text-slate-400 border border-slate-700/50 rounded px-2 py-0.5 focus:outline-none focus:border-indigo-500/50 cursor-pointer">
+              <option value="">All</option>
+            </select>
             <div class="w-px h-4 bg-slate-800"></div>
             <label class="flex items-center gap-1.5 cursor-pointer select-none">
               <input type="checkbox" id="feed-autoscroll" checked class="w-3 h-3 accent-indigo-500">
@@ -197,10 +126,6 @@
 
 </div>
 
-<style>
-.feed-filter-btn { @apply text-slate-600 hover:text-slate-300 border border-transparent hover:border-slate-700 transition-all; }
-.feed-filter-btn.active { @apply text-indigo-300 bg-indigo-500/10 border-indigo-500/30; }
-</style>
 
 <script>
 (function () {
@@ -210,7 +135,6 @@
   const lineCountEl = document.getElementById('feed-line-count');
   const autoscroll = document.getElementById('feed-autoscroll');
   let lineCount = 0, feedConnected = false;
-  let activeAgent = null;
   let currentES = null;
 
   function colorize(text) {
@@ -247,7 +171,7 @@
     feed.innerHTML = '<div class="text-slate-700 italic">Connecting…</div>';
     lineCount = 0; feedConnected = false;
     dotWrap.innerHTML = '<span class="inline-flex rounded-full h-2 w-2 bg-slate-600"></span>';
-    const url = agentFilter ? `/api/runner/log/stream?agent=${encodeURIComponent(agentFilter)}` : '/api/runner/log/stream';
+    const url = agentFilter ? `/api/runner/log/stream?wo=${encodeURIComponent(agentFilter)}` : '/api/runner/log/stream';
     currentES = new EventSource(url);
     currentES.onopen = () => {
       if (!feedConnected) {
@@ -260,21 +184,8 @@
     currentES.onerror = () => { dotWrap.innerHTML = '<span class="inline-flex rounded-full h-2 w-2 bg-rose-500"></span>'; feedConnected = false; };
   }
 
-  window.selectAgent = function(name) {
-    if (activeAgent === name) name = null;
-    activeAgent = name;
-    document.querySelectorAll('.agent-card').forEach(card => {
-      const isSelected = card.dataset.agent === name;
-      card.classList.toggle('ring-2', isSelected);
-      card.classList.toggle('ring-indigo-500', isSelected);
-      card.classList.toggle('shadow-lg', isSelected);
-      card.classList.toggle('shadow-indigo-900/30', isSelected);
-      card.querySelector('.agent-filter-badge').classList.toggle('hidden', !isSelected);
-    });
-    document.querySelectorAll('.feed-filter-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.id === (name ? `filter-${name}` : 'filter-all'));
-    });
-    connectFeed(name);
+  window.selectWO = function(woId) {
+    connectFeed(woId || null);
   };
 
   connectFeed(null);
@@ -291,6 +202,15 @@
       const doneWos = allWos.filter(w => w.status === 'complete');
       const list = document.getElementById('active-wo-list');
       document.getElementById('active-wo-count').textContent = activeWos.length;
+      const sbCount = document.getElementById('sb-active-count');
+      if (sbCount) sbCount.textContent = activeWos.length;
+      const woSel = document.getElementById('wo-filter');
+      if (woSel) {
+        const cur = woSel.value;
+        woSel.innerHTML = '<option value="">All</option>' +
+          activeWos.map(w => `<option value="${w.wo}">${w.wo}</option>`).join('');
+        if (cur && activeWos.some(w => w.wo === cur)) woSel.value = cur;
+      }
       const e = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
       function statusClass(s) {
