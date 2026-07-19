@@ -445,6 +445,7 @@ async def dashboard(request: Request):
             "refresh_seconds": REFRESH_SECONDS,
             "github_repo": GITHUB_REPO,
             "columns": {
+                "planned": columns.get("planned", []),
                 "open": columns.get("open", []),
                 "in_progress": columns.get("in_progress", []),
                 "review": columns.get("review", []),
@@ -568,7 +569,7 @@ async def pm_dashboard(request: Request):
     watchdog = _load_watchdog()
 
     # Program roll-ups — deferred WOs excluded from total/progress (tracked separately)
-    programs: dict[str, dict] = defaultdict(lambda: {"total": 0, "done": 0, "in_progress": 0, "blocked": 0, "in_review": 0, "open": 0, "deferred": 0})
+    programs: dict[str, dict] = defaultdict(lambda: {"total": 0, "done": 0, "in_progress": 0, "blocked": 0, "in_review": 0, "planned": 0, "open": 0, "deferred": 0})
     for spec in wos.values():
         prog = spec.program or "Standalone"
         col = spec.board_column if spec.board_column != "review" else "in_review"
@@ -583,7 +584,7 @@ async def pm_dashboard(request: Request):
         prog["pct"] = round(prog["done"] / total * 100) if total else 0
 
     # Per-program WO lists grouped by board column for expanded program cards
-    program_wos: dict[str, dict] = defaultdict(lambda: {"open": [], "in_progress": [], "review": [], "blocked": [], "done": [], "deferred": []})
+    program_wos: dict[str, dict] = defaultdict(lambda: {"planned": [], "open": [], "in_progress": [], "review": [], "blocked": [], "done": [], "deferred": []})
     for spec in wos.values():
         prog = spec.program or "Standalone"
         program_wos[prog][spec.board_column].append(spec)
@@ -684,7 +685,7 @@ async def pm_dashboard(request: Request):
         "site_title": SITE_TITLE,
         "refresh_seconds": REFRESH_SECONDS,
         "github_repo": GITHUB_REPO,
-        "columns": {k: columns.get(k, []) for k in ("open", "in_progress", "review", "blocked", "done")},
+        "columns": {k: columns.get(k, []) for k in ("planned", "open", "in_progress", "review", "blocked", "done")},
         "total_wos": len(wos),
         "done_count": len(columns.get("done", [])),
         "programs": dict(sorted(programs.items())),
