@@ -1,7 +1,7 @@
 ---
 title: "Troubleshooting"
 description: "Diagnosing and resolving common factory issues: startup, agents, CI failures, and Docker"
-last_verified: 2026-07-11
+last_verified: 2026-07-21
 covers_wos: []
 doc_owner: factory-team
 ---
@@ -53,10 +53,10 @@ make restart
 
 The New WO form grays out backends that the draft server cannot find. The draft server probes each CLI at startup.
 
-**For subscription backends (claude, cursor, codex, gemini):**
+**For subscription backends (claude, cursor):**
 1. Confirm the agent-runner is running (`make agent-run`).
-2. Check that the CLI is installed and in PATH: `which claude`, `which agent`, `which codex`, `which gemini`.
-3. Confirm you are logged in to the subscription service. Cursor's CLI is `agent`, not `cursor`.
+2. Check that the CLI is installed and in PATH: `which claude`, `which cursor`.
+3. Confirm you are logged in to the subscription service.
 
 **For claude-api:**
 The claude-api backend is available when `ANTHROPIC_API_KEY` is set in **Settings → Authentication**. If the badge shows "Not set," the backend will be unavailable.
@@ -134,6 +134,36 @@ To temporarily unblock a PR without fixing the underlying issue, a repo admin ca
 ## Notifications not arriving
 
 See the [Notifications troubleshooting section](Notifications.md) for step-by-step diagnosis of ntfy and Slack delivery issues.
+
+## Intelligence loop not taking action
+
+The intelligence loop runs every 10 minutes (configurable via `INTELLIGENCE_INTERVAL` env var) and handles three recurring problems autonomously:
+
+- **Major-version Dependabot PRs** — comments `@dependabot ignore this major version` and closes the PR
+- **PRs with merge conflicts (DIRTY state)** — creates a `WO-CONF-{N}` factory WO and comments on the PR
+- **CI failing > 90 minutes** — calls Claude to diagnose; either creates a fix WO, re-triggers CI, or ignores a transient failure
+
+Check the last pass result from the factory floor's **Intelligence Loop** panel, or directly:
+
+```bash
+curl -s http://localhost:8100/api/intelligence/status | python3 -m json.tool
+```
+
+To trigger a manual pass immediately:
+
+```bash
+curl -s -X POST http://localhost:8100/api/intelligence/run
+```
+
+**No Anthropic key set:** The CI diagnosis and conflict WO description calls require `ANTHROPIC_API_KEY`. Without it, CI failures are ignored and conflict WOs get a generic description. Major-version Dependabot suppression is purely rule-based and always works.
+
+**Actions repeating:** Each action has a 24-hour in-memory dedup window. If the orchestrator restarted within 24 hours, the same action may fire again. This is by design — the actions are safe to repeat.
+
+**WO stuck after max retries:** If an agent has failed 3 times on the same WO (default `MAX_RETRY_ATTEMPTS=3`), the claim endpoint returns HTTP 429. To force-clear the attempt counter:
+
+```bash
+curl -s -X POST http://localhost:8100/api/dispatch/WO-NNN/reset
+```
 
 ## Dashboard data looks stale
 

@@ -1,40 +1,34 @@
 ---
 title: "Agent Backends"
-description: "Configuring and using AI backends (Claude, Cursor, Codex, Gemini, claude-api) for WO execution"
-last_verified: 2026-07-11
+description: "Configuring and using AI backends (Claude, Cursor, claude-api) for WO execution"
+last_verified: 2026-07-21
 covers_wos: []
 doc_owner: factory-team
 ---
 
 # Agent Backends
 
-The factory supports five AI backends for executing WOs. Four of them are subscription-based CLI tools that run on your host machine. One calls the Anthropic API directly from Docker.
+The factory supports three AI backends for executing WOs. Two are subscription-based CLI tools that run on your host machine. One calls the Anthropic API directly from Docker.
 
-## The five backends
+## The three backends
 
 | Backend | How it runs | What you need |
 |---------|------------|--------------|
 | `claude` | `claude --dangerously-skip-permissions` CLI | Claude Pro or Max subscription + CLI logged in |
-| `cursor` | `agent --print --trust` CLI | Cursor Pro subscription + CLI logged in |
-| `codex` | `codex --approval-mode full-auto` CLI | OpenAI Codex subscription |
-| `gemini` | `gemini --yolo -p` CLI | Google Gemini Advanced subscription |
+| `cursor` | `cursor --headless` CLI | Cursor Pro subscription + CLI logged in |
 | `claude-api` | Anthropic SDK inside Docker | `ANTHROPIC_API_KEY` in the secrets vault |
 
-Cursor installs its headless CLI as `agent`, not `cursor`. Check with `which agent` if you are not sure it is installed.
-
-The subscription backends (`claude`, `cursor`, `codex`, `gemini`) run on your host machine and use your existing CLI session credentials. Docker never touches those credentials. The draft server on port 8101 is the bridge: the orchestrator calls `http://host.docker.internal:8101/api/draft` and the draft server calls the CLI on the host.
+The subscription backends (`claude`, `cursor`) run on your host machine and use your existing CLI session credentials. Docker never touches those credentials. The draft server on port 8101 is the bridge: the orchestrator calls `http://host.docker.internal:8101/api/draft` and the draft server calls the CLI on the host.
 
 `claude-api` runs inside Docker and calls the Anthropic API directly. It requires `ANTHROPIC_API_KEY` set in **Settings → Authentication**. Use it when you do not have a subscription CLI available or when you want to avoid running the agent-runner process.
+
+You can add custom LLM providers in **Settings → Agents → LLM Providers** — each provider gets a name, auth type (subscription/API/both), optional API key config, and step-by-step CLI setup instructions.
 
 ## When to use each
 
 **`claude`** is the most capable for complex reasoning, multi-file refactors, and anything requiring careful analysis of architecture constraints. Best default.
 
 **`cursor`** is strong for IDE-style code generation, especially in projects with large type trees or complex build setups. Good for TypeScript/React heavy work.
-
-**`codex`** is fast for well-scoped implementation tasks where the spec is highly specific. Less strong on architectural judgment.
-
-**`gemini`** offers a large context window. Useful when WO specs reference a lot of existing code or documentation that needs to be held in context simultaneously.
 
 **`claude-api`** is the no-runner fallback. It does not run autonomously in an agentic loop — it generates a WO spec draft but cannot claim and implement a WO end-to-end. Use it when the agent-runner is not available.
 
@@ -72,7 +66,7 @@ If any reviewer hits its blocking threshold, the chain stops and the agent is se
 
 ## Cross-LLM review
 
-When **Force cross-LLM review** is enabled (default), the reviewer backends are automatically rotated to differ from the coding agent. If Cursor wrote the code and Claude and Codex are both available, the four reviewers get Claude/Codex/Claude/Codex in rotation. This prevents the same model from reviewing its own output.
+When **Force cross-LLM review** is enabled (default), the reviewer backends are automatically rotated to differ from the coding agent. If Cursor wrote the code and Claude is available, the four reviewers use Claude. This prevents the same model from reviewing its own output.
 
 When the toggle is off, you assign reviewers manually in the per-reviewer dropdowns in **Settings → Agents**.
 
