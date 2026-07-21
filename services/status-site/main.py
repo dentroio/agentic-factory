@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,7 +26,7 @@ templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 SITE_TITLE = os.getenv("SITE_TITLE", "AI Factory Status")
-REFRESH_SECONDS = int(os.getenv("REFRESH_SECONDS", "60"))
+REFRESH_SECONDS = int(os.getenv("REFRESH_SECONDS", "120"))
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
@@ -34,9 +35,15 @@ ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
 VALIDATIONS_PATH = Path("/orchestrator/pending_validations.json")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
+RUNS_PATH_LOCAL = os.getenv("RUNS_PATH", "docs/factory/runs")
 LOG_PATH = os.getenv("LOG_PATH", "/var/log/factory-agent/out.log")
 FACTORY_CONFIG_PATH = Path(os.getenv("FACTORY_CONFIG_PATH", "/config/factory-config.json"))
 LOCAL_REPO_MOUNT = os.getenv("LOCAL_REPO_MOUNT", "")
+
+# In-memory cache for parsed WO files — eliminates 400+ file reads on every page load.
+# Keyed as (timestamp, result_dict). Invalidated after WO_CACHE_TTL seconds.
+_wos_cache: tuple[float, dict] | None = None
+_WOS_CACHE_TTL = int(os.getenv("WO_CACHE_TTL", "300"))  # 5 minutes
 
 
 def _load_watchdog() -> dict | None:
@@ -110,13 +117,20 @@ async def _fetch_plan_from_github() -> dict | None:
 
 
 def _load_wos_from_disk() -> dict[int, WOSpec] | None:
-    """Read WO markdown files directly from the locally-mounted repo volume.
+    """Read WO markdown files from the locally-mounted repo volume, with TTL cache.
 
     Returns a populated dict when the mount is available, None when it isn't.
-    Eliminates ~390 GitHub API calls per page load (1 list + N individual fetches).
+    Caches the parsed result for WO_CACHE_TTL seconds (default 5 min) to avoid
+    re-parsing 400+ files on every page load.
     """
+    global _wos_cache
     if not LOCAL_REPO_MOUNT:
         return None
+    # Return cached result if still fresh
+    if _wos_cache is not None:
+        ts, cached = _wos_cache
+        if time.monotonic() - ts < _WOS_CACHE_TTL:
+            return cached
     wo_dir = Path(LOCAL_REPO_MOUNT) / WO_PATH
     if not wo_dir.is_dir():
         return None
@@ -129,7 +143,21 @@ def _load_wos_from_disk() -> dict[int, WOSpec] | None:
         spec = parse_wo_file(content, path.name, repo=GITHUB_REPO)
         if spec:
             results[spec.number] = spec
+    _wos_cache = (time.monotonic(), results)
     return results
+
+
+def _agent_status_from_disk(wo_number: int) -> dict | None:
+    """Read a WO run-status JSON from disk instead of the GitHub API."""
+    if not LOCAL_REPO_MOUNT:
+        return None
+    run_file = Path(LOCAL_REPO_MOUNT) / RUNS_PATH_LOCAL / f"WO-{wo_number}.json"
+    if not run_file.exists():
+        return None
+    try:
+        return json.loads(run_file.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 async def _load_wos() -> tuple[dict[int, WOSpec], bool]:
@@ -190,10 +218,13 @@ async def _load_active_branches() -> list[dict]:
         wo_num = extract_wo_number_from_branch(b["name"])
         agent_status = None
         if wo_num:
-            try:
-                agent_status = await get_agent_status(b["name"], wo_num)
-            except Exception:
-                pass
+            # Prefer local disk read (zero network) over GitHub API call
+            agent_status = _agent_status_from_disk(wo_num)
+            if agent_status is None:
+                try:
+                    agent_status = await get_agent_status(b["name"], wo_num)
+                except Exception:
+                    pass
         commit = b.get("commit", {})
         committer = commit.get("commit", {}).get("committer", {})
         return {
@@ -421,6 +452,18 @@ async def dashboard(request: Request):
     validations = _load_validations()
     pending_validations = [v for v in validations if v.get("status") == "pending"]
 
+    # Dispatch-based active/queue counts — same source Factory page uses
+    active_dispatch = [w for w in dispatch.values() if w.get("status") not in ("complete",)]
+    dispatch_running = len([w for w in active_dispatch if w.get("status") == "in_progress"])
+    dispatch_queue = len([w for w in dispatch.values() if w.get("status") in ("queued", "pending", "waiting")])
+
+    # Merged PR stats for factory impact panel
+    now_utc = datetime.now(UTC)
+    week_start = (now_utc - timedelta(days=7)).isoformat()
+    month_start = (now_utc - timedelta(days=30)).isoformat()
+    merged_this_week = sum(1 for p in merged_prs_board if p.get("merged_at", "") >= week_start)
+    merged_this_month = sum(1 for p in merged_prs_board if p.get("merged_at", "") >= month_start)
+
     # Derive health status from watchdog data
     if watchdog:
         s = watchdog.get("summary", {})
@@ -458,6 +501,10 @@ async def dashboard(request: Request):
             "ci": ci,
             "total_wos": len(wos),
             "done_count": len(columns.get("done", [])),
+            "dispatch_running": dispatch_running,
+            "dispatch_queue": dispatch_queue,
+            "merged_this_week": merged_this_week,
+            "merged_this_month": merged_this_month,
             "watchdog": watchdog,
             "health_status": health_status,
             "wos_available": wos_available,
@@ -567,6 +614,7 @@ async def pm_dashboard(request: Request):
     _apply_live_status(wos, branches, prs, dispatch, merged_prs=merged_prs)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
+    dispatch_running = len([w for w in dispatch.values() if w.get("status") == "in_progress"])
 
     # Program roll-ups — deferred WOs excluded from total/progress (tracked separately)
     programs: dict[str, dict] = defaultdict(lambda: {"total": 0, "done": 0, "in_progress": 0, "blocked": 0, "in_review": 0, "planned": 0, "open": 0, "deferred": 0})
@@ -685,9 +733,10 @@ async def pm_dashboard(request: Request):
         "site_title": SITE_TITLE,
         "refresh_seconds": REFRESH_SECONDS,
         "github_repo": GITHUB_REPO,
-        "columns": {k: columns.get(k, []) for k in ("planned", "open", "in_progress", "review", "blocked", "done")},
+        "columns": {k: columns.get(k, []) for k in ("planned", "open", "in_progress", "review", "blocked", "done", "deferred")},
         "total_wos": len(wos),
         "done_count": len(columns.get("done", [])),
+        "dispatch_running": dispatch_running,
         "programs": dict(sorted(programs.items())),
         "program_wos": dict(sorted(program_wos.items())),
         "velocity": velocity,
@@ -2035,7 +2084,11 @@ async def factory_floor(request: Request):
     except Exception:
         pass
 
-    active_wos = sorted(dispatch.values(), key=lambda w: w.get("claimed_at", ""), reverse=True)
+    active_wos = sorted(
+        [w for w in dispatch.values() if w.get("status") != "complete"],
+        key=lambda w: w.get("claimed_at", ""),
+        reverse=True,
+    )
 
     # Map which backend names are actively working WOs so agent cards can show status.
     # Use the `backend` field (set by runner when claiming) for exact matching.

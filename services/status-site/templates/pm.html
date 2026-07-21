@@ -17,8 +17,8 @@
       <div class="text-xl font-display font-bold text-emerald-400 mt-0.5 text-glow-green">{{ done_count }}</div>
     </div>
     <div class="glass-panel px-4 py-2 text-center min-w-20 border-l-2 border-l-indigo-500/50">
-      <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">Active</div>
-      <div class="text-xl font-display font-bold text-indigo-400 mt-0.5 text-glow-blue">{{ columns.in_progress | length }}</div>
+      <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">Running</div>
+      <div class="text-xl font-display font-bold text-indigo-400 mt-0.5 text-glow-blue">{{ dispatch_running }}</div>
     </div>
     <div class="glass-panel px-4 py-2 text-center min-w-20 border-l-2 border-l-amber-500/50">
       <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">Open</div>
@@ -187,6 +187,67 @@
     {% endif %}
   </div>
 
+</div>
+
+{# ── WO Kanban Board ──────────────────────────────────────────────────── #}
+<div class="mb-4">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-xs font-display font-bold text-slate-400 uppercase tracking-widest">Work Order Board</h2>
+    <span class="text-xs text-slate-500">Click any card for details · "Running" = dispatched to an agent right now</span>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-6 gap-3">
+    {% set board = [
+      ("Open",        "open",        "kanban-col-open"),
+      ("Running",     "in_progress", "kanban-col-progress"),
+      ("In Review",   "review",      "kanban-col-review"),
+      ("Blocked",     "blocked",     "kanban-col-blocked"),
+      ("Deferred",    "deferred",    "kanban-col-deferred"),
+      ("Done",        "done",        "kanban-col-done"),
+    ] %}
+    {% for label, key, col_class in board %}
+    <div class="glass-panel {{ col_class }} p-3 flex flex-col">
+      <div class="flex items-center justify-between mb-3 pb-2 border-b border-slate-800/40">
+        <span class="text-xs font-display font-bold text-slate-200 uppercase tracking-wider">{{ label }}</span>
+        <span class="text-xs font-mono font-bold bg-slate-800 text-slate-300 rounded-full px-2 py-0.5">{{ columns[key] | length }}</span>
+      </div>
+      <div class="space-y-2 flex-1 overflow-y-auto max-h-[320px] pr-0.5">
+        {% for spec in columns[key] %}
+        <a href="/wo/{{ spec.number }}" class="block p-2.5 rounded-lg bg-slate-900/40 border border-slate-800/60 hover:border-slate-700/80 hover:bg-slate-900/80 transition-all duration-200 group">
+          <div class="flex items-center justify-between gap-1.5 mb-1.5">
+            <span class="text-xs font-bold px-1.5 py-0.5 rounded font-mono uppercase {{ spec.priority_class }}">
+              {{ spec.priority or "—" }}
+            </span>
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs text-slate-500 font-mono group-hover:text-indigo-400 transition-colors">WO-{{ spec.number }}</span>
+              {% if spec.repo %}
+              {% set _rn = spec.repo.split("/")[-1] %}
+              {% if "factory" in _rn %}
+              <span class="text-xs px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 font-mono border border-amber-800/40">factory</span>
+              {% endif %}
+              {% endif %}
+            </div>
+          </div>
+          <div class="text-xs text-slate-200 font-medium leading-snug mb-1">{{ spec.title }}</div>
+          {% if spec.agent_name %}
+          <div class="flex items-center gap-1.5 bg-indigo-950/20 border border-indigo-900/40 rounded px-2 py-1 mt-1">
+            <span class="relative flex h-1.5 w-1.5 flex-shrink-0">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-500"></span>
+            </span>
+            <span class="text-xs text-indigo-300 font-semibold truncate flex-1">{{ spec.agent_name }}</span>
+          </div>
+          {% endif %}
+          {% if spec.effort %}
+          <div class="text-xs text-slate-600 font-mono mt-1">{{ spec.effort }}</div>
+          {% endif %}
+        </a>
+        {% else %}
+        <div class="flex items-center justify-center py-6 text-slate-700 text-xs">— empty —</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
 </div>
 
 {# ── Programs ─────────────────────────────────────────────────────────── #}
