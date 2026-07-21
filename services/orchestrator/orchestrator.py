@@ -39,6 +39,7 @@ INTELLIGENCE_INTERVAL = int(os.getenv("INTELLIGENCE_INTERVAL", "600"))
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
 CLAIM_TIMEOUT_SECONDS = int(os.getenv("CLAIM_TIMEOUT_SECONDS", "600"))
 MAX_PARALLEL_WOS = int(os.getenv("MAX_PARALLEL_WOS", "2"))
+MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
 REQUIRE_APPROVAL_FOR: set[str] = {p.strip() for p in os.getenv("REQUIRE_APPROVAL_FOR", "P1").split(",") if p.strip()}
 CLARION_API_URL = os.getenv("CLARION_API_URL", "http://localhost:8000")
 PREFLIGHT_RETRY_SECONDS = 1800  # re-check held WOs every 30 minutes
@@ -72,6 +73,7 @@ DATA_DIR = Path("/data")
 OUTPUT_PATH = DATA_DIR / "orchestrator.json"
 DISPATCH_STATE_PATH = DATA_DIR / "dispatch_state.json"
 VALIDATIONS_PATH = DATA_DIR / "pending_validations.json"
+INTELLIGENCE_STATE_PATH = DATA_DIR / "intelligence_last_run.json"
 WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
 DB_PATH = DATA_DIR / "factory.db"
 
@@ -105,7 +107,7 @@ _log_subscribers: list[asyncio.Queue] = []  # one Queue per active SSE client
 
 
 def _load_state() -> None:
-    global _dispatch_state, _validations, _held_wos, _factory_paused
+    global _dispatch_state, _validations, _held_wos, _factory_paused, _last_intelligence_run
     _init_db()
     _migrate_plan_json_to_db()
     # Load dispatch state: SQLite primary, JSON fallback (migration path)
@@ -135,6 +137,11 @@ def _load_state() -> None:
             _factory_paused = json.loads(PAUSE_PATH.read_text()).get("paused", False)
         except Exception:
             _factory_paused = False
+    if INTELLIGENCE_STATE_PATH.exists():
+        try:
+            _last_intelligence_run = json.loads(INTELLIGENCE_STATE_PATH.read_text())
+        except Exception:
+            _last_intelligence_run = {}
 
 
 def _load_pm_memory() -> None:
@@ -859,12 +866,20 @@ async def _intelligence_job() -> None:
             update_dispatch=_update_dispatch,
         )
         _last_intelligence_run = result
+        try:
+            INTELLIGENCE_STATE_PATH.write_text(json.dumps(result, indent=2))
+        except Exception:
+            pass
         if result.get("actions_taken"):
             print(f"[intelligence] actions taken: {result['actions_taken']}")
         else:
             print(f"[intelligence] pass complete — no actions needed")
     except Exception as e:
         _last_intelligence_run = {"error": str(e), "started_at": datetime.now(UTC).isoformat()}
+        try:
+            INTELLIGENCE_STATE_PATH.write_text(json.dumps(_last_intelligence_run, indent=2))
+        except Exception:
+            pass
         print(f"[intelligence] pass failed: {e}")
 
 
@@ -1246,6 +1261,15 @@ async def claim_wo(req: ClaimRequest):
     if already_approved:
         _dispatch_state.pop(wo_id, None)
 
+    prev = _dispatch_state.get(wo_id, {})
+    attempt_count = prev.get("attempt_count", 0) + 1
+    if attempt_count > MAX_RETRY_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"{wo_id} exceeded max retry attempts ({MAX_RETRY_ATTEMPTS}). "
+                   "Use POST /api/dispatch/{wo_id}/reset to force-clear the attempt counter.",
+        )
+
     _dispatch_state[wo_id] = {
         "wo": wo_id,
         "slug": req.slug,
@@ -1255,6 +1279,8 @@ async def claim_wo(req: ClaimRequest):
         "claimed_at": _utcnow(),
         "status": "claimed",
         "pr_url": "",
+        "attempt_count": attempt_count,
+        "first_claimed_at": prev.get("first_claimed_at", _utcnow()),
     }
     _save_dispatch()
     _db_append_step(wo_id, "claimed", agent=req.agent)
@@ -1490,11 +1516,31 @@ async def release_dispatch(wo_id: str):
 async def retry_dispatch(wo_id: str):
     """Reset a failed/stuck WO back to open so the runner picks it up again."""
     wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
+    prev = _dispatch_state.get(wo_id, {})
+    attempt_count = prev.get("attempt_count", 0)
+    # Preserve attempt_count so the max-retries gate still applies on the next claim.
+    # Use a minimal stub rather than deleting so history is kept.
+    _dispatch_state[wo_id] = {
+        "wo": wo_id,
+        "status": "retry_queued",
+        "attempt_count": attempt_count,
+        "first_claimed_at": prev.get("first_claimed_at", _utcnow()),
+        "retried_at": _utcnow(),
+    }
+    _save_dispatch()
+    print(f"[orchestrator] {wo_id} queued for retry (attempt {attempt_count}, dispatch reset)")
+    return {"ok": True, "retrying": wo_id, "attempt_count": attempt_count}
+
+
+@app.post("/api/dispatch/{wo_id}/reset")
+async def reset_dispatch(wo_id: str):
+    """Force-clear dispatch state including attempt counter — use when max retries exceeded."""
+    wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
     if wo_id in _dispatch_state:
         del _dispatch_state[wo_id]
         _save_dispatch()
-    print(f"[orchestrator] {wo_id} queued for retry (dispatch cleared)")
-    return {"ok": True, "retrying": wo_id}
+    print(f"[orchestrator] {wo_id} dispatch state hard-reset (attempt counter cleared)")
+    return {"ok": True, "reset": wo_id}
 
 
 @app.delete("/api/dispatch")
@@ -2705,12 +2751,14 @@ async def _sync_local_repo() -> None:
     https_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "fetch", https_url, "main:refs/remotes/origin/main",
+            "git", "fetch", "--prune", https_url,
+            "main:refs/remotes/origin/main",
+            "+refs/heads/wo/*:refs/remotes/origin/wo/*",
             cwd=LOCAL_REPO_MOUNT,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
         )
-        _, err = await asyncio.wait_for(proc.communicate(), timeout=30)
+        _, err = await asyncio.wait_for(proc.communicate(), timeout=60)
         if proc.returncode != 0:
             print(f"[orchestrator] git fetch failed: {err.decode(errors='replace').strip()[:200]}")
             return
@@ -2892,7 +2940,12 @@ async def poll() -> None:
     _specs_cache = dict(specs)  # snapshot for PM chat context injection
 
     # Sets for board summary use all specs; dispatch queue uses primary-repo specs only
-    done_wos = {num for num, s in specs.items() if _is_done(s["status"])}
+    # Also treat dispatch-complete WOs as done so lingering branches don't re-surface them.
+    dispatch_done = {
+        int(k[3:]) for k, v in _dispatch_state.items()
+        if k.startswith("WO-") and k[3:].isdigit() and v.get("status") == "complete"
+    }
+    done_wos = {num for num, s in specs.items() if _is_done(s["status"])} | dispatch_done
     in_progress_wos = active_branch_wos - pr_wos - done_wos
     in_review_wos = pr_wos - done_wos
     open_wos = {num for num, s in specs.items()
