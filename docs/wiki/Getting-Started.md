@@ -15,7 +15,7 @@ This page walks you from zero to a running factory with your first work order di
 - **Docker Desktop** — the factory's dashboard, orchestrator, and PR watchdog all run in Docker
 - **macOS** — secrets are stored in the macOS Keychain; Linux requires editing `.env` manually
 - **GitHub account** — the factory monitors a GitHub repo and creates PRs there
-- **An AI backend** — at least one of: Claude Pro/Max subscription (CLI), Cursor Pro, or an Anthropic API key
+- **An AI backend** — at least one of: Claude Pro/Max subscription (CLI), Cursor Pro, Codex, Gemini Advanced, or an Anthropic API key
 
 ## 1. Create your repo from the template
 
@@ -73,7 +73,7 @@ The script prompts for:
 - **ntfy push topic** — auto-generated; subscribe to it in the ntfy app for phone notifications
 - **Slack webhook URL** — optional; press Enter to skip
 - **Anthropic API key** — for the orchestrator's WO spec generation; same key as GitHub Actions
-- **Agent backend** — which AI runs your work orders: claude (default) or cursor
+- **Agent backend** — which AI runs your work orders: claude (default), cursor, codex, or gemini
 
 After setup completes, the factory services start automatically and the dashboard opens in your browser.
 

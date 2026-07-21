@@ -68,15 +68,17 @@ POST_COMMENTS=false           # set true to have watchdog post GitHub PR comment
 
 ### Agent backends
 
-The agent-runner supports two subscription CLI backends and one API backend:
+The agent-runner supports four subscription CLI backends and one API backend:
 
 | Backend | How it runs | Requires |
 |---------|-------------|---------|
 | `claude` | `claude --dangerously-skip-permissions` CLI | Claude Pro/Max + CLI logged in |
 | `cursor` | `cursor --headless` CLI | Cursor Pro + CLI logged in |
+| `codex` | `codex --approval-mode full-auto` CLI | OpenAI Codex subscription |
+| `gemini` | `gemini --yolo -p` CLI | Google Gemini Advanced |
 | `claude-api` | Anthropic SDK (Docker) | `ANTHROPIC_API_KEY` in secrets |
 
-Subscription backends run on your host machine and use your existing CLI session — Docker never touches your credentials. Add or configure additional LLM providers at any time via **Settings → Agents → LLM Providers** without restarting anything.
+Subscription backends run on your host machine and use your existing CLI session — Docker never touches your credentials. Enable only the backends you use via **Settings → Agents → LLM Providers**.
 
 The agent-runner starts a local HTTP server (`draft_server.py`) on port **8101**. The orchestrator proxies WO draft requests to this server when using subscription backends — so the Docker container never needs your CLI session credentials.
 
@@ -99,7 +101,7 @@ The agent-runner starts a local HTTP server (`draft_server.py`) on port **8101**
 | `services/orchestrator/intelligence.py` | Autonomous background loop (10 min): closes major-version Dependabot PRs, queues conflict/CI-fix WOs, clears ghost dispatch entries |
 | `services/pr-watchdog/` | PR lifecycle monitor — CI health, stale PRs, merge eligibility |
 | `services/agent-runner/` | Autonomous WO executor — subscription CLI backends, quality gate, peer review chain |
-| `services/agent-runner/backends/` | Pluggable AI backends: `claude.py`, `cursor.py` |
+| `services/agent-runner/backends/` | Pluggable AI backends: `claude.py`, `cursor.py`, `codex.py`, `gemini.py` |
 | `services/agent-runner/draft_server.py` | Local HTTP daemon (port 8101) — probes installed CLIs, serves `POST /api/draft` to orchestrator |
 | `services/agent-runner/quality_gate.py` | Parallel CI + bandit + semgrep + JS/TS security scan |
 | `services/agent-runner/review_chain.py` | 4-reviewer AI review chain (security, architecture, correctness, performance) |
