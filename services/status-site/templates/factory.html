@@ -28,7 +28,7 @@
 
   {# ── Factory Status Bar ──────────────────────────────────────────────────── #}
   {% set exhausted = backends.get('exhausted_backends', []) %}
-  {% set cur_backend = 'Cursor' if backends.get('cursor') else 'Codex' if backends.get('codex') else 'Gemini' if backends.get('gemini') else '—' %}
+  {% set cur_backend = 'Cursor' if backends.get('cursor') else '—' %}
   <div class="glass-panel px-4 py-2.5 flex items-center gap-3 flex-wrap">
     {% if backends.agent_runner_online %}
     <span class="relative flex h-2 w-2 flex-shrink-0">
@@ -479,7 +479,7 @@
         subscription: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-sky-500/15 text-sky-400">Subscription</span>',
         api: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400">API Key</span>',
       };
-      const names = ['claude', 'cursor', 'codex', 'gemini'];
+      const names = ['claude', 'cursor'];
       list.innerHTML = names.map(name => {
         const a = agents[name];
         if (!a) return '';
