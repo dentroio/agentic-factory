@@ -10,7 +10,7 @@
 <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
   <div>
     <h1 class="text-xl font-display font-bold text-slate-100">Agent Configuration</h1>
-    <p class="text-xs text-slate-400 mt-1">Set the execution backend and reviewer assignments. Changes take effect on the next WO the runner picks up.</p>
+    <p class="text-xs text-slate-400 mt-1">Manage LLM providers and execution settings. Changes take effect on the next WO the runner picks up.</p>
   </div>
 </div>
 
@@ -24,7 +24,7 @@
 {% if saved %}
 <div class="mb-4 flex items-center gap-3 px-4 py-3 rounded-xl border bg-emerald-500/8 border-emerald-500/20 text-emerald-300 text-xs">
   <svg class="w-4 h-4 flex-shrink-0 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-  Agent configuration saved. The runner will use these settings on its next WO.
+  Agent configuration saved.
 </div>
 {% endif %}
 
@@ -34,6 +34,393 @@
   {{ error }}
 </div>
 {% endif %}
+
+{# ── LLM Providers ──────────────────────────────────────────────────────────── #}
+<div class="glass-panel overflow-hidden mb-6">
+  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
+    <div>
+      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">LLM Providers</span>
+      <p class="text-xs text-slate-500 mt-0.5">Configure AI models available to the factory. One is designated as the execution backend.</p>
+    </div>
+    <button type="button" onclick="openProviderModal(null)"
+      class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-mono bg-violet-600/30 text-violet-300 hover:bg-violet-600/50 border border-violet-500/30 transition-colors">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+      Add Provider
+    </button>
+  </div>
+  <div id="llm-provider-list" class="divide-y divide-slate-800/40">
+    <div class="px-5 py-8 text-center text-xs text-slate-600 font-mono">Loading providers…</div>
+  </div>
+</div>
+
+{# ── Add/Edit Provider Modal ────────────────────────────────────────────────── #}
+<div id="provider-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" style="display:none!important">
+  <div class="bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto mx-4">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+      <h2 id="modal-title" class="text-sm font-bold text-slate-100">Add LLM Provider</h2>
+      <button type="button" onclick="closeProviderModal()" class="text-slate-500 hover:text-slate-200 transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div id="modal-error" class="hidden mx-6 mt-4 flex items-start gap-2 px-3 py-2 rounded-lg border bg-red-500/8 border-red-500/20 text-red-300 text-xs">
+      <svg class="w-4 h-4 flex-shrink-0 mt-0.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <span id="modal-error-text"></span>
+    </div>
+
+    <div class="px-6 py-5 space-y-4">
+      <div>
+        <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Provider Name <span class="text-rose-400">*</span></label>
+        <input type="text" id="pm-name" placeholder="e.g., Claude Code"
+          class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100
+                 focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Provider Type</label>
+          <select id="pm-provider" onchange="onProviderTypeChange()"
+            class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100
+                   focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="cursor">Cursor</option>
+            <option value="openai">OpenAI</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Auth Type</label>
+          <select id="pm-auth" onchange="onAuthTypeChange()"
+            class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100
+                   focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+            <option value="subscription">Subscription (CLI)</option>
+            <option value="api">API Key</option>
+            <option value="both">Both (Sub + API)</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Role / Purpose</label>
+        <input type="text" id="pm-description" placeholder="e.g., Executes WOs end-to-end via CLI with full auto-approval"
+          class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100
+                 focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+      </div>
+
+      {# API Key section #}
+      <div id="pm-api-section" class="space-y-3 border-t border-slate-800 pt-4" style="display:none">
+        <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">API Configuration</p>
+        <div>
+          <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">API Key Environment Variable</label>
+          <input type="text" id="pm-api-key-env" placeholder="e.g., ANTHROPIC_API_KEY"
+            class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+                   focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+          <p class="text-xs text-slate-600 mt-1">The env var name the runner uses on this machine.</p>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">API Key</label>
+          <div class="relative">
+            <input type="password" id="pm-api-key" autocomplete="off" placeholder="Paste key to set or replace…"
+              class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 pr-10 text-xs text-slate-100 font-mono
+                     focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+            <button type="button" onclick="toggleApiKeyVisibility()"
+              class="absolute right-2 top-1.5 p-1 text-slate-500 hover:text-slate-200 transition-colors">
+              <svg id="pm-eye-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+              </svg>
+            </button>
+          </div>
+          <p class="text-xs text-slate-600 mt-1">Leave blank to keep the current key.</p>
+        </div>
+      </div>
+
+      {# Subscription setup section #}
+      <div id="pm-sub-section" class="space-y-3 border-t border-slate-800 pt-4" style="display:none">
+        <div class="flex items-center justify-between">
+          <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Subscription Setup</p>
+          <span class="text-xs text-slate-600">Steps shown to anyone setting up this agent</span>
+        </div>
+        <div id="pm-sub-steps" class="space-y-2"></div>
+        <button type="button" onclick="addSetupStep()"
+          class="text-xs text-violet-400 hover:text-violet-200 transition-colors font-mono">+ Add step</button>
+        <div>
+          <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">CLI Command</label>
+          <input type="text" id="pm-cli-cmd" placeholder="e.g., claude code --dangerously-skip-permissions"
+            class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+                   focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+          <p class="text-xs text-slate-600 mt-1">The shell command the factory runner uses to invoke this agent.</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 pt-1">
+        <input type="checkbox" id="pm-default" class="w-4 h-4 rounded border-slate-700 bg-slate-950 text-violet-500 focus:ring-violet-500/30">
+        <label for="pm-default" class="text-xs text-slate-300">Set as default execution backend</label>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-800 bg-slate-950/30">
+      <button type="button" onclick="closeProviderModal()"
+        class="px-4 py-2 text-xs font-mono text-slate-400 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors">
+        Cancel
+      </button>
+      <button type="button" id="pm-save-btn" onclick="saveProvider()"
+        class="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-violet-600 hover:bg-violet-500 text-white rounded-lg transition-colors border border-violet-500/50 disabled:opacity-40">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        <span id="pm-save-label">Save Provider</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const DEFAULT_PROVIDERS = {
+    claude: {
+      id: 'claude', name: 'Claude Code', provider: 'anthropic',
+      description: 'Executes WOs end-to-end via Claude Code CLI with full auto-approval',
+      auth_type: 'both', api_key_env: 'ANTHROPIC_API_KEY',
+      cli_command: 'claude code --dangerously-skip-permissions',
+      setup_steps: [
+        'Subscribe to Claude Max or Pro at claude.ai',
+        'Install Claude Code: brew install claude or download from claude.ai/code',
+        "Login: run 'claude' in terminal and follow the OAuth flow",
+        'Verify: claude --version',
+      ],
+      is_default: true, enabled: true,
+    },
+    cursor: {
+      id: 'cursor', name: 'Cursor', provider: 'cursor',
+      description: 'Runs WOs via Cursor headless agent mode',
+      auth_type: 'subscription', cli_command: 'cursor --headless',
+      setup_steps: [
+        'Subscribe to Cursor Pro at cursor.sh/pricing',
+        'Download and install Cursor from cursor.sh',
+        'Open Cursor → Preferences → Cursor Settings → Enable Agent mode',
+        'Install the cursor CLI: Cursor → Help → Install Shell Command',
+        'Verify: cursor --version',
+      ],
+      is_default: false, enabled: true,
+    },
+  };
+
+  const AUTH_BADGES = {
+    both: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-violet-500/15 text-violet-400">Sub + API</span>',
+    subscription: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-sky-500/15 text-sky-400">Subscription</span>',
+    api: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400">API Key</span>',
+  };
+
+  const PROVIDER_LABELS = { anthropic: 'Anthropic', cursor: 'Cursor', openai: 'OpenAI', custom: 'Custom' };
+  const PROVIDER_DEFAULTS = {
+    anthropic: { auth: 'both',         env: 'ANTHROPIC_API_KEY', cli: 'claude code --dangerously-skip-permissions' },
+    cursor:    { auth: 'subscription', env: '',                   cli: 'cursor --headless' },
+    openai:    { auth: 'api',          env: 'OPENAI_API_KEY',     cli: '' },
+    custom:    { auth: 'api',          env: '',                   cli: '' },
+  };
+
+  let _providers = {};
+  let _editingId = null;
+
+  function esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  async function loadProviders() {
+    try {
+      const r = await fetch('/api/factory/llm-providers');
+      if (r.ok) { const d = await r.json(); _providers = d.providers || DEFAULT_PROVIDERS; }
+      else _providers = DEFAULT_PROVIDERS;
+    } catch { _providers = DEFAULT_PROVIDERS; }
+    renderProviders();
+  }
+
+  function renderProviders() {
+    const el = document.getElementById('llm-provider-list');
+    const keys = Object.keys(_providers);
+    if (!keys.length) {
+      el.innerHTML = '<div class="px-5 py-8 text-center text-xs text-slate-600 font-mono">No providers configured. Click "Add Provider" above.</div>';
+      return;
+    }
+    el.innerHTML = keys.map(id => {
+      const p = _providers[id];
+      const authBadge = AUTH_BADGES[p.auth_type] || '';
+      const provLabel = PROVIDER_LABELS[p.provider] || p.provider || '';
+      const defaultBadge = p.is_default
+        ? '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">● Default</span>'
+        : '';
+      const cliHtml = p.cli_command
+        ? `<code class="text-xs font-mono text-slate-500 bg-slate-800/60 px-2 py-0.5 rounded">${esc(p.cli_command)}</code>`
+        : '';
+      const stepsHtml = (p.setup_steps?.length > 0 && (p.auth_type === 'subscription' || p.auth_type === 'both'))
+        ? `<div class="mt-3 pt-3 border-t border-slate-800/60">
+             <p class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Setup</p>
+             <ol class="space-y-1.5">
+               ${p.setup_steps.map((s, i) => `
+                 <li class="flex items-start gap-2 text-xs text-slate-400">
+                   <span class="flex-shrink-0 w-4 h-4 rounded-full bg-slate-800 text-slate-500 flex items-center justify-center text-[10px] font-mono leading-none">${i+1}</span>
+                   <span class="font-mono">${esc(s)}</span>
+                 </li>`).join('')}
+             </ol>
+           </div>`
+        : '';
+      return `<div class="px-5 py-4">
+        <div class="flex items-start gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap mb-1">
+              <span class="text-sm font-bold text-slate-100">${esc(p.name)}</span>
+              ${defaultBadge}
+              <span class="text-xs px-1.5 py-0.5 rounded font-mono bg-slate-800/60 text-slate-400">${esc(provLabel)}</span>
+              ${authBadge}
+              ${cliHtml}
+            </div>
+            ${p.description ? `<p class="text-xs text-slate-500 mt-0.5">${esc(p.description)}</p>` : ''}
+            ${stepsHtml}
+          </div>
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <button type="button" onclick="openProviderModal('${esc(id)}')"
+              class="text-xs px-2.5 py-1 rounded font-mono border border-slate-700/60 text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors">
+              Edit
+            </button>
+            <button type="button" onclick="deleteProvider('${esc(id)}')"
+              class="text-xs px-2.5 py-1 rounded font-mono border border-slate-700/60 text-slate-500 hover:text-rose-400 hover:border-rose-500/40 transition-colors">
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  window.openProviderModal = function(id) {
+    _editingId = id;
+    const p = id ? _providers[id] : null;
+    document.getElementById('modal-title').textContent = p ? 'Edit LLM Provider' : 'Add LLM Provider';
+    document.getElementById('pm-save-label').textContent = p ? 'Update Provider' : 'Save Provider';
+    document.getElementById('pm-name').value = p?.name || '';
+    document.getElementById('pm-provider').value = p?.provider || 'anthropic';
+    document.getElementById('pm-auth').value = p?.auth_type || 'subscription';
+    document.getElementById('pm-description').value = p?.description || '';
+    document.getElementById('pm-api-key-env').value = p?.api_key_env || '';
+    document.getElementById('pm-api-key').value = '';
+    document.getElementById('pm-cli-cmd').value = p?.cli_command || '';
+    document.getElementById('pm-default').checked = p?.is_default || false;
+    document.getElementById('modal-error').classList.add('hidden');
+    renderStepInputs(p?.setup_steps || []);
+    onAuthTypeChange();
+    document.getElementById('provider-modal').style.removeProperty('display');
+  };
+
+  window.closeProviderModal = function() {
+    document.getElementById('provider-modal').style.setProperty('display', 'none', 'important');
+    _editingId = null;
+  };
+
+  window.onProviderTypeChange = function() {
+    if (_editingId) return;
+    const d = PROVIDER_DEFAULTS[document.getElementById('pm-provider').value] || {};
+    if (d.auth) document.getElementById('pm-auth').value = d.auth;
+    if (d.env !== undefined) document.getElementById('pm-api-key-env').value = d.env;
+    if (d.cli !== undefined) document.getElementById('pm-cli-cmd').value = d.cli;
+    onAuthTypeChange();
+  };
+
+  window.onAuthTypeChange = function() {
+    const auth = document.getElementById('pm-auth').value;
+    document.getElementById('pm-api-section').style.display = (auth === 'api' || auth === 'both') ? '' : 'none';
+    document.getElementById('pm-sub-section').style.display = (auth === 'subscription' || auth === 'both') ? '' : 'none';
+  };
+
+  function renderStepInputs(steps) {
+    document.getElementById('pm-sub-steps').innerHTML = '';
+    (steps.length ? steps : ['']).forEach(s => _addStepRow(s));
+  }
+
+  function _addStepRow(value) {
+    const container = document.getElementById('pm-sub-steps');
+    const n = container.children.length + 1;
+    const div = document.createElement('div');
+    div.className = 'flex items-center gap-2';
+    div.innerHTML = `
+      <span class="flex-shrink-0 w-5 h-5 rounded-full bg-slate-800 text-slate-500 flex items-center justify-center text-[10px] font-mono leading-none step-num">${n}</span>
+      <input type="text" value="${esc(value || '')}" placeholder="Step ${n}…"
+        class="flex-1 bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 font-mono
+               focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all step-input">
+      <button type="button" onclick="this.parentElement.remove(); _renumberSteps()"
+        class="text-slate-600 hover:text-rose-400 transition-colors p-1">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>`;
+    container.appendChild(div);
+  }
+
+  window.addSetupStep = function() { _addStepRow(''); };
+  window._renumberSteps = function() {
+    document.querySelectorAll('#pm-sub-steps .step-num').forEach((el, i) => { el.textContent = i + 1; });
+  };
+
+  window.toggleApiKeyVisibility = function() {
+    const inp = document.getElementById('pm-api-key');
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+  };
+
+  window.saveProvider = async function() {
+    const name = document.getElementById('pm-name').value.trim();
+    if (!name) { showModalError('Provider name is required.'); return; }
+    const auth = document.getElementById('pm-auth').value;
+    const steps = Array.from(document.querySelectorAll('#pm-sub-steps .step-input'))
+      .map(el => el.value.trim()).filter(Boolean);
+    const id = _editingId || name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const apiKey = document.getElementById('pm-api-key').value.trim();
+    const payload = {
+      id, name,
+      provider: document.getElementById('pm-provider').value,
+      description: document.getElementById('pm-description').value.trim(),
+      auth_type: auth,
+      api_key_env: document.getElementById('pm-api-key-env').value.trim(),
+      cli_command: document.getElementById('pm-cli-cmd').value.trim(),
+      setup_steps: steps,
+      is_default: document.getElementById('pm-default').checked,
+      enabled: true,
+    };
+    if (apiKey) payload.api_key = apiKey;
+
+    const btn = document.getElementById('pm-save-btn');
+    btn.disabled = true;
+    document.getElementById('pm-save-label').textContent = 'Saving…';
+    try {
+      const r = await fetch(`/api/factory/llm-providers/${encodeURIComponent(id)}`, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+      });
+      const data = await r.json();
+      if (r.ok) { _providers[id] = payload; renderProviders(); closeProviderModal(); }
+      else showModalError(data.detail || data.error || 'Save failed');
+    } catch (e) { showModalError(`Network error: ${e.message}`); }
+    finally {
+      btn.disabled = false;
+      document.getElementById('pm-save-label').textContent = _editingId ? 'Update Provider' : 'Save Provider';
+    }
+  };
+
+  window.deleteProvider = async function(id) {
+    if (!confirm(`Delete "${_providers[id]?.name || id}"? This cannot be undone.`)) return;
+    try {
+      const r = await fetch(`/api/factory/llm-providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (r.ok) { delete _providers[id]; renderProviders(); }
+      else { const d = await r.json(); alert(d.detail || d.error || 'Delete failed'); }
+    } catch (e) { alert(`Error: ${e.message}`); }
+  };
+
+  function showModalError(msg) {
+    document.getElementById('modal-error-text').textContent = msg;
+    document.getElementById('modal-error').classList.remove('hidden');
+  }
+
+  document.getElementById('provider-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeProviderModal();
+  });
+
+  loadProviders();
+})();
+</script>
 
 {# ── Agent Roster ──────────────────────────────────────────────────────────── #}
 <div class="glass-panel overflow-hidden mb-6">
@@ -56,7 +443,7 @@
     subscription: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-sky-500/15 text-sky-400">Subscription</span>',
     api: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400">API Key</span>',
   };
-  const AGENT_ORDER = ['claude', 'cursor', 'codex', 'gemini'];
+  const AGENT_ORDER = ['claude', 'cursor'];
 
   async function refreshRoster() {
     const roster = document.getElementById('agent-roster');
@@ -172,13 +559,12 @@
     msgEl.textContent = 'Installing…';
     try {
       const r = await fetch(`/api/factory/agents/${encodeURIComponent(name)}`, {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
+        method: 'PUT', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ api_key: keyEl?.value.trim() || '', domain_filter: domEl?.value.trim() || '', start: true }),
       });
       const data = await r.json();
       if (r.ok) { msgEl.textContent = ''; await refreshRoster(); }
-      else { msgEl.textContent = `⚠ ${data.detail || data.error || 'error'}`; }
+      else msgEl.textContent = `⚠ ${data.detail || data.error || 'error'}`;
     } catch(err) { msgEl.textContent = `⚠ ${err.message}`; }
   };
 
@@ -189,13 +575,12 @@
     msgEl.textContent = 'Saving…';
     try {
       const r = await fetch(`/api/factory/agents/${encodeURIComponent(name)}`, {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
+        method: 'PUT', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ api_key: keyEl?.value.trim() || '', domain_filter: domEl?.value.trim() ?? '' }),
       });
       const data = await r.json();
       if (r.ok) { msgEl.textContent = '✓ saved'; if (keyEl) keyEl.value = ''; setTimeout(refreshRoster, 1200); }
-      else { msgEl.textContent = `⚠ ${data.detail || data.error || 'error'}`; }
+      else msgEl.textContent = `⚠ ${data.detail || data.error || 'error'}`;
     } catch(err) { msgEl.textContent = `⚠ ${err.message}`; }
   };
 
@@ -203,7 +588,7 @@
     if (!confirm(`Remove ${name}? This stops the daemon and deletes its plist.`)) return;
     try {
       const r = await fetch(`/api/factory/agents/${encodeURIComponent(name)}`, { method: 'DELETE' });
-      if (r.ok) { await refreshRoster(); }
+      if (r.ok) await refreshRoster();
       else { const d = await r.json(); alert(d.detail || d.error || 'Remove failed'); }
     } catch(err) { alert(`Error: ${err.message}`); }
   };
@@ -212,7 +597,7 @@
     btn.disabled = true; btn.textContent = '…';
     try {
       const r = await fetch(`/api/factory/agents/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
-      if (r.ok) { await refreshRoster(); }
+      if (r.ok) await refreshRoster();
       else { const d = await r.json(); btn.textContent = `⚠ ${d.detail || d.error || 'err'}`; btn.disabled = false; }
     } catch(err) { btn.textContent = '⚠ error'; btn.disabled = false; }
   };
@@ -240,8 +625,6 @@
             {% set backends = [
               ('claude', 'Claude (Pro/Max) — claude code --dangerously-skip-permissions'),
               ('cursor', 'Cursor — agent --headless'),
-              ('codex', 'Codex (OpenAI) — codex --approval-mode full-auto'),
-              ('gemini', 'Gemini — gemini --yolo'),
             ] %}
             {% for val, label in backends %}
             {% set is_installed = installed_backends.get(val, false) %}
@@ -282,7 +665,6 @@
     <div class="px-5 py-5 space-y-5">
       <p class="text-xs text-slate-400">Each dimension runs a separate AI review pass before human validation. Reviewers using the same LLM as the coding agent provide weaker guarantees — they may miss the same blind spots.</p>
 
-      {# Force cross-LLM toggle #}
       {% set force_cross = cfg.get('force_cross_llm_review', true) %}
       <div class="flex items-start gap-3 p-3.5 rounded-xl border {% if force_cross %}bg-violet-500/8 border-violet-500/20{% else %}bg-slate-900/40 border-slate-800/60{% endif %}">
         <div class="flex-1">
@@ -321,7 +703,7 @@
           <select name="reviewer_{{ role_key }}"
                   class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100
                          focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
-            {% for val, label in [('claude','Claude'), ('cursor','Cursor'), ('codex','Codex'), ('gemini','Gemini')] %}
+            {% for val, label in [('claude','Claude'), ('cursor','Cursor')] %}
             {% set is_installed = installed_backends.get(val, false) %}
             <option value="{{ val }}" {% if reviewer_cfg.get(role_key, 'claude') == val %}selected{% endif %}
               {% if not is_installed %}disabled{% endif %}>
@@ -356,7 +738,7 @@
                class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
                       focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
         <p class="text-xs text-slate-600 mt-1">
-          Used when "Claude (API key)" is selected for WO spec generation. Leave blank to keep the current key.
+          Used when Claude (API key) is selected for WO spec generation. Leave blank to keep the current key.
           {% if not anthropic_key_set %}
           Get one at <span class="text-slate-500">console.anthropic.com/settings/keys</span>
           {% endif %}

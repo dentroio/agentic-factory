@@ -1166,7 +1166,7 @@ async def settings_agents(request: Request, saved: str = "", error: str = ""):
             r = await client.get(f"{ORCHESTRATOR_URL}/api/backends")
             if r.status_code == 200:
                 data = r.json()
-                for b in ("claude", "cursor", "codex", "gemini"):
+                for b in ("claude", "cursor"):
                     installed_backends[b] = bool(data.get(b, False))
     except Exception:
         pass
@@ -2060,6 +2060,81 @@ async def api_factory_agent_stop(name: str):
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}/stop")
     return JSONResponse(content=r.json(), status_code=r.status_code)
+
+
+_DEFAULT_LLM_PROVIDERS: dict = {
+    "claude": {
+        "id": "claude",
+        "name": "Claude Code",
+        "provider": "anthropic",
+        "description": "Executes WOs end-to-end via Claude Code CLI with full auto-approval",
+        "auth_type": "both",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "cli_command": "claude code --dangerously-skip-permissions",
+        "setup_steps": [
+            "Subscribe to Claude Max or Pro at claude.ai",
+            "Install Claude Code: brew install claude or download from claude.ai/code",
+            "Login: run 'claude' in terminal and follow the OAuth flow",
+            "Verify: claude --version",
+        ],
+        "is_default": True,
+        "enabled": True,
+    },
+    "cursor": {
+        "id": "cursor",
+        "name": "Cursor",
+        "provider": "cursor",
+        "description": "Runs WOs via Cursor headless agent mode",
+        "auth_type": "subscription",
+        "cli_command": "cursor --headless",
+        "setup_steps": [
+            "Subscribe to Cursor Pro at cursor.sh/pricing",
+            "Download and install Cursor from cursor.sh",
+            "Open Cursor → Preferences → Cursor Settings → Enable Agent mode",
+            "Install the cursor CLI: Cursor → Help → Install Shell Command",
+            "Verify: cursor --version",
+        ],
+        "is_default": False,
+        "enabled": True,
+    },
+}
+
+
+@app.get("/api/factory/llm-providers")
+async def api_get_llm_providers():
+    cfg = _load_factory_config()
+    providers = cfg.get("llm_providers", _DEFAULT_LLM_PROVIDERS)
+    return JSONResponse(content={"providers": providers})
+
+
+@app.put("/api/factory/llm-providers/{provider_id}")
+async def api_put_llm_provider(provider_id: str, request: Request):
+    body = await request.json()
+    if not body.get("name"):
+        raise HTTPException(status_code=400, detail="Provider name is required")
+    body["id"] = provider_id
+    cfg = _load_factory_config()
+    providers = dict(cfg.get("llm_providers", _DEFAULT_LLM_PROVIDERS))
+    if body.get("is_default"):
+        for pid in providers:
+            if pid != provider_id:
+                providers[pid]["is_default"] = False
+    providers[provider_id] = body
+    cfg["llm_providers"] = providers
+    _save_factory_config(cfg)
+    return JSONResponse(content={"ok": True, "provider": body})
+
+
+@app.delete("/api/factory/llm-providers/{provider_id}")
+async def api_delete_llm_provider(provider_id: str):
+    cfg = _load_factory_config()
+    providers = dict(cfg.get("llm_providers", _DEFAULT_LLM_PROVIDERS))
+    if provider_id not in providers:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    del providers[provider_id]
+    cfg["llm_providers"] = providers
+    _save_factory_config(cfg)
+    return JSONResponse(content={"ok": True})
 
 
 @app.get("/factory", response_class=HTMLResponse)
