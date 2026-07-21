@@ -29,11 +29,13 @@ from notifications import (
     notify_factory_alert,
 )
 from plan_engine import next_wo, sorted_queue
+import intelligence as _intel
 
 load_dotenv()
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
+INTELLIGENCE_INTERVAL = int(os.getenv("INTELLIGENCE_INTERVAL", "600"))
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
 CLAIM_TIMEOUT_SECONDS = int(os.getenv("CLAIM_TIMEOUT_SECONDS", "600"))
 MAX_PARALLEL_WOS = int(os.getenv("MAX_PARALLEL_WOS", "2"))
@@ -74,6 +76,7 @@ WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
 DB_PATH = DATA_DIR / "factory.db"
 
 _last_summary_day: int = -1
+_last_intelligence_run: dict = {}
 
 # ── In-memory state (persisted to volume) ────────────────────────────────────
 
@@ -832,6 +835,39 @@ class ProgramUpdate(BaseModel):
     description: str | None = None
 
 
+# ── Intelligence loop ─────────────────────────────────────────────────────────
+
+async def _intelligence_job() -> None:
+    global _last_intelligence_run
+    print("[intelligence] running pass…")
+
+    def _enqueue(entry: dict) -> None:
+        _db_upsert_queue_entry(entry)
+
+    def _update_dispatch(wo_id: str, patch: dict) -> None:
+        if wo_id in _dispatch_state:
+            _dispatch_state[wo_id].update(patch)
+            _save_dispatch()
+
+    try:
+        result = await _intel.run_intelligence_pass(
+            github_token=GITHUB_TOKEN,
+            github_repo=GITHUB_REPO,
+            anthropic_key=_get_anthropic_key(),
+            dispatch_state=dict(_dispatch_state),
+            enqueue_wo=_enqueue,
+            update_dispatch=_update_dispatch,
+        )
+        _last_intelligence_run = result
+        if result.get("actions_taken"):
+            print(f"[intelligence] actions taken: {result['actions_taken']}")
+        else:
+            print(f"[intelligence] pass complete — no actions needed")
+    except Exception as e:
+        _last_intelligence_run = {"error": str(e), "started_at": datetime.now(UTC).isoformat()}
+        print(f"[intelligence] pass failed: {e}")
+
+
 # ── FastAPI app + lifespan ────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -846,6 +882,7 @@ async def lifespan(app: FastAPI):
     else:
         scheduler = AsyncIOScheduler()
         scheduler.add_job(poll, "interval", seconds=POLL_INTERVAL)
+        scheduler.add_job(_intelligence_job, "interval", seconds=INTELLIGENCE_INTERVAL)
         scheduler.start()
         app.state.scheduler = scheduler
         # Fire first poll in background — store ref so it isn't GC'd
@@ -868,6 +905,17 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 @app.get("/health")
 async def health():
     return {"ok": True, "repo": GITHUB_REPO}
+
+
+@app.get("/api/intelligence/status")
+async def get_intelligence_status():
+    return JSONResponse(content=_last_intelligence_run or {"status": "not_run_yet"})
+
+
+@app.post("/api/intelligence/run")
+async def trigger_intelligence_run():
+    asyncio.create_task(_intelligence_job())
+    return JSONResponse(content={"ok": True, "message": "Intelligence pass triggered"})
 
 
 @app.get("/api/status")

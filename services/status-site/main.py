@@ -2137,6 +2137,30 @@ async def api_delete_llm_provider(provider_id: str):
     return JSONResponse(content={"ok": True})
 
 
+@app.get("/api/factory/intelligence/status")
+async def api_intelligence_status():
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/intelligence/status")
+            if r.status_code == 200:
+                return JSONResponse(content=r.json())
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=503)
+    return JSONResponse(content={"error": "orchestrator unavailable"}, status_code=503)
+
+
+@app.post("/api/factory/intelligence/run")
+async def api_intelligence_run():
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/intelligence/run")
+            if r.status_code == 200:
+                return JSONResponse(content=r.json())
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=503)
+    return JSONResponse(content={"error": "orchestrator unavailable"}, status_code=503)
+
+
 @app.get("/factory", response_class=HTMLResponse)
 async def factory_floor(request: Request):
     backends = {

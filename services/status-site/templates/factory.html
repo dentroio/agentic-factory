@@ -75,6 +75,20 @@
     <div id="dep-list" class="divide-y divide-slate-800/30 text-xs font-mono"></div>
   </div>
 
+  {# ── Intelligence Loop Status ─────────────────────────────────────────────── #}
+  <div id="intelligence-panel" class="glass-panel overflow-hidden">
+    <div class="px-4 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-slate-400 text-sm">🧠</span>
+        <span class="text-xs font-mono text-slate-400 uppercase tracking-widest">Intelligence Loop</span>
+        <span id="intel-status-badge" class="text-[10px] font-mono text-slate-600"></span>
+      </div>
+      <button onclick="triggerIntelligence()" id="intel-run-btn"
+        class="text-xs font-mono text-slate-600 hover:text-indigo-400 transition-colors">▶ run now</button>
+    </div>
+    <div id="intel-body" class="px-4 py-3 text-xs font-mono text-slate-500">Loading…</div>
+  </div>
+
   {# ── Active Jobs + Live Feed ──────────────────────────────────────────────── #}
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
@@ -461,6 +475,68 @@
 
   refreshDependabot();
   setInterval(refreshDependabot, 120_000);  // refresh every 2 min
+
+  // ── Intelligence Loop ─────────────────────────────────────────────────────
+  async function refreshIntelligence() {
+    const body = document.getElementById('intel-body');
+    const badge = document.getElementById('intel-status-badge');
+    try {
+      const r = await fetch('/api/factory/intelligence/status');
+      const data = await r.json();
+      if (!r.ok || data.error) {
+        body.innerHTML = `<span class="text-rose-400">Orchestrator unavailable</span>`;
+        return;
+      }
+      if (data.status === 'not_run_yet') {
+        body.innerHTML = '<span class="text-slate-600">No pass run yet — runs every 10 min</span>';
+        return;
+      }
+      const ts = data.started_at ? new Date(data.started_at).toLocaleTimeString() : '?';
+      const issues = data.issues_found || [];
+      const actions = data.actions_taken || [];
+      badge.textContent = `last run ${ts}`;
+      if (data.error) {
+        body.innerHTML = `<span class="text-rose-400">Error: ${data.error}</span>`;
+        return;
+      }
+      if (actions.length === 0 && issues.length === 0) {
+        body.innerHTML = `<span class="text-emerald-600">✓ All clear — ${data.prs_scanned || 0} PRs scanned, no issues found</span>`;
+        return;
+      }
+      let html = '';
+      if (issues.length) {
+        html += `<div class="text-amber-400 mb-1">Issues found (${issues.length}):</div>`;
+        html += issues.map(i => `<div class="pl-2 text-slate-400">• ${i}</div>`).join('');
+      }
+      if (actions.length) {
+        html += `<div class="text-indigo-400 mt-2 mb-1">Actions taken (${actions.length}):</div>`;
+        html += actions.map(a => `<div class="pl-2 text-slate-300">✓ ${a}</div>`).join('');
+      }
+      body.innerHTML = html;
+    } catch (e) {
+      body.innerHTML = `<span class="text-rose-400">Error: ${e.message}</span>`;
+    }
+  }
+
+  async function triggerIntelligence() {
+    const btn = document.getElementById('intel-run-btn');
+    btn.textContent = '⏳ running…';
+    btn.disabled = true;
+    try {
+      await fetch('/api/factory/intelligence/run', { method: 'POST' });
+      setTimeout(() => {
+        refreshIntelligence();
+        btn.textContent = '▶ run now';
+        btn.disabled = false;
+      }, 3000);
+    } catch (e) {
+      btn.textContent = '▶ run now';
+      btn.disabled = false;
+    }
+  }
+
+  refreshIntelligence();
+  setInterval(refreshIntelligence, 300_000);  // refresh every 5 min
 
   // ── Agent Management ───────────────────────────────────────────────────────
   async function refreshAgents() {
