@@ -15,7 +15,7 @@ The factory ships Docker services that run alongside your project:
 | `factory-status` | 8099 | default | Web dashboard — Overview, PM, Engineering, Plan Authoring, Threads, Settings |
 | `orchestrator` | 8100 | default | Dispatch REST API, WO lifecycle, thread storage, secrets vault, hold/unhold queue |
 | `pr-watchdog` | — | default | Tracks every open PR: CI state, stale detection, merge eligibility |
-| `agent-runner` | host | optional | Autonomous WO executor — subscription CLI backends (Claude, Cursor, Codex, Gemini); draft server on port 8101 |
+| `agent-runner` | host | optional | Autonomous WO executor — subscription CLI backends (Claude, Cursor); draft server on port 8101 |
 
 **Start them (macOS — uses Keychain for secrets):**
 
@@ -61,23 +61,22 @@ RUNS_PATH=docs/factory/runs
 PLAN_PATH=docs/factory/PLAN.json
 POLL_INTERVAL=300             # orchestrator + watchdog poll cadence (seconds)
 MAX_PARALLEL_WOS=2            # max concurrent agent assignments
+MAX_RETRY_ATTEMPTS=3          # max times an agent can retry a failing WO before manual reset
+INTELLIGENCE_INTERVAL=600     # seconds between intelligence loop passes (default 10 min)
 POST_COMMENTS=false           # set true to have watchdog post GitHub PR comments
 ```
 
 ### Agent backends
 
-The agent-runner supports four AI backends, all subscription-based — no per-token billing:
+The agent-runner supports two subscription CLI backends and one API backend:
 
 | Backend | How it runs | Requires |
 |---------|-------------|---------|
 | `claude` | `claude --dangerously-skip-permissions` CLI | Claude Pro/Max + CLI logged in |
-| `cursor` | `agent --print --trust` CLI¹ | Cursor Pro + CLI logged in |
-| `codex` | `codex --approval-mode full-auto` CLI | OpenAI Codex subscription |
-| `gemini` | `gemini --yolo -p` CLI | Google Gemini Advanced |
+| `cursor` | `cursor --headless` CLI | Cursor Pro + CLI logged in |
 | `claude-api` | Anthropic SDK (Docker) | `ANTHROPIC_API_KEY` in secrets |
 
-> ¹ Cursor installs its headless CLI as `agent`, not `cursor`. Verify with `which agent`.
-| `claude-api` | Anthropic SDK (Docker) | `ANTHROPIC_API_KEY` in secrets |
+Subscription backends run on your host machine and use your existing CLI session — Docker never touches your credentials. Add or configure additional LLM providers at any time via **Settings → Agents → LLM Providers** without restarting anything.
 
 The agent-runner starts a local HTTP server (`draft_server.py`) on port **8101**. The orchestrator proxies WO draft requests to this server when using subscription backends — so the Docker container never needs your CLI session credentials.
 
@@ -96,10 +95,11 @@ The agent-runner starts a local HTTP server (`draft_server.py`) on port **8101**
 | **Container Runtime** | |
 | `docker-compose.status.yml` | Brings up all factory services; `agent` profile enables agent-runner |
 | `services/status-site/` | FastAPI + Jinja2 status dashboard (Overview, PM, Engineering, Plan, Threads, Settings) |
-| `services/orchestrator/` | Dispatch REST API — claim/checkin/validate/complete, thread storage, image serving, notifications |
+| `services/orchestrator/` | Dispatch REST API — claim/checkin/validate/complete, thread storage, notifications, intelligence loop |
+| `services/orchestrator/intelligence.py` | Autonomous background loop (10 min): closes major-version Dependabot PRs, queues conflict/CI-fix WOs, clears ghost dispatch entries |
 | `services/pr-watchdog/` | PR lifecycle monitor — CI health, stale PRs, merge eligibility |
 | `services/agent-runner/` | Autonomous WO executor — subscription CLI backends, quality gate, peer review chain |
-| `services/agent-runner/backends/` | Pluggable AI backends: `claude.py`, `cursor.py`, `codex.py`, `gemini.py` |
+| `services/agent-runner/backends/` | Pluggable AI backends: `claude.py`, `cursor.py` |
 | `services/agent-runner/draft_server.py` | Local HTTP daemon (port 8101) — probes installed CLIs, serves `POST /api/draft` to orchestrator |
 | `services/agent-runner/quality_gate.py` | Parallel CI + bandit + semgrep + JS/TS security scan |
 | `services/agent-runner/review_chain.py` | 4-reviewer AI review chain (security, architecture, correctness, performance) |
@@ -378,7 +378,7 @@ The factory sends push notifications to your phone or desktop for key events. It
 
 1. Open **Settings → Plan → Create WO**
 2. Describe what you want to build in plain language — one paragraph
-3. Choose which AI generates the structured spec (Claude, Cursor, Codex, Gemini, or Anthropic API)
+3. Choose which AI generates the structured spec (Claude subscription CLI, or Anthropic API)
 4. Review and edit the generated fields (title, priority, effort, problem, acceptance criteria)
 5. Click **Open PR** — the factory creates the spec file and adds the WO to PLAN.json in one PR
 
