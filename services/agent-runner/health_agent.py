@@ -35,6 +35,8 @@ ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8100")
 GITHUB_REPO      = os.getenv("GITHUB_REPO", "")
 POLL_INTERVAL    = int(os.getenv("HEALTH_POLL_INTERVAL", "300"))   # 5 min
 DRY_RUN          = os.getenv("HEALTH_DRY_RUN", "").lower() in ("1", "true", "yes")
+_API_SECRET      = os.getenv("API_SECRET", "")
+_AUTH            = {"Authorization": f"Bearer {_API_SECRET}"} if _API_SECRET else {}
 
 # GitHub self-hosted runner SSH config
 RUNNER_HOST = os.getenv("RUNNER_HOST", "192.168.10.15")
@@ -96,6 +98,7 @@ async def _notify(title: str, body: str, priority: str = "default") -> None:
             r = await client.post(
                 f"{ORCHESTRATOR_URL}/api/notifications/alert",
                 json={"title": title, "body": body, "level": level, "source": "health-agent"},
+                headers=_AUTH,
             )
             sent_via_orchestrator = r.status_code == 200
     except Exception:
@@ -119,6 +122,7 @@ async def _notify(title: str, body: str, priority: str = "default") -> None:
             await client.post(
                 f"{ORCHESTRATOR_URL}/api/log",
                 json={"source": "health-agent", "level": priority, "message": f"{title}: {body}"},
+                headers=_AUTH,
             )
     except Exception:
         pass
@@ -162,7 +166,7 @@ async def _get(path: str) -> dict | list | None:
 async def _post(path: str, **kwargs) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(f"{ORCHESTRATOR_URL}{path}", **kwargs)
+            r = await client.post(f"{ORCHESTRATOR_URL}{path}", headers=_AUTH, **kwargs)
             return r.status_code == 200
     except Exception:
         return False
@@ -171,7 +175,7 @@ async def _post(path: str, **kwargs) -> bool:
 async def _delete(path: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.delete(f"{ORCHESTRATOR_URL}{path}")
+            r = await client.delete(f"{ORCHESTRATOR_URL}{path}", headers=_AUTH)
             return r.status_code == 200
     except Exception:
         return False

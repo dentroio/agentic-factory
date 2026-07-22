@@ -4,6 +4,7 @@ import json
 import os
 import re
 
+import anthropic
 import httpx
 from backends import get_backend
 from thread_monitor import ThreadMonitor
@@ -154,6 +155,101 @@ REVIEWER_CONFIG: dict[str, dict] = {
 }
 
 # ---------------------------------------------------------------------------
+# SDK parallel harness — used when ANTHROPIC_API_KEY is set
+# ---------------------------------------------------------------------------
+
+_FINDING_TOOL: dict = {
+    "name": "submit_finding",
+    "description": "Submit a code review finding. Call once per issue found. If no issues, do not call this tool.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "severity": {
+                "type": "string",
+                "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"],
+            },
+            "file": {"type": "string"},
+            "line": {"type": "integer"},
+            "issue": {"type": "string"},
+            "fix": {"type": "string"},
+        },
+        "required": ["severity", "file", "line", "issue", "fix"],
+    },
+}
+
+
+def _strip_output_format(text: str) -> str:
+    """Remove FINDING:/VERDICT: output instructions from a prompt template."""
+    for marker in ("For EACH issue found", "For each item NOT addressed"):
+        idx = text.find(marker)
+        if idx != -1:
+            return text[:idx].rstrip()
+    return text
+
+
+def _run_sdk_reviewer_sync(
+    reviewer_name: str,
+    wo_spec: dict,
+    diff: str,
+    previous_findings: list[dict],
+    api_key: str,
+) -> list[dict]:
+    cfg = REVIEWER_CONFIG[reviewer_name]
+    previous_str = (
+        json.dumps(previous_findings, indent=2)
+        if previous_findings
+        else "None — running in parallel with other reviewers."
+    )
+    criteria = _strip_output_format(
+        cfg["prompt_template"].format(
+            previous_findings=previous_str,
+            docs_required="N/A",
+            file_placeholder="<file>",
+            item_placeholder="<item>",
+        )
+    )
+    system = (
+        f"{criteria}\n\n"
+        "Call the submit_finding tool once for each issue found. "
+        "If no issues are found, do not call the tool."
+    )
+    wo_id = wo_spec.get("wo", "?")
+    title = wo_spec.get("title", "Unknown")
+    user_msg = (
+        f"WO: {wo_id} — {title}\n\n"
+        f"Priority: {wo_spec.get('priority', 'P2')}\n"
+        f"Services: {wo_spec.get('services', 'unknown')}\n"
+        f"Notes: {wo_spec.get('notes', '')}\n\n"
+        f"=== GIT DIFF ===\n{diff[:8000]}"
+    )
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=2048,
+        system=system,
+        tools=[_FINDING_TOOL],
+        messages=[{"role": "user", "content": user_msg}],
+    )
+    findings = []
+    for block in response.content:
+        if hasattr(block, "type") and block.type == "tool_use" and block.name == "submit_finding":
+            findings.append(dict(block.input))
+    return findings
+
+
+async def _run_sdk_reviewer(
+    reviewer_name: str,
+    wo_spec: dict,
+    diff: str,
+    previous_findings: list[dict],
+    api_key: str,
+) -> list[dict]:
+    return await asyncio.to_thread(
+        _run_sdk_reviewer_sync, reviewer_name, wo_spec, diff, previous_findings, api_key
+    )
+
+
+# ---------------------------------------------------------------------------
 # Config — fetched live from orchestrator so UI changes take effect immediately
 # ---------------------------------------------------------------------------
 
@@ -209,7 +305,6 @@ def _assign_reviewer_backends(
             for i, name in enumerate(reviewer_names)
         }
 
-    # Manual config — use what the settings UI saved
     reviewer_cfg = config.get("reviewers", _DEFAULT_REVIEWER_BACKENDS)
     default = next(iter(available), "claude")
     return {name: reviewer_cfg.get(name, default) for name in reviewer_names}
@@ -254,14 +349,12 @@ def parse_reviewer_response(response: str) -> list[dict]:
         if not line.startswith("FINDING:"):
             continue
         json_str = line[len("FINDING:"):].strip()
-        # strip markdown code fences if present
         json_str = re.sub(r"^```[a-z]*\n?", "", json_str).rstrip("`")
         try:
             finding = json.loads(json_str)
             if "severity" in finding and "issue" in finding:
                 findings.append(finding)
         except (json.JSONDecodeError, ValueError):
-            # best-effort: include as unstructured finding
             findings.append({
                 "severity": "LOW",
                 "file": "unknown",
@@ -309,7 +402,6 @@ async def get_worktree_diff(worktree: str) -> str:
         out, _ = await proc.communicate()
         diff = out.decode("utf-8", errors="replace")
         if not diff.strip():
-            # fallback: uncommitted changes
             proc2 = await asyncio.create_subprocess_exec(
                 "git", "diff",
                 cwd=worktree,
@@ -339,12 +431,16 @@ async def run_review_chain(
     """Run the full review chain for the WO's priority level.
 
     Returns (chain_passed, all_findings).
-    Stops on the first reviewer that finds blocking issues.
-    coding_backend — the backend that wrote the code; used to auto-assign
-    reviewers to different LLMs when force_cross_llm_review is enabled.
+
+    When ANTHROPIC_API_KEY is set, all 4 reviewers run in parallel via the
+    Anthropic SDK with structured tool_use output. Otherwise falls back to the
+    sequential backend.ask() path.
+
+    coding_backend — the backend that wrote the code; used by the sequential
+    fallback to auto-assign reviewers to different LLMs.
     docs_required — list of {item, completed} dicts from the WO spec's
     Documentation Required section. When non-empty, a documentation reviewer
-    runs after the main chain.
+    runs after the main chain (always sequential).
     """
     priority = wo_spec.get("priority", "P2")
     reviewer_names = REVIEW_CHAIN.get(priority, REVIEW_CHAIN["P2"])
@@ -352,72 +448,126 @@ async def run_review_chain(
     if not reviewer_names:
         return True, list(previous_findings)
 
-    agent_config = await _fetch_agent_config()
-    reviewer_backends = _assign_reviewer_backends(reviewer_names, agent_config, coding_backend)
-
-    force = agent_config.get("force_cross_llm_review", True)
-    mode_note = f"cross-LLM auto ({coding_backend} wrote → reviewers: {', '.join(set(reviewer_backends.values()))})" if force and coding_backend else "manual"
     all_findings = list(previous_findings)
     chain_passed = True
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    agent_config: dict | None = None
 
-    await monitor.post(
-        f"🔍 Running **{len(reviewer_names)}-reviewer** peer review chain "
-        f"({', '.join(reviewer_names)}) for {wo_spec.get('priority', 'P2')} WO — {mode_note}...",
-        msg_type="text",
-    )
-
-    for reviewer_name in reviewer_names:
-        cfg = REVIEWER_CONFIG[reviewer_name]
-        assigned_backend = reviewer_backends[reviewer_name]
-        backend = get_backend(assigned_backend)
-
-        prompt = build_reviewer_prompt(
-            reviewer_name, cfg["prompt_template"], wo_spec, diff, all_findings
+    if api_key:
+        # --- Parallel SDK harness ---
+        await monitor.post(
+            f"🔍 Running **{len(reviewer_names)}-reviewer** peer review chain "
+            f"({', '.join(reviewer_names)}) — parallel SDK harness...",
+            msg_type="text",
         )
 
-        try:
-            response = await asyncio.wait_for(backend.ask(prompt), timeout=120)
-        except TimeoutError:
+        tasks = [
+            _run_sdk_reviewer(name, wo_spec, diff, previous_findings, api_key)
+            for name in reviewer_names
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for reviewer_name, result in zip(reviewer_names, results):
+            cfg = REVIEWER_CONFIG[reviewer_name]
+            if isinstance(result, Exception):
+                await monitor.post(
+                    f"⚠️ **{reviewer_name} reviewer** error: {result} — skipping.",
+                    msg_type="text",
+                )
+                continue
+            findings: list[dict] = result  # type: ignore[assignment]
+            blocking = [f for f in findings if f.get("severity") in cfg["blocking_severities"]]
+            passed = len(blocking) == 0
+            if not passed:
+                chain_passed = False
+            all_findings.extend(findings)
             await monitor.post(
-                f"⚠️ **{reviewer_name} reviewer** timed out — skipping.",
+                _format_review(reviewer_name, "claude (sdk)", findings, passed),
+                msg_type="review",
+                metadata={
+                    "reviewer": reviewer_name,
+                    "backend": "claude (sdk)",
+                    "findings": findings,
+                    "passed": passed,
+                },
+            )
+
+        if not chain_passed:
+            await monitor.post(
+                "🔴 **Review chain found blocking issues.** Agent must fix before human review.",
                 msg_type="text",
             )
-            continue
-        except Exception as e:
-            await monitor.post(
-                f"⚠️ **{reviewer_name} reviewer** error: {e} — skipping.",
-                msg_type="text",
-            )
-            continue
 
-        findings = parse_reviewer_response(response)
-        blocking = [f for f in findings if f.get("severity") in cfg["blocking_severities"]]
-        passed = len(blocking) == 0
-
-        all_findings.extend(findings)
+    else:
+        # --- Sequential fallback ---
+        agent_config = await _fetch_agent_config()
+        reviewer_backends = _assign_reviewer_backends(reviewer_names, agent_config, coding_backend)
+        force = agent_config.get("force_cross_llm_review", True)
+        mode_note = (
+            f"cross-LLM auto ({coding_backend} wrote → reviewers: {', '.join(set(reviewer_backends.values()))})"
+            if force and coding_backend
+            else "manual"
+        )
 
         await monitor.post(
-            _format_review(reviewer_name, assigned_backend, findings, passed),
-            msg_type="review",
-            metadata={
-                "reviewer": reviewer_name,
-                "backend": assigned_backend,
-                "findings": findings,
-                "passed": passed,
-            },
+            f"🔍 Running **{len(reviewer_names)}-reviewer** peer review chain "
+            f"({', '.join(reviewer_names)}) for {wo_spec.get('priority', 'P2')} WO — {mode_note}...",
+            msg_type="text",
         )
 
-        if not passed:
-            chain_passed = False
-            await monitor.post(
-                f"🔴 **{reviewer_name} reviewer** found {len(blocking)} blocking "
-                f"issue(s). Chain halted — agent must fix before human review.",
-                msg_type="text",
-            )
-            break
+        for reviewer_name in reviewer_names:
+            cfg = REVIEWER_CONFIG[reviewer_name]
+            assigned_backend = reviewer_backends[reviewer_name]
+            backend = get_backend(assigned_backend)
 
-    # Documentation reviewer — runs after the main chain if docs_required is non-empty
+            prompt = build_reviewer_prompt(
+                reviewer_name, cfg["prompt_template"], wo_spec, diff, all_findings
+            )
+
+            try:
+                response = await asyncio.wait_for(backend.ask(prompt), timeout=120)
+            except TimeoutError:
+                await monitor.post(
+                    f"⚠️ **{reviewer_name} reviewer** timed out — skipping.",
+                    msg_type="text",
+                )
+                continue
+            except Exception as e:
+                await monitor.post(
+                    f"⚠️ **{reviewer_name} reviewer** error: {e} — skipping.",
+                    msg_type="text",
+                )
+                continue
+
+            findings = parse_reviewer_response(response)
+            blocking = [f for f in findings if f.get("severity") in cfg["blocking_severities"]]
+            passed = len(blocking) == 0
+            all_findings.extend(findings)
+
+            await monitor.post(
+                _format_review(reviewer_name, assigned_backend, findings, passed),
+                msg_type="review",
+                metadata={
+                    "reviewer": reviewer_name,
+                    "backend": assigned_backend,
+                    "findings": findings,
+                    "passed": passed,
+                },
+            )
+
+            if not passed:
+                chain_passed = False
+                await monitor.post(
+                    f"🔴 **{reviewer_name} reviewer** found {len(blocking)} blocking "
+                    f"issue(s). Chain halted — agent must fix before human review.",
+                    msg_type="text",
+                )
+                break
+
+    # Documentation reviewer — always sequential, runs after main chain
     if chain_passed and docs_required:
+        if agent_config is None:
+            agent_config = await _fetch_agent_config()
         doc_cfg = REVIEWER_CONFIG["documentation"]
         doc_backend_name = next(iter(_assign_reviewer_backends(
             ["documentation"], agent_config, coding_backend

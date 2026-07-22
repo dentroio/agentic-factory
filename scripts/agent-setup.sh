@@ -85,6 +85,19 @@ read -rs ANTHROPIC_KEY_VAL
 echo ""
 _store_keychain "ANTHROPIC_API_KEY" "$ANTHROPIC_KEY_VAL"
 
+# API Secret — auto-generated bearer token for orchestrator write endpoints
+echo ""
+echo "── API Secret (orchestrator auth) ──────────────────────"
+EXISTING_API_SECRET="$(security find-generic-password -s "dentroio-factory" -a "API_SECRET" -w 2>/dev/null || echo "")"
+if [ -n "$EXISTING_API_SECRET" ]; then
+    echo "  Already set — keeping existing secret."
+    API_SECRET_VAL="$EXISTING_API_SECRET"
+else
+    API_SECRET_VAL="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 48 || openssl rand -base64 36 | tr -d '=+/')"
+    _store_keychain "API_SECRET" "$API_SECRET_VAL"
+    echo "  Auto-generated and stored in Keychain."
+fi
+
 # Preferred agent backend
 echo ""
 echo "── Agent Backend ────────────────────────────────────────"

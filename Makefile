@@ -27,7 +27,18 @@ up:  ## Start factory services (reads secrets from macOS Keychain if available)
 		docker compose -f docker-compose.status.yml up -d; \
 	fi
 	@rm -f .env.runtime
-	@echo "Dashboard: http://localhost:8099   Orchestrator: http://localhost:8100"
+	@echo "Dashboard: http://localhost:8099   Orchestrator: http://localhost:8100 (localhost only)"
+
+vault-export-keys:  ## Save Vault unseal key + root token from Docker volume to macOS Keychain
+	@echo "Reading Vault keys from Docker volume..."
+	@UNSEAL_KEY=$$(docker run --rm -v agentic-factory_vault-keys:/vault/keys:ro alpine cat /vault/keys/unseal_key 2>/dev/null) && \
+	ROOT_TOKEN=$$(docker run --rm -v agentic-factory_vault-keys:/vault/keys:ro alpine cat /vault/keys/root_token 2>/dev/null) && \
+	security delete-generic-password -s "dentroio-factory" -a "VAULT_UNSEAL_KEY" 2>/dev/null || true && \
+	security add-generic-password -s "dentroio-factory" -a "VAULT_UNSEAL_KEY" -w "$$UNSEAL_KEY" && \
+	security delete-generic-password -s "dentroio-factory" -a "VAULT_ROOT_TOKEN" 2>/dev/null || true && \
+	security add-generic-password -s "dentroio-factory" -a "VAULT_ROOT_TOKEN" -w "$$ROOT_TOKEN" && \
+	echo "  Vault unseal key and root token saved to Keychain under 'dentroio-factory'." || \
+	echo "  ERROR: Could not read from vault-keys volume. Is the factory running? (make up)"
 
 down:  ## Stop all factory services
 	docker compose -f docker-compose.status.yml down
