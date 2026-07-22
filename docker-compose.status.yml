@@ -1,4 +1,20 @@
 services:
+  vault:
+    build:
+      context: ./services/vault
+    ports:
+      - "127.0.0.1:8201:8200"
+    volumes:
+      - vault-data:/vault/data
+      - vault-keys:/vault/keys
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+
   factory-status:
     build:
       context: ./services/status-site
@@ -15,6 +31,7 @@ services:
       - ORCHESTRATOR_URL=http://orchestrator:8100
       - LOG_PATH=/var/log/factory-agent/out.log
       - LOCAL_REPO_MOUNT=/repos/primary
+      - API_SECRET=${API_SECRET:-}
     volumes:
       - watchdog-data:/watchdog:ro
       - orchestrator-data:/orchestrator:ro
@@ -41,6 +58,7 @@ services:
       - POST_COMMENTS=${POST_COMMENTS:-false}
       - ORCHESTRATOR_URL=http://orchestrator:8100
       - MARK_DONE_ENABLED=${MARK_DONE_ENABLED:-false}
+      - API_SECRET=${API_SECRET:-}
     volumes:
       - watchdog-data:/data
     restart: unless-stopped
@@ -64,6 +82,7 @@ services:
       - ARCH_REVIEWER_BACKEND=${ARCH_REVIEWER_BACKEND:-claude}
       - CORRECTNESS_REVIEWER_BACKEND=${CORRECTNESS_REVIEWER_BACKEND:-claude}
       - PERF_REVIEWER_BACKEND=${PERF_REVIEWER_BACKEND:-claude}
+      - API_SECRET=${API_SECRET:-}
     volumes:
       - workspace:/workspace
     restart: unless-stopped
@@ -76,7 +95,7 @@ services:
     build:
       context: ./services/orchestrator
     ports:
-      - "8100:8100"
+      - "127.0.0.1:8100:8100"
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_REPO=${GITHUB_REPO}
@@ -98,14 +117,22 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - AGENT_RUNNER_URL=${AGENT_RUNNER_URL:-http://host.docker.internal:8101}
       - LOCAL_REPO_MOUNT=/repos/primary
+      - VAULT_ADDR=http://vault:8200
+      - API_SECRET=${API_SECRET:-}
     volumes:
       - orchestrator-data:/data
       - watchdog-data:/watchdog:ro
       - ${LOCAL_REPO_PATH}:/repos/primary
+      - vault-keys:/vault/keys:ro
     restart: unless-stopped
+    depends_on:
+      vault:
+        condition: service_healthy
 
 volumes:
   watchdog-data:
   orchestrator-data:
   factory-config:
   workspace:
+  vault-data:
+  vault-keys:

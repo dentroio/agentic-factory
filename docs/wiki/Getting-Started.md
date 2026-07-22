@@ -75,7 +75,7 @@ The script prompts for:
 - **Anthropic API key** — for the orchestrator's WO spec generation; same key as GitHub Actions
 - **Agent backend** — which AI runs your work orders: claude (default), cursor, codex, or gemini
 
-After setup completes, the factory services start automatically and the dashboard opens in your browser.
+After setup completes, the factory services start automatically and the dashboard opens in your browser. The script also auto-generates an `API_SECRET` bearer token and stores it in Keychain — this token secures all write endpoints on the orchestrator.
 
 ## 4. Verify the dashboard
 

@@ -32,6 +32,7 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
 ORCHESTRATOR_PATH = Path(os.getenv("ORCHESTRATOR_PATH", "/orchestrator/orchestrator.json"))
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
+_API_SECRET = os.getenv("API_SECRET", "")
 VALIDATIONS_PATH = Path("/orchestrator/pending_validations.json")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
@@ -39,6 +40,11 @@ RUNS_PATH_LOCAL = os.getenv("RUNS_PATH", "docs/factory/runs")
 LOG_PATH = os.getenv("LOG_PATH", "/var/log/factory-agent/out.log")
 FACTORY_CONFIG_PATH = Path(os.getenv("FACTORY_CONFIG_PATH", "/config/factory-config.json"))
 LOCAL_REPO_MOUNT = os.getenv("LOCAL_REPO_MOUNT", "")
+
+def _orch_headers() -> dict:
+    """Authorization header for orchestrator write requests."""
+    return {"Authorization": f"Bearer {_API_SECRET}"} if _API_SECRET else {}
+
 
 # In-memory cache for parsed WO files — eliminates 400+ file reads on every page load.
 # Keyed as (timestamp, result_dict). Invalidated after WO_CACHE_TTL seconds.
@@ -1026,7 +1032,7 @@ async def proxy_post_thread_message(wo: str, request: Request):
     body.setdefault("type", "text")
     try:
         async with httpx.AsyncClient(timeout=8) as client:
-            resp = await client.post(f"{ORCHESTRATOR_URL}/api/thread/{wo}/messages", json=body)
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/thread/{wo}/messages", json=body, headers=_orch_headers())
             return JSONResponse(content=resp.json(), status_code=resp.status_code)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Orchestrator unreachable: {e}")
@@ -1043,7 +1049,7 @@ async def proxy_approve(wo: str, request: Request):
     body.setdefault("decided_by", "human")
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.post(f"{ORCHESTRATOR_URL}/api/validations/{wo}/approve", json=body)
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/validations/{wo}/approve", json=body, headers=_orch_headers())
             return JSONResponse(content=resp.json(), status_code=resp.status_code)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Orchestrator unreachable: {e}")
@@ -1060,7 +1066,7 @@ async def proxy_reject(wo: str, request: Request):
     body.setdefault("decided_by", "human")
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.post(f"{ORCHESTRATOR_URL}/api/validations/{wo}/reject", json=body)
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/validations/{wo}/reject", json=body, headers=_orch_headers())
             return JSONResponse(content=resp.json(), status_code=resp.status_code)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Orchestrator unreachable: {e}")
@@ -1202,11 +1208,11 @@ async def settings_agents_save(request: Request):
     anthropic_key = str(form.get("anthropic_key", "")).strip()
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.put(f"{ORCHESTRATOR_URL}/api/config", json=payload)
+            r = await client.put(f"{ORCHESTRATOR_URL}/api/config", json=payload, headers=_orch_headers())
             if r.status_code != 200:
                 return RedirectResponse(url=f"/settings/agents?error=Save+failed+({r.status_code})", status_code=303)
             if anthropic_key:
-                await client.put(f"{ORCHESTRATOR_URL}/api/secrets", json={"ANTHROPIC_API_KEY": anthropic_key})
+                await client.put(f"{ORCHESTRATOR_URL}/api/secrets", json={"ANTHROPIC_API_KEY": anthropic_key}, headers=_orch_headers())
     except Exception:
         return RedirectResponse(url="/settings/agents?error=Orchestrator+unreachable", status_code=303)
     return RedirectResponse(url="/settings/agents?saved=1", status_code=303)
@@ -1347,7 +1353,7 @@ async def settings_authentication_save(request: Request):
     if secrets_payload:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.put(f"{ORCHESTRATOR_URL}/api/secrets", json=secrets_payload)
+                r = await client.put(f"{ORCHESTRATOR_URL}/api/secrets", json=secrets_payload, headers=_orch_headers())
                 if r.status_code != 200:
                     return RedirectResponse(
                         url=f"/settings/authentication?error=Save+failed+({r.status_code})",
@@ -1399,7 +1405,7 @@ async def settings_plan_hold_wo(wo_id: str, request: Request):
     from fastapi.responses import RedirectResponse
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(f"{ORCHESTRATOR_URL}/api/wos/{wo_id}/hold")
+            await client.post(f"{ORCHESTRATOR_URL}/api/wos/{wo_id}/hold", headers=_orch_headers())
     except Exception:
         pass
     return RedirectResponse(url="/settings/plan", status_code=303)
@@ -1410,7 +1416,7 @@ async def settings_plan_unhold_wo(wo_id: str, request: Request):
     from fastapi.responses import RedirectResponse
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            await client.request("DELETE", f"{ORCHESTRATOR_URL}/api/wos/{wo_id}/hold")
+            await client.request("DELETE", f"{ORCHESTRATOR_URL}/api/wos/{wo_id}/hold", headers=_orch_headers())
     except Exception:
         pass
     return RedirectResponse(url="/settings/plan", status_code=303)
@@ -1508,6 +1514,7 @@ async def settings_plan_draft_wo(request: Request):
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(
                 f"{ORCHESTRATOR_URL}/api/plan/draft",
+                headers=_orch_headers(),
                 json={
                     "description": description,
                     "next_wo_num": next_num,
@@ -1654,7 +1661,7 @@ async def settings_plan_create_milestone(request: Request):
 async def delete_milestone_proxy(milestone_id: str):
     """Proxy DELETE to orchestrator."""
     async with httpx.AsyncClient(timeout=5) as client:
-        r = await client.delete(f"{ORCHESTRATOR_URL}/api/milestones/{milestone_id}")
+        r = await client.delete(f"{ORCHESTRATOR_URL}/api/milestones/{milestone_id}", headers=_orch_headers())
         return JSONResponse(content=r.json() if r.content else {}, status_code=r.status_code)
 
 
@@ -1662,7 +1669,7 @@ async def delete_milestone_proxy(milestone_id: str):
 async def delete_phase_proxy(phase_id: str):
     """Proxy DELETE to orchestrator."""
     async with httpx.AsyncClient(timeout=5) as client:
-        r = await client.delete(f"{ORCHESTRATOR_URL}/api/phases/{phase_id}")
+        r = await client.delete(f"{ORCHESTRATOR_URL}/api/phases/{phase_id}", headers=_orch_headers())
         return JSONResponse(content=r.json() if r.content else {}, status_code=r.status_code)
 
 
@@ -1716,6 +1723,7 @@ async def proxy_thread_post(wo: str, request: Request):
         resp = await client.post(
             f"{ORCHESTRATOR_URL}/api/thread/{wo}/messages",
             json=body,
+            headers=_orch_headers(),
         )
     return JSONResponse(content=resp.json(), status_code=resp.status_code)
 
@@ -1836,7 +1844,7 @@ async def api_factory_dispatch():
 async def api_factory_release_wo(wo_id: str):
     """Release a single WO from dispatch state so it can be re-queued."""
     async with httpx.AsyncClient(timeout=4) as client:
-        r = await client.delete(f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}")
+        r = await client.delete(f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}", headers=_orch_headers())
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
@@ -1844,7 +1852,7 @@ async def api_factory_release_wo(wo_id: str):
 async def api_factory_retry_wo(wo_id: str):
     """Re-queue a failed WO so the runner picks it up again."""
     async with httpx.AsyncClient(timeout=4) as client:
-        r = await client.post(f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}/retry")
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}/retry", headers=_orch_headers())
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
@@ -1852,7 +1860,7 @@ async def api_factory_retry_wo(wo_id: str):
 async def api_factory_release_all():
     """Clear entire dispatch state."""
     async with httpx.AsyncClient(timeout=4) as client:
-        r = await client.delete(f"{ORCHESTRATOR_URL}/api/dispatch")
+        r = await client.delete(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_orch_headers())
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
@@ -1866,14 +1874,14 @@ async def api_factory_pause_state():
 @app.post("/api/factory/pause")
 async def api_factory_pause():
     async with httpx.AsyncClient(timeout=3) as client:
-        r = await client.post(f"{ORCHESTRATOR_URL}/api/factory/pause")
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/factory/pause", headers=_orch_headers())
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
 @app.post("/api/factory/resume")
 async def api_factory_resume():
     async with httpx.AsyncClient(timeout=3) as client:
-        r = await client.post(f"{ORCHESTRATOR_URL}/api/factory/resume")
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/factory/resume", headers=_orch_headers())
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
@@ -1883,7 +1891,7 @@ async def api_factory_pm(request: Request):
     body = await request.json()
     try:
         async with httpx.AsyncClient(timeout=90) as client:
-            r = await client.post(f"{ORCHESTRATOR_URL}/api/pm/chat", json=body)
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/pm/chat", json=body, headers=_orch_headers())
         return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         return JSONResponse(content={"type": "text", "reply": f"PM unavailable: {e}", "wo_draft": None}, status_code=200)
@@ -1909,7 +1917,7 @@ async def api_factory_notifications_test():
     """Send a test ntfy notification via orchestrator."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(f"{ORCHESTRATOR_URL}/api/notifications/test")
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/notifications/test", headers=_orch_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=503)
@@ -1931,7 +1939,7 @@ async def api_factory_slack_reconnect():
     """Trigger Slack bot reconnect via orchestrator."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(f"{ORCHESTRATOR_URL}/api/slack/reconnect")
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/slack/reconnect", headers=_orch_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         return JSONResponse(content={"ok": False, "error": str(e)}, status_code=503)
@@ -1953,7 +1961,7 @@ async def api_factory_dependabot_rebase(number: int):
     """Proxy Dependabot rebase action to orchestrator."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(f"{ORCHESTRATOR_URL}/api/dependabot/prs/{number}/rebase")
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/dependabot/prs/{number}/rebase", headers=_orch_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=503)
@@ -1964,7 +1972,7 @@ async def api_factory_dependabot_recreate(number: int):
     """Proxy Dependabot recreate action to orchestrator."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(f"{ORCHESTRATOR_URL}/api/dependabot/prs/{number}/recreate")
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/dependabot/prs/{number}/recreate", headers=_orch_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=503)
@@ -1975,7 +1983,7 @@ async def api_factory_dependabot_approve_merge(number: int):
     """Proxy Dependabot approve-merge action to orchestrator."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.post(f"{ORCHESTRATOR_URL}/api/dependabot/prs/{number}/approve-merge")
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/dependabot/prs/{number}/approve-merge", headers=_orch_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=503)
@@ -1992,21 +2000,21 @@ async def api_factory_approvals():
 @app.post("/api/factory/approvals/{wo_id}/approve")
 async def api_factory_approve_wo(wo_id: str):
     async with httpx.AsyncClient(timeout=4) as client:
-        r = await client.post(f"{ORCHESTRATOR_URL}/api/approvals/{wo_id}/approve")
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/approvals/{wo_id}/approve", headers=_orch_headers())
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
 @app.post("/api/factory/approvals/{wo_id}/skip")
 async def api_factory_skip_approval(wo_id: str):
     async with httpx.AsyncClient(timeout=4) as client:
-        r = await client.post(f"{ORCHESTRATOR_URL}/api/approvals/{wo_id}/skip")
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/approvals/{wo_id}/skip", headers=_orch_headers())
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
 @app.post("/api/factory/approvals/{wo_id}/hold")
 async def api_factory_hold_from_approval(wo_id: str):
     async with httpx.AsyncClient(timeout=4) as client:
-        r = await client.post(f"{ORCHESTRATOR_URL}/api/approvals/{wo_id}/hold")
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/approvals/{wo_id}/hold", headers=_orch_headers())
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
@@ -2031,7 +2039,7 @@ async def api_factory_agent_configure(name: str, request: Request):
         pass
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.put(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}", json=body)
+            r = await client.put(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}", json=body, headers=_orch_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=503)
@@ -2042,7 +2050,7 @@ async def api_factory_agent_remove(name: str):
     """Stop and uninstall an agent daemon."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.delete(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}")
+            r = await client.delete(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}", headers=_orch_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=503)
@@ -2051,14 +2059,14 @@ async def api_factory_agent_remove(name: str):
 @app.post("/api/factory/agents/{name}/start")
 async def api_factory_agent_start(name: str):
     async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.post(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}/start")
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}/start", headers=_orch_headers())
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
 @app.post("/api/factory/agents/{name}/stop")
 async def api_factory_agent_stop(name: str):
     async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.post(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}/stop")
+        r = await client.post(f"{ORCHESTRATOR_URL}/api/runner/agents/{name}/stop", headers=_orch_headers())
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
@@ -2153,7 +2161,7 @@ async def api_intelligence_status():
 async def api_intelligence_run():
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.post(f"{ORCHESTRATOR_URL}/api/intelligence/run")
+            r = await client.post(f"{ORCHESTRATOR_URL}/api/intelligence/run", headers=_orch_headers())
             if r.status_code == 200:
                 return JSONResponse(content=r.json())
     except Exception as e:

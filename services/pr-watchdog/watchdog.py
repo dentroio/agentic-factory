@@ -22,6 +22,8 @@ POST_COMMENTS = os.getenv("POST_COMMENTS", "false").lower() == "true"
 OUTPUT_PATH = Path(os.getenv("OUTPUT_PATH", "/data/watchdog.json"))
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "")
 MARK_DONE_ENABLED = os.getenv("MARK_DONE_ENABLED", "false").lower() == "true"
+_API_SECRET = os.getenv("API_SECRET", "")
+_ORCH_AUTH = {"Authorization": f"Bearer {_API_SECRET}"} if _API_SECRET else {}
 
 
 def _headers() -> dict:
@@ -88,7 +90,7 @@ async def _notify_mark_done(pr: dict, already_notified: set[str]) -> None:
     try:
         async with httpx.AsyncClient(timeout=15) as c:
             resp = await c.post(f"{ORCHESTRATOR_URL}/api/wos/{wo_id}/auto-mark-done",
-                                params=params)
+                                params=params, headers=_ORCH_AUTH)
             if resp.status_code == 200:
                 print(f"[watchdog] auto-mark-done {wo_id}: {resp.json().get('results')}")
             else:

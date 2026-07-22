@@ -891,6 +891,7 @@ async def lifespan(app: FastAPI):
     thread_store.THREADS_DIR.mkdir(parents=True, exist_ok=True)
     _load_state()
     _load_pm_memory()
+    await _init_secrets()
 
     if not GITHUB_TOKEN or not GITHUB_REPO:
         print("[orchestrator] WARNING: GITHUB_TOKEN or GITHUB_REPO not set — poll loop disabled")
@@ -912,6 +913,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Factory Orchestrator", lifespan=lifespan)
+
+API_SECRET = os.getenv("API_SECRET", "")
+
+
+@app.middleware("http")
+async def _bearer_auth(request: Request, call_next):
+    """Require bearer token on all non-read requests when API_SECRET is set."""
+    if API_SECRET and request.method not in ("GET", "HEAD", "OPTIONS"):
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {API_SECRET}":
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    return await call_next(request)
+
+
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -2553,7 +2568,8 @@ async def _fetch_recently_merged_wo_prs(client: httpx.AsyncClient) -> dict[int, 
         result: dict[int, str] = {}
         for p in prs:
             if p.get("merged_at") and p["merged_at"] >= since:
-                m = re.search(r"WO-(\d+)", p.get("title", ""))
+                head_ref = p.get("head", {}).get("ref", "")
+                m = re.match(r"wo/(\d+)-", head_ref)
                 if m:
                     result[int(m.group(1))] = p.get("html_url", "")
         return result
@@ -3321,18 +3337,88 @@ async def get_usage():
     return {"records": records[-20:], "summary": {"per_backend": per_backend}}
 
 
-# ── Secrets storage (persisted to data volume, editable from settings UI) ─────
+# ── Secrets (Vault KV v2 + file fallback) ────────────────────────────────────
 
+VAULT_ADDR = os.getenv("VAULT_ADDR", "")
+_VAULT_KEYS_DIR = Path("/vault/keys")
+_VAULT_SECRETS_PATH = "v1/secret/data/factory/secrets"
 SECRETS_PATH = DATA_DIR / "secrets.json"
+_secrets_cache: dict = {}
+_vault_token: str = ""  # set in _init_secrets() at startup
 
 
 def _load_secrets() -> dict:
+    """Return in-memory secrets cache (populated from Vault or file on startup)."""
+    return dict(_secrets_cache)
+
+
+def _load_secrets_file() -> dict:
     if not SECRETS_PATH.exists():
         return {}
     try:
         return json.loads(SECRETS_PATH.read_text())
     except Exception:
         return {}
+
+
+async def _vault_read() -> dict:
+    if not VAULT_ADDR or not _vault_token:
+        return {}
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(
+                f"{VAULT_ADDR}/{_VAULT_SECRETS_PATH}",
+                headers={"X-Vault-Token": _vault_token},
+            )
+            if r.status_code == 200:
+                return r.json().get("data", {}).get("data", {}) or {}
+            if r.status_code == 404:
+                return {}
+            print(f"[secrets] Vault read HTTP {r.status_code}")
+    except Exception as e:
+        print(f"[secrets] Vault read error: {e}")
+    return {}
+
+
+async def _vault_write(secrets: dict) -> None:
+    if not VAULT_ADDR or not _vault_token:
+        return
+    async with httpx.AsyncClient(timeout=5) as c:
+        r = await c.put(
+            f"{VAULT_ADDR}/{_VAULT_SECRETS_PATH}",
+            headers={"X-Vault-Token": _vault_token, "Content-Type": "application/json"},
+            json={"data": secrets},
+        )
+        if r.status_code not in (200, 204):
+            raise RuntimeError(f"Vault write HTTP {r.status_code}: {r.text[:200]}")
+
+
+async def _init_secrets() -> None:
+    """Load secrets from Vault (or file fallback) into the in-memory cache."""
+    global _secrets_cache, _vault_token
+    _vault_token = (
+        os.getenv("VAULT_TOKEN", "")
+        or ((_VAULT_KEYS_DIR / "root_token").read_text().strip()
+            if (_VAULT_KEYS_DIR / "root_token").exists() else "")
+    )
+    if VAULT_ADDR and _vault_token:
+        vault_data = await _vault_read()
+        if not vault_data:
+            file_data = _load_secrets_file()
+            if file_data:
+                print(f"[secrets] Migrating {len(file_data)} secrets from file to Vault…")
+                try:
+                    await _vault_write(file_data)
+                    vault_data = file_data
+                    SECRETS_PATH.rename(SECRETS_PATH.with_suffix(".json.migrated"))
+                except Exception as e:
+                    print(f"[secrets] Vault migration failed: {e} — using file fallback")
+                    vault_data = file_data
+        _secrets_cache = vault_data
+        print(f"[secrets] {len(_secrets_cache)} secret(s) loaded from Vault")
+    else:
+        _secrets_cache = _load_secrets_file()
+        print(f"[secrets] Vault not configured — {len(_secrets_cache)} secret(s) from file")
 
 
 @app.get("/api/secrets")
@@ -3343,17 +3429,22 @@ async def get_secrets():
 
 @app.put("/api/secrets")
 async def put_secrets(request: Request):
+    global _secrets_cache
     try:
         incoming = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
-    secrets = _load_secrets()
+    secrets = dict(_secrets_cache)
     for k, v in incoming.items():
         if v:
             secrets[k] = str(v)
         elif k in secrets:
             del secrets[k]
-    SECRETS_PATH.write_text(json.dumps(secrets, indent=2))
+    if VAULT_ADDR and _vault_token:
+        await _vault_write(secrets)
+    else:
+        SECRETS_PATH.write_text(json.dumps(secrets, indent=2))
+    _secrets_cache = secrets
     return {k: bool(v) for k, v in secrets.items()}
 
 

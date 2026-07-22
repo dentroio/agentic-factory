@@ -5,39 +5,51 @@
       "added_at": "2026-07-19T00:00:00Z",
       "source_wo": "WO-1031",
       "category": "gotcha",
-      "applies_to": ["data-service", "migrations"],
-      "content": "CLARION_MIGRATIONS_DONE is set in the Dockerfile CMD, not in Vault. Do not look for it in Vault or .env — it is always set to '1' by the container startup script."
+      "applies_to": [
+        "data-service",
+        "migrations"
+      ],
+      "content": "CLARION_MIGRATIONS_DONE is set in the Dockerfile CMD, not in Vault. Do not look for it in Vault or .env \u2014 it is always set to '1' by the container startup script."
     },
     {
       "id": "lesson-002",
       "added_at": "2026-07-19T00:00:00Z",
       "source_wo": "WO-408",
       "category": "conflict_magnet",
-      "applies_to": ["data-service"],
-      "content": "services/data-service/main.py is a conflict magnet — every WO appends a router. After WO-408 merges, register new routes in services/data-service/router_registry.py instead of appending to main.py directly."
+      "applies_to": [
+        "data-service"
+      ],
+      "content": "services/data-service/main.py is a conflict magnet \u2014 every WO appends a router. After WO-408 merges, register new routes in services/data-service/router_registry.py instead of appending to main.py directly."
     },
     {
       "id": "lesson-003",
       "added_at": "2026-07-19T00:00:00Z",
       "source_wo": "WO-407",
       "category": "conflict_magnet",
-      "applies_to": ["data-service", "migrations"],
-      "content": "src/clarion/storage/adapter.py is a conflict magnet — every WO appended migrations manually. After WO-407 merges, adapter.py auto-discovers migration files from migrations/ directory. Do NOT add migrations to the _MIGRATIONS list in adapter.py manually."
+      "applies_to": [
+        "data-service",
+        "migrations"
+      ],
+      "content": "src/clarion/storage/adapter.py is a conflict magnet \u2014 every WO appended migrations manually. After WO-407 merges, adapter.py auto-discovers migration files from migrations/ directory. Do NOT add migrations to the _MIGRATIONS list in adapter.py manually."
     },
     {
       "id": "lesson-004",
       "added_at": "2026-07-19T00:00:00Z",
       "source_wo": "WO-409",
       "category": "conflict_magnet",
-      "applies_to": ["frontend"],
-      "content": "frontend/src/App.tsx is a conflict magnet — every WO adds a route. After WO-409 merges, register new routes in frontend/src/routeConfig.ts instead of appending to App.tsx directly."
+      "applies_to": [
+        "frontend"
+      ],
+      "content": "frontend/src/App.tsx is a conflict magnet \u2014 every WO adds a route. After WO-409 merges, register new routes in frontend/src/routeConfig.ts instead of appending to App.tsx directly."
     },
     {
       "id": "lesson-005",
       "added_at": "2026-07-19T00:00:00Z",
       "source_wo": "WO-391",
       "category": "failure_pattern",
-      "applies_to": ["connector-service"],
+      "applies_to": [
+        "connector-service"
+      ],
       "content": "WO-391 required Palo Alto NGFW and Cisco Secure Access connectors. Neither was configured in the environment. The agent ran for 23 hours and could never pass. Always check the ## Requirements section of the WO spec for connector prerequisites before starting. If required connectors are not configured, the WO cannot be completed and should be held."
     },
     {
@@ -45,7 +57,9 @@
       "added_at": "2026-07-19T00:00:00Z",
       "source_wo": "WO-400",
       "category": "gotcha",
-      "applies_to": ["frontend"],
+      "applies_to": [
+        "frontend"
+      ],
       "content": "Never import the same Lucide React icon twice in a file. Duplicate named imports (e.g. two lines importing 'Factory') cause TypeScript TS2300 Duplicate identifier errors that block CI."
     },
     {
@@ -53,25 +67,80 @@
       "added_at": "2026-07-19T00:00:00Z",
       "source_wo": "pr_watch",
       "category": "process",
-      "applies_to": ["all"],
-      "content": "scripts/pr_watch.sh uses git rebase (not git merge) to sync branches with main. If a rebase conflict occurs, the agent must resolve it manually — pr_watch will abort and log 'Rebase conflict when pulling main — manual resolution required'."
+      "applies_to": [
+        "all"
+      ],
+      "content": "scripts/pr_watch.sh uses git rebase (not git merge) to sync branches with main. If a rebase conflict occurs, the agent must resolve it manually \u2014 pr_watch will abort and log 'Rebase conflict when pulling main \u2014 manual resolution required'."
+    },
+    {
+      "id": "lesson-008",
+      "added_at": "2026-07-19T16:19:35Z",
+      "source_wo": "WO-408",
+      "category": "failure_pattern",
+      "applies_to": [
+        "all"
+      ],
+      "content": "WO-408 failed: CI tests failed"
     }
   ],
   "environment": {
     "last_updated": "2026-07-19T00:00:00Z",
-    "connected_connectors": ["ise", "pxgrid"],
-    "NOT_connected": ["palo_alto", "cisco_sase", "zscaler"],
-    "healthy_services": ["data-service", "connector-service", "frontend", "correlation-service", "clustering-service", "user-service", "gateway"],
+    "connected_connectors": [
+      "ise",
+      "pxgrid"
+    ],
+    "NOT_connected": [
+      "palo_alto",
+      "cisco_sase",
+      "zscaler"
+    ],
+    "healthy_services": [
+      "data-service",
+      "connector-service",
+      "frontend",
+      "correlation-service",
+      "clustering-service",
+      "user-service",
+      "gateway"
+    ],
     "recent_migrations": [],
     "recent_routes": []
   },
   "completed_wos": [
-    {"wo": "WO-407", "completed_at": "2026-07-19", "summary": "adapter.py now auto-discovers migrations from migrations/ directory — no longer need to register manually"},
-    {"wo": "WO-408", "completed_at": "2026-07-19", "summary": "router_registry.py added to data-service — register new routes there, not in main.py"},
-    {"wo": "WO-409", "completed_at": "2026-07-19", "summary": "routeConfig.ts added to frontend — register new routes there, not in App.tsx"},
-    {"wo": "WO-1035", "completed_at": "2026-07-19", "summary": "Factory UI simplified: removed stale agent cards, added single status bar and WO dropdown for live feed"},
-    {"wo": "WO-1036", "completed_at": "2026-07-19", "summary": "Pre-dispatch approval gate added: P1 WOs require human approval before agent claims them"},
-    {"wo": "WO-1037", "completed_at": "2026-07-19", "summary": "Domain-scoped agents: DOMAIN_FILTER env var routes WOs to matching runners"},
-    {"wo": "WO-1038", "completed_at": "2026-07-19", "summary": "Stale claim timeout: dead agents auto-released after CLAIM_TIMEOUT_SECONDS (default 600s)"}
+    {
+      "wo": "WO-407",
+      "completed_at": "2026-07-19",
+      "summary": "adapter.py now auto-discovers migrations from migrations/ directory \u2014 no longer need to register manually"
+    },
+    {
+      "wo": "WO-408",
+      "completed_at": "2026-07-19",
+      "summary": "router_registry.py added to data-service \u2014 register new routes there, not in main.py"
+    },
+    {
+      "wo": "WO-409",
+      "completed_at": "2026-07-19",
+      "summary": "routeConfig.ts added to frontend \u2014 register new routes there, not in App.tsx"
+    },
+    {
+      "wo": "WO-1035",
+      "completed_at": "2026-07-19",
+      "summary": "Factory UI simplified: removed stale agent cards, added single status bar and WO dropdown for live feed"
+    },
+    {
+      "wo": "WO-1036",
+      "completed_at": "2026-07-19",
+      "summary": "Pre-dispatch approval gate added: P1 WOs require human approval before agent claims them"
+    },
+    {
+      "wo": "WO-1037",
+      "completed_at": "2026-07-19",
+      "summary": "Domain-scoped agents: DOMAIN_FILTER env var routes WOs to matching runners"
+    },
+    {
+      "wo": "WO-1038",
+      "completed_at": "2026-07-19",
+      "summary": "Stale claim timeout: dead agents auto-released after CLAIM_TIMEOUT_SECONDS (default 600s)"
+    }
   ]
 }

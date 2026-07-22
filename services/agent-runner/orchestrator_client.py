@@ -3,7 +3,9 @@ from datetime import UTC, datetime
 
 import httpx
 
-from config import ORCHESTRATOR_URL, AGENT_NAME, HOSTNAME
+from config import ORCHESTRATOR_URL, AGENT_NAME, HOSTNAME, API_SECRET
+
+_AUTH = {"Authorization": f"Bearer {API_SECRET}"} if API_SECRET else {}
 
 
 def _utcnow() -> str:
@@ -26,7 +28,7 @@ async def get_next(domain: str = "") -> dict | None:
 async def claim(wo_id: str, slug: str = "", backend: str = "") -> bool:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{ORCHESTRATOR_URL}/api/claim", json={
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/claim", headers=_AUTH, json={
                 "wo": wo_id,
                 "agent": AGENT_NAME,
                 "backend": backend,
@@ -42,7 +44,7 @@ async def claim(wo_id: str, slug: str = "", backend: str = "") -> bool:
 async def checkin(wo_id: str, step: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(f"{ORCHESTRATOR_URL}/api/checkin",
+            await client.post(f"{ORCHESTRATOR_URL}/api/checkin", headers=_AUTH,
                               params={"wo": wo_id, "agent": AGENT_NAME, "step": step})
     except Exception:
         pass  # non-blocking
@@ -54,7 +56,7 @@ async def request_validate(wo_id: str, verify_url: str = "", steps: list[str] | 
                            pr_number: int | None = None) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{ORCHESTRATOR_URL}/api/validate", json={
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/validate", headers=_AUTH, json={
                 "wo": wo_id,
                 "agent": AGENT_NAME,
                 "workstation": HOSTNAME,
@@ -78,7 +80,7 @@ async def request_validate(wo_id: str, verify_url: str = "", steps: list[str] | 
 async def complete(wo_id: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(f"{ORCHESTRATOR_URL}/api/complete",
+            await client.post(f"{ORCHESTRATOR_URL}/api/complete", headers=_AUTH,
                               json={"wo": wo_id, "agent": AGENT_NAME})
     except Exception as e:
         print(f"[runner] complete {wo_id} failed: {e}")
@@ -93,7 +95,7 @@ async def post_thread_message(
     """Post a message to the WO thread (non-blocking — errors are swallowed)."""
     try:
         async with httpx.AsyncClient(timeout=8) as client:
-            await client.post(f"{ORCHESTRATOR_URL}/api/thread/{wo_id}/messages", json={
+            await client.post(f"{ORCHESTRATOR_URL}/api/thread/{wo_id}/messages", headers=_AUTH, json={
                 "author": AGENT_NAME,
                 "role": "agent",
                 "type": msg_type,
@@ -148,7 +150,7 @@ async def release_dispatch(wo_id: str) -> None:
     """Remove WO from dispatch state so capacity is freed and it can be re-claimed."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}/retry")
+            await client.post(f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}/retry", headers=_AUTH)
     except Exception as e:
         print(f"[runner] release_dispatch {wo_id} failed: {e}")
 
