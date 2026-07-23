@@ -44,8 +44,8 @@ class WOSpec:
             return "in_progress"
         if s.startswith(("🔴", "❌")) or sl.startswith("blocked"):
             return "blocked"
-        if s.startswith("📋 Planned") or sl.startswith("planned"):
-            return "planned"
+        # "Planned" is acknowledged backlog — visible as open on the board.
+        # Dispatch eligibility (Ready vs Planned) is enforced by the orchestrator separately.
         return "open"
 
     @property
