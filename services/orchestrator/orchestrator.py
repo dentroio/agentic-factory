@@ -30,7 +30,12 @@ from notifications import (
 )
 from plan_engine import next_wo, sorted_queue
 import intelligence as _intel
-from wo_resolver import resolve_wo_for_pr, extract_wo_from_branch, extract_wo_from_title
+from wo_resolver import (
+    resolve_wo_for_pr,
+    resolve_wo_for_pr_with_source,
+    extract_wo_from_branch,
+    extract_wo_from_title,
+)
 
 load_dotenv()
 
@@ -108,8 +113,10 @@ _preflight_held: dict[str, dict] = {}  # wo_id → {hold_reason, held_at, last_c
 HOLD_PATH = DATA_DIR / "held_wos.json"
 PAUSE_PATH = DATA_DIR / "factory_paused.json"
 PM_MEMORY_PATH = DATA_DIR / "pm_memory.json"
+OVERRIDES_PATH = DATA_DIR / "wo_overrides.json"
 
 _pm_memory: dict = {}   # persisted PM preferences, decisions, dispatched history
+_overrides: dict[str, dict] = {}  # WO-NNN → {"action": "no-auto-complete", ...}
 
 _factory_paused: bool = False   # when True, get_next() returns null — drains gracefully
 
@@ -155,6 +162,27 @@ def _load_state() -> None:
             _last_intelligence_run = json.loads(INTELLIGENCE_STATE_PATH.read_text())
         except Exception:
             _last_intelligence_run = {}
+    _load_overrides()
+
+
+def _load_overrides() -> None:
+    global _overrides
+    if OVERRIDES_PATH.exists():
+        try:
+            _overrides = json.loads(OVERRIDES_PATH.read_text())
+        except Exception:
+            _overrides = {}
+
+
+def _save_overrides() -> None:
+    try:
+        OVERRIDES_PATH.write_text(json.dumps(_overrides, indent=2))
+    except Exception as e:
+        print(f"[orchestrator] overrides save failed: {e}")
+
+
+def _is_overridden(wo_id: str, action: str) -> bool:
+    return _overrides.get(wo_id, {}).get("action") == action
 
 
 def _load_pm_memory() -> None:
@@ -1177,6 +1205,48 @@ async def unhold_wo(wo_id: str):
     _held_wos.discard(wo_id)
     _save_held()
     return {"held": sorted(_held_wos)}
+
+
+# ── Override tombstone API ────────────────────────────────────────────────────
+
+class OverrideRequest(BaseModel):
+    action: str  # e.g. "no-auto-complete"
+
+
+@app.post("/api/wos/{wo_id}/override")
+async def set_override(wo_id: str, req: OverrideRequest, request: Request):
+    """Create or update a human override tombstone for a WO."""
+    wo_id = wo_id.upper()
+    _overrides[wo_id] = {
+        "action": req.action,
+        "set_by": "human",
+        "set_at": _utcnow(),
+    }
+    _save_overrides()
+    print(f"[orchestrator] override set: {wo_id} → {req.action}")
+    return {"wo_id": wo_id, "override": _overrides[wo_id]}
+
+
+@app.delete("/api/wos/{wo_id}/override")
+async def delete_override(wo_id: str):
+    """Remove a human override tombstone so normal automation resumes."""
+    wo_id = wo_id.upper()
+    removed = _overrides.pop(wo_id, None)
+    if removed is None:
+        raise HTTPException(status_code=404, detail=f"No override for {wo_id}")
+    _save_overrides()
+    print(f"[orchestrator] override removed: {wo_id}")
+    return {"wo_id": wo_id, "removed": removed}
+
+
+@app.get("/api/wos/{wo_id}/override")
+async def get_override(wo_id: str):
+    """Get the current override tombstone for a WO, or 404."""
+    wo_id = wo_id.upper()
+    override = _overrides.get(wo_id)
+    if override is None:
+        raise HTTPException(status_code=404, detail=f"No override for {wo_id}")
+    return {"wo_id": wo_id, "override": override}
 
 
 @app.post("/api/claim")
@@ -4487,13 +4557,17 @@ async def pm_chat(req: PMChatRequest):
                             if pr_resp.status_code == 200:
                                 pr_data = pr_resp.json()
                                 pr_html = pr_data.get("html_url", "")
-                                wo_num = resolve_wo_for_pr(pr_data)
-                                if wo_num is not None:
+                                wo_num, wo_src = resolve_wo_for_pr_with_source(pr_data)
+                                if wo_num is not None and wo_src == "title":
+                                    print(f"[orchestrator] auto-complete WO-{wo_num} skipped — title-only match, needs branch corroboration (PR #{pr_num})")
+                                elif wo_num is not None and wo_src == "branch":
                                     wo_match = f"WO-{wo_num}"
-                                    if wo_match in _dispatch_state and _dispatch_state[wo_match].get("status") not in ("complete", "rejected"):
+                                    if _is_overridden(wo_match, "no-auto-complete"):
+                                        print(f"[orchestrator] auto-complete {wo_match} skipped — override tombstone active")
+                                    elif wo_match in _dispatch_state and _dispatch_state[wo_match].get("status") not in ("complete", "rejected"):
                                         _dispatch_state[wo_match]["status"] = "complete"
                                         _dispatch_state[wo_match]["completed_at"] = _utcnow()
-                                        _dispatch_state[wo_match]["step"] = f"PR #{pr_num} merged via PM"
+                                        _dispatch_state[wo_match]["step"] = f"PR #{pr_num} merged via PM · 🤖 reconciler"
                                         _dispatch_state[wo_match]["pr_url"] = pr_html
                                         _dispatch_state[wo_match]["pr_number"] = pr_num
                                         _save_dispatch()

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -28,6 +29,7 @@ from wo_resolver import resolve_wo_for_pr  # noqa: F401 — available for caller
 
 FAILURE_THRESHOLD_MINUTES = 90
 GHOST_THRESHOLD_HOURS = 3
+GHOST_ESCALATE_HOURS = 24
 _DEDUP_TTL_HOURS = 24
 
 _DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
@@ -303,6 +305,7 @@ async def run_intelligence_pass(
         update_dispatch: callable(wo_id, patch_dict) to update dispatch state
     """
     started_at = datetime.now(UTC).isoformat()
+    run_id = uuid.uuid4().hex[:8]
     actions: list[str] = []
     issues_found: list[str] = []
 
@@ -341,7 +344,7 @@ async def run_intelligence_pass(
                     try:
                         await _gh_post(client, github_token,
                                        f"/repos/{github_repo}/issues/{pr_num}/comments",
-                                       {"body": "@dependabot ignore this major version"})
+                                       {"body": f"@dependabot ignore this major version\n\n🤖 **intelligence-loop** · run `{run_id}`"})
                         await _gh_patch(client, github_token,
                                         f"/repos/{github_repo}/pulls/{pr_num}",
                                         {"state": "closed"})
@@ -378,7 +381,8 @@ async def run_intelligence_pass(
                                    f"/repos/{github_repo}/issues/{pr_num}/comments",
                                    {"body": (
                                        f"⚠️ **Merge conflict detected** — added to factory queue as `{wo_id}` (P1). "
-                                       "An agent will rebase and resolve this shortly."
+                                       "An agent will rebase and resolve this shortly.\n\n"
+                                       f"🤖 **intelligence-loop** · run `{run_id}`"
                                    )})
                     _mark_acted("conflict_wo", str(pr_num))
                     actions.append(f"Created {wo_id} for PR #{pr_num} merge conflict")
@@ -429,7 +433,8 @@ async def run_intelligence_pass(
                                                f"/repos/{github_repo}/issues/{pr_num}/comments",
                                                {"body": (
                                                    f"🤖 **CI failure diagnosed** — `{wo_id}` added to factory queue.\n\n"
-                                                   f"**Root cause:** {diag_summary}"
+                                                   f"**Root cause:** {diag_summary}\n\n"
+                                                   f"🤖 **intelligence-loop** · run `{run_id}`"
                                                )})
                                 actions.append(f"Created {wo_id} for CI failure on PR #{pr_num}: {diag_summary}")
 
@@ -457,23 +462,56 @@ async def run_intelligence_pass(
         # ── 2. Ghost dispatch cleanup ──────────────────────────────────────────
         ghost_ids = _find_ghost_entries(dispatch_state, open_branches)
         for wo_id in ghost_ids:
-            if not _already_acted("ghost_cleanup", wo_id):
-                issues_found.append(f"{wo_id}: ghost dispatch entry (stale, no open branch)")
+            entry = dispatch_state.get(wo_id, {})
+
+            if entry.get("ghost_warning"):
+                # Already warned — check if >24h with no heartbeat, then escalate
+                warned_at_str = entry.get("ghost_warning_at", "")
                 try:
-                    update_dispatch(wo_id, {
-                        "status": "ghost",
-                        "step": "auto-cleared by intelligence loop — no active branch found",
-                        "last_seen": datetime.now(UTC).isoformat(),
-                    })
-                    _mark_acted("ghost_cleanup", wo_id)
-                    actions.append(f"Cleared ghost dispatch entry: {wo_id}")
-                except Exception as e:
-                    actions.append(f"{wo_id}: ghost cleanup failed — {e}")
+                    warned_at = datetime.fromisoformat(warned_at_str)
+                    stale_hours = (datetime.now(UTC) - warned_at).total_seconds() / 3600
+                    if stale_hours >= GHOST_ESCALATE_HOURS and not _already_acted("ghost_escalate", wo_id):
+                        update_dispatch(wo_id, {
+                            "status": "ghost",
+                            "step": f"auto-cleared — stale >{GHOST_ESCALATE_HOURS}h after ghost_warning · 🤖 intelligence-loop · run `{run_id}`",
+                            "last_seen": datetime.now(UTC).isoformat(),
+                        })
+                        _mark_acted("ghost_escalate", wo_id)
+                        actions.append(f"Escalated to ghost: {wo_id} (>24h stale)")
+                except Exception:
+                    pass
+            else:
+                # First detection — advisory warning only, do not change status
+                if not _already_acted("ghost_warning", wo_id):
+                    issues_found.append(f"{wo_id}: ghost dispatch entry (stale, no open branch) — warning set")
+                    try:
+                        update_dispatch(wo_id, {
+                            "ghost_warning": True,
+                            "ghost_warning_at": datetime.now(UTC).isoformat(),
+                            "step": f"⚠️ ghost warning — no active branch found · 🤖 intelligence-loop · run `{run_id}`",
+                        })
+                        pr_num = entry.get("pr_number")
+                        if pr_num and github_token:
+                            await _gh_post(
+                                client, github_token,
+                                f"/repos/{github_repo}/issues/{pr_num}/comments",
+                                {"body": (
+                                    f"⚠️ **Ghost warning** — No active branch found for `{wo_id}`. "
+                                    f"Human review recommended. If the WO is still in progress, push the branch "
+                                    f"or update the heartbeat.\n\n"
+                                    f"🤖 **intelligence-loop** · run `{run_id}`"
+                                )},
+                            )
+                        _mark_acted("ghost_warning", wo_id)
+                        actions.append(f"Ghost warning set: {wo_id}")
+                    except Exception as e:
+                        actions.append(f"{wo_id}: ghost warning failed — {e}")
 
     _flush_acted_on()
     return {
         "started_at": started_at,
         "completed_at": datetime.now(UTC).isoformat(),
+        "run_id": run_id,
         "issues_found": issues_found,
         "actions_taken": actions,
         "prs_scanned": len(raw_prs),
