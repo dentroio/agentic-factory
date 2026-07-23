@@ -811,6 +811,59 @@ def _migrate_plan_json_to_db() -> None:
 
     sentinel.touch()
 
+    # Startup orphan check: warn about DB entries with no matching spec file.
+    if LOCAL_REPO_MOUNT:
+        wo_dir = Path(LOCAL_REPO_MOUNT) / WO_PATH
+        if wo_dir.is_dir():
+            spec_wos = {f"WO-{_parse_wo_number(f.name)}" for f in wo_dir.glob("WO-*.md") if _parse_wo_number(f.name)}
+            try:
+                with sqlite3.connect(DB_PATH) as conn:
+                    db_wos = {r[0] for r in conn.execute("SELECT wo FROM queue").fetchall()}
+                orphans = db_wos - spec_wos
+                if orphans:
+                    print(f"[orchestrator] WARNING: {len(orphans)} DB queue entries have no spec file: {sorted(orphans)}")
+            except Exception:
+                pass
+
+
+def _writeback_plan_json(new_entries: list[dict]) -> None:
+    """Append newly-discovered spec-file WOs to PLAN.json so humans can see them.
+
+    Only appends WOs not already in the file. Never overwrites human-set fields.
+    Skips silently on any error — write-back is advisory, not critical.
+    """
+    if not new_entries or not LOCAL_REPO_MOUNT:
+        return
+    plan_path = Path(LOCAL_REPO_MOUNT) / PLAN_PATH
+    if not plan_path.exists():
+        return
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        existing = {e["wo"] for e in plan.get("queue", [])}
+        added = []
+        for entry in new_entries:
+            if entry["wo"] in existing:
+                continue
+            plan.setdefault("queue", []).append({
+                "wo": entry["wo"],
+                "title": entry.get("title", entry["wo"]),
+                "phase": entry.get("phase", "backlog"),
+                "priority": entry.get("priority", "P2"),
+                "effort": entry.get("effort", ""),
+                "blocks_milestones": [],
+                "depends_on": entry.get("depends_on", []),
+                "pin": False,
+                "notes": "Auto-discovered from spec file.",
+            })
+            existing.add(entry["wo"])
+            added.append(entry["wo"])
+        if added:
+            plan["last_updated"] = datetime.now(UTC).strftime("%Y-%m-%d")
+            plan_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            print(f"[orchestrator] PLAN.json write-back: added {added}")
+    except Exception as e:
+        print(f"[orchestrator] PLAN.json write-back failed (non-fatal): {e}")
+
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
@@ -2474,9 +2527,15 @@ def _parse_status(content: str) -> str:
     return m.group(1).strip() if m else "Open"
 
 
+_PRIORITY_LEVEL_RE = re.compile(r"\bP([0-3])\b")
+
 def _parse_priority(content: str) -> str:
     m = re.search(r"\*\*Priority:\*\*\s*(.+)", content)
-    return m.group(1).strip() if m else "P3"
+    if not m:
+        return "P2"
+    raw = m.group(1).strip()
+    pm = _PRIORITY_LEVEL_RE.search(raw)
+    return f"P{pm.group(1)}" if pm else "P2"
 
 
 def _parse_title(content: str, number: int) -> str:
@@ -2485,8 +2544,18 @@ def _parse_title(content: str, number: int) -> str:
 
 
 def _parse_effort(content: str) -> str:
-    m = re.search(r"\*\*Estimated effort:\*\*\s*(.+)", content)
-    return m.group(1).strip() if m else ""
+    m = re.search(r"\*\*(?:Estimated )?[Ee]ffort:\*\*\s*(.+)", content)
+    if not m:
+        return ""
+    raw = m.group(1).strip()
+    # Normalize to canonical size token (XS/S/M/L/XL)
+    size = re.match(r"(XS|S|M|L|XL)\b", raw, re.IGNORECASE)
+    return size.group(1).upper() if size else raw
+
+
+def _infer_phase(priority: str) -> str:
+    """Default phase for a spec-file WO with no PLAN.json entry."""
+    return "now" if priority in ("P0", "P1") else "backlog"
 
 
 def _parse_depends_on(content: str) -> list[int]:
@@ -3213,7 +3282,13 @@ async def poll() -> None:
         _plan_overlay.append(entry)
         # Persist to SQLite so the queue stays current without manual PLAN.json edits.
         # ON CONFLICT DO UPDATE preserves any human-set position/pin/phase already in the DB.
-        _db_upsert_queue_entry({**entry, "phase": spec.get("phase", "backlog")})
+        # Phase is inferred from priority (P0/P1→now, P2/P3→backlog) when not in PLAN.json.
+        _db_upsert_queue_entry({**entry, "phase": spec.get("phase") or _infer_phase(entry["priority"])})
+
+    # Write back any newly-discovered WOs to PLAN.json so humans can see them without
+    # querying the DB. Only appends — never overwrites human-set fields.
+    if _plan_overlay and LOCAL_REPO_MOUNT:
+        _writeback_plan_json([e for e in _plan_overlay])
 
     # Enrich active_work with dispatch state (agent/step from API claims)
     active_work = []
