@@ -114,9 +114,12 @@ HOLD_PATH = DATA_DIR / "held_wos.json"
 PAUSE_PATH = DATA_DIR / "factory_paused.json"
 PM_MEMORY_PATH = DATA_DIR / "pm_memory.json"
 OVERRIDES_PATH = DATA_DIR / "wo_overrides.json"
+RESERVED_WOS_PATH = DATA_DIR / "reserved_wos.json"
+RESERVATION_TTL_HOURS = 1
 
 _pm_memory: dict = {}   # persisted PM preferences, decisions, dispatched history
 _overrides: dict[str, dict] = {}  # WO-NNN → {"action": "no-auto-complete", ...}
+_reserved: dict[int, dict] = {}   # WO number → {reserved_by, reserved_at, title}
 
 _factory_paused: bool = False   # when True, get_next() returns null — drains gracefully
 
@@ -163,6 +166,7 @@ def _load_state() -> None:
         except Exception:
             _last_intelligence_run = {}
     _load_overrides()
+    _load_reserved()
 
 
 def _load_overrides() -> None:
@@ -183,6 +187,57 @@ def _save_overrides() -> None:
 
 def _is_overridden(wo_id: str, action: str) -> bool:
     return _overrides.get(wo_id, {}).get("action") == action
+
+
+def _load_reserved() -> None:
+    global _reserved
+    if RESERVED_WOS_PATH.exists():
+        try:
+            raw = json.loads(RESERVED_WOS_PATH.read_text())
+            _reserved = {int(k): v for k, v in raw.items()}
+        except Exception:
+            _reserved = {}
+
+
+def _save_reserved() -> None:
+    try:
+        RESERVED_WOS_PATH.write_text(
+            json.dumps({str(k): v for k, v in _reserved.items()}, indent=2)
+        )
+    except Exception as e:
+        print(f"[orchestrator] reserved_wos save failed: {e}")
+
+
+def _expire_stale_reservations() -> None:
+    """Remove reservations older than RESERVATION_TTL_HOURS."""
+    cutoff = datetime.now(UTC) - timedelta(hours=RESERVATION_TTL_HOURS)
+    stale = [
+        num for num, meta in _reserved.items()
+        if datetime.fromisoformat(meta.get("reserved_at", "2000-01-01T00:00:00+00:00")) < cutoff
+    ]
+    for num in stale:
+        del _reserved[num]
+    if stale:
+        _save_reserved()
+
+
+def _next_wo_number() -> int:
+    """Return the next available WO number, including reserved numbers in the count."""
+    known: set[int] = set(_reserved)
+    if LOCAL_REPO_MOUNT:
+        wo_dir = Path(LOCAL_REPO_MOUNT) / WO_PATH
+        if wo_dir.is_dir():
+            for f in wo_dir.glob("WO-*.md"):
+                n = _parse_wo_number(f.name)
+                if n:
+                    known.add(n)
+    # Also include dispatch state WO numbers
+    for wo_id in _dispatch_state:
+        try:
+            known.add(int(wo_id.replace("WO-", "")))
+        except ValueError:
+            pass
+    return (max(known) + 1) if known else 1000
 
 
 def _load_pm_memory() -> None:
@@ -897,6 +952,17 @@ async def _intelligence_job() -> None:
             _dispatch_state[wo_id].update(patch)
             _save_dispatch()
 
+    def _reserve_wo(title: str) -> str:
+        _expire_stale_reservations()
+        num = _next_wo_number()
+        _reserved[num] = {
+            "reserved_by": "intelligence-loop",
+            "reserved_at": _utcnow(),
+            "title": title,
+        }
+        _save_reserved()
+        return f"WO-{num}"
+
     try:
         result = await _intel.run_intelligence_pass(
             github_token=GITHUB_TOKEN,
@@ -905,6 +971,7 @@ async def _intelligence_job() -> None:
             dispatch_state=dict(_dispatch_state),
             enqueue_wo=_enqueue,
             update_dispatch=_update_dispatch,
+            reserve_wo=_reserve_wo,
         )
         _last_intelligence_run = result
         try:
@@ -1249,6 +1316,39 @@ async def get_override(wo_id: str):
     return {"wo_id": wo_id, "override": override}
 
 
+# ── WO Number Reservation API ─────────────────────────────────────────────────
+
+class ReserveRequest(BaseModel):
+    title: str = ""
+    reserved_by: str = "unknown"
+
+
+@app.post("/api/wos/reserve")
+async def reserve_wo_number(req: ReserveRequest):
+    """Atomically reserve the next WO number. Prevents concurrent number collisions."""
+    _expire_stale_reservations()
+    num = _next_wo_number()
+    _reserved[num] = {
+        "reserved_by": req.reserved_by,
+        "reserved_at": _utcnow(),
+        "title": req.title,
+    }
+    _save_reserved()
+    return {"wo_id": f"WO-{num}", "number": num, "reserved_at": _reserved[num]["reserved_at"]}
+
+
+@app.get("/api/wos/reserved")
+async def list_reserved_wos():
+    """List currently active WO number reservations."""
+    _expire_stale_reservations()
+    return {
+        "reserved": [
+            {"number": num, "wo_id": f"WO-{num}", **meta}
+            for num, meta in sorted(_reserved.items())
+        ]
+    }
+
+
 @app.post("/api/claim")
 async def claim_wo(req: ClaimRequest):
     """Atomically claim a WO. Returns 409 if already claimed by another agent."""
@@ -1367,6 +1467,11 @@ async def claim_wo(req: ClaimRequest):
             detail=f"{wo_id} exceeded max retry attempts ({MAX_RETRY_ATTEMPTS}). "
                    "Use POST /api/dispatch/{wo_id}/reset to force-clear the attempt counter.",
         )
+
+    # Consume reservation if one exists for this WO number
+    if wo_num in _reserved:
+        del _reserved[wo_num]
+        _save_reserved()
 
     _dispatch_state[wo_id] = {
         "wo": wo_id,
