@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** Clarion GitHub Actions
 **Depends on:** —
-**Status:** Open
+**Status:** ✅ Complete
 
 ---
 
@@ -67,3 +67,11 @@ The `||` ensures a PR with a real merge conflict doesn't abort updates for the r
 ## Notes
 
 This is a Clarion-repo change, not a factory service change. Agent implementing this should work in the Clarion repo, not the factory repo.
+
+## Resolved
+
+Already implemented in Clarion at `.github/workflows/auto-update-prs.yml` prior to this WO being written. The live version exceeds the spec:
+- Covers auto-merge PRs **and** Dependabot PRs
+- Auto-resolves `PROGRESS.md` conflicts by taking main's version (most common conflict in agent branches)
+- Uses `GH_PAT` instead of `GITHUB_TOKEN` so branch pushes trigger downstream CI (GITHUB_TOKEN pushes are treated as bot activity and don't re-trigger CI)
+- Logs per-branch warnings on real conflicts; workflow never fails hard
