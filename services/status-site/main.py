@@ -2206,7 +2206,7 @@ async def factory_floor(request: Request):
 
     active_wos = sorted(
         [w for w in dispatch.values() if w.get("status") != "complete"],
-        key=lambda w: w.get("claimed_at", ""),
+        key=lambda w: w.get("claimed_at") or "",
         reverse=True,
     )
 
