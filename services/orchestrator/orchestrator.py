@@ -30,6 +30,7 @@ from notifications import (
 )
 from plan_engine import next_wo, sorted_queue
 import intelligence as _intel
+from wo_resolver import resolve_wo_for_pr, extract_wo_from_branch, extract_wo_from_title
 
 load_dotenv()
 
@@ -2432,16 +2433,18 @@ async def _fetch_active_branches(client: httpx.AsyncClient, repo: str = GITHUB_R
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
             results = set()
             for line in out.decode().splitlines():
-                m = re.search(r"origin/wo/(\d+)-", line)
-                if m:
-                    results.add(int(m.group(1)))
+                # git lists remote branches as "  origin/wo/NNN-slug"
+                ref = line.strip().removeprefix("origin/")
+                n = extract_wo_from_branch(ref)
+                if n is not None:
+                    results.add(n)
             return results
         except Exception as e:
             print(f"[orchestrator] Local branch read failed: {e}")
 
     try:
         branches = await _get(client, f"/repos/{repo}/branches", {"per_page": 100})
-        return {int(m.group(1)) for b in branches if (m := re.match(r"wo/(\d+)-", b["name"]))}
+        return {n for b in branches if (n := extract_wo_from_branch(b["name"])) is not None}
     except Exception:
         return set()
 
@@ -2468,7 +2471,7 @@ async def _cached_get(client: httpx.AsyncClient, url: str, params: dict, ttl: in
 async def _fetch_open_pr_wos(client: httpx.AsyncClient, repo: str = GITHUB_REPO) -> set[int]:
     try:
         prs = await _cached_get(client, f"/repos/{repo}/pulls", {"state": "open", "per_page": 100})
-        return {int(m.group(1)) for p in prs if (m := re.search(r"WO-(\d+)", p.get("title", "")))}
+        return {n for p in prs if (n := resolve_wo_for_pr(p)) is not None}
     except Exception:
         return set()
 
@@ -2596,9 +2599,9 @@ async def _fetch_recently_merged_wo_prs(client: httpx.AsyncClient) -> dict[int, 
         for p in prs:
             if p.get("merged_at") and p["merged_at"] >= since:
                 head_ref = p.get("head", {}).get("ref", "")
-                m = re.match(r"wo/(\d+)-", head_ref)
-                if m:
-                    result[int(m.group(1))] = p.get("html_url", "")
+                n = extract_wo_from_branch(head_ref)
+                if n is not None:
+                    result[n] = p.get("html_url", "")
         return result
     except Exception:
         return {}
@@ -4484,9 +4487,9 @@ async def pm_chat(req: PMChatRequest):
                             if pr_resp.status_code == 200:
                                 pr_data = pr_resp.json()
                                 pr_html = pr_data.get("html_url", "")
-                                m_wo = re.search(r"WO-(\d+)", pr_data.get("title", ""))
-                                if m_wo:
-                                    wo_match = f"WO-{m_wo.group(1)}"
+                                wo_num = resolve_wo_for_pr(pr_data)
+                                if wo_num is not None:
+                                    wo_match = f"WO-{wo_num}"
                                     if wo_match in _dispatch_state and _dispatch_state[wo_match].get("status") not in ("complete", "rejected"):
                                         _dispatch_state[wo_match]["status"] = "complete"
                                         _dispatch_state[wo_match]["completed_at"] = _utcnow()

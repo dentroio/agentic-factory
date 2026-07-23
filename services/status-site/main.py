@@ -19,6 +19,7 @@ from wo_parser import (
     extract_wo_number_from_branch,
     extract_wo_number_from_pr_title,
     parse_wo_file,
+    resolve_wo_for_pr,
 )
 
 app = FastAPI(title="AI Factory Status")
@@ -334,13 +335,9 @@ def _apply_live_status(
     # Build set of WO numbers with merged PRs — authoritative "done" signal.
     merged_wo_nums: set[int] = set()
     for p in (merged_prs or []):
-        m = re.search(r"WO-(\d+)", p.get("title", ""))
-        if m:
-            merged_wo_nums.add(int(m.group(1)))
-        if p.get("merged_at"):
-            m2 = re.search(r"wo[/-](\d+)", p.get("head", {}).get("ref", ""), re.I)
-            if m2:
-                merged_wo_nums.add(int(m2.group(1)))
+        n = resolve_wo_for_pr(p)
+        if n is not None:
+            merged_wo_nums.add(n)
 
     # Build a map from WO number → dispatch entry so we can mark active WOs
     # even when the branch hasn't been pushed to GitHub yet (which is the normal

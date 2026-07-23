@@ -126,5 +126,14 @@ def extract_wo_number_from_branch(branch_name: str) -> int | None:
 
 
 def extract_wo_number_from_pr_title(title: str) -> int | None:
-    m = re.search(r"WO-(\d+)", title)
+    m = re.search(r"\bWO-(\d+)\b", title, re.IGNORECASE)
     return int(m.group(1)) if m else None
+
+
+def resolve_wo_for_pr(pr: dict) -> int | None:
+    """Resolve WO number for a PR dict; branch takes priority over title."""
+    head_ref = pr.get("head", {}).get("ref", "") or ""
+    n = extract_wo_number_from_branch(head_ref)
+    if n is not None:
+        return n
+    return extract_wo_number_from_pr_title(pr.get("title", "") or "")
