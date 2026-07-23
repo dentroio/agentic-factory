@@ -55,9 +55,23 @@ async def _get(client: httpx.AsyncClient, path: str, params: dict | None = None)
 import re as _re
 
 
-def _extract_wo_number(pr_title: str) -> str | None:
-    m = _re.search(r"WO-(\d+)", pr_title, _re.IGNORECASE)
-    return f"WO-{m.group(1)}" if m else None
+def _extract_wo_from_branch(branch: str) -> int | None:
+    m = _re.match(r"wo/(\d+)-", branch)
+    return int(m.group(1)) if m else None
+
+
+def _extract_wo_from_title(title: str) -> int | None:
+    m = _re.search(r"\bWO-(\d+)\b", title, _re.IGNORECASE)
+    return int(m.group(1)) if m else None
+
+
+def _resolve_wo_for_pr(pr: dict) -> str | None:
+    """Resolve WO id for a PR dict, preferring branch name over title."""
+    head_ref = pr.get("head", {}).get("ref", "") or ""
+    n = _extract_wo_from_branch(head_ref)
+    if n is None:
+        n = _extract_wo_from_title(pr.get("title", "") or "")
+    return f"WO-{n}" if n is not None else None
 
 
 async def _fetch_open_prs(client: httpx.AsyncClient) -> list[dict]:
@@ -81,7 +95,7 @@ async def _notify_mark_done(pr: dict, already_notified: set[str]) -> None:
     """Call orchestrator auto-mark-done for a merged WO PR (once per WO)."""
     if not ORCHESTRATOR_URL or not MARK_DONE_ENABLED:
         return
-    wo_id = _extract_wo_number(pr.get("title", ""))
+    wo_id = _resolve_wo_for_pr(pr)
     if not wo_id or wo_id in already_notified:
         return
     already_notified.add(wo_id)

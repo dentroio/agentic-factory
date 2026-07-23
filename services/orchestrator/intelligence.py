@@ -15,21 +15,46 @@ can show what happened.
 
 from __future__ import annotations
 
-import re
 import json
+import os
+import re
 import asyncio
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Callable
 
 import httpx
+from wo_resolver import resolve_wo_for_pr  # noqa: F401 — available for callers
 
 FAILURE_THRESHOLD_MINUTES = 90
 GHOST_THRESHOLD_HOURS = 3
 _DEDUP_TTL_HOURS = 24
 
-# In-memory dedup: tracks action keys we've already taken so we don't repeat
-# within a TTL window. Resets on restart, which is acceptable.
-_acted_on: dict[str, datetime] = {}
+_DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
+_ACTED_ON_PATH = _DATA_DIR / "intelligence_acted_on.json"
+
+# Dedup dict: keyed by "action:identifier", value is ISO timestamp string.
+# Loaded from disk on startup; flushed after each pass so it survives restarts.
+_acted_on: dict[str, str] = {}
+
+
+def _load_acted_on() -> None:
+    try:
+        if _ACTED_ON_PATH.exists():
+            _acted_on.update(json.loads(_ACTED_ON_PATH.read_text(encoding="utf-8")))
+    except Exception:
+        pass
+
+
+def _flush_acted_on() -> None:
+    try:
+        _DATA_DIR.mkdir(parents=True, exist_ok=True)
+        _ACTED_ON_PATH.write_text(json.dumps(_acted_on, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+_load_acted_on()
 
 
 def _dedup_key(action: str, identifier: str) -> str:
@@ -38,16 +63,22 @@ def _dedup_key(action: str, identifier: str) -> str:
 
 def _already_acted(action: str, identifier: str) -> bool:
     key = _dedup_key(action, identifier)
-    if key not in _acted_on:
+    ts_str = _acted_on.get(key)
+    if ts_str is None:
         return False
-    if (datetime.now(UTC) - _acted_on[key]).total_seconds() > _DEDUP_TTL_HOURS * 3600:
+    try:
+        ts = datetime.fromisoformat(ts_str)
+    except Exception:
+        del _acted_on[key]
+        return False
+    if (datetime.now(UTC) - ts).total_seconds() > _DEDUP_TTL_HOURS * 3600:
         del _acted_on[key]
         return False
     return True
 
 
 def _mark_acted(action: str, identifier: str) -> None:
-    _acted_on[_dedup_key(action, identifier)] = datetime.now(UTC)
+    _acted_on[_dedup_key(action, identifier)] = datetime.now(UTC).isoformat()
 
 
 def _gh_headers(token: str) -> dict:
@@ -439,6 +470,7 @@ async def run_intelligence_pass(
                 except Exception as e:
                     actions.append(f"{wo_id}: ghost cleanup failed — {e}")
 
+    _flush_acted_on()
     return {
         "started_at": started_at,
         "completed_at": datetime.now(UTC).isoformat(),
