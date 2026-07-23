@@ -20,6 +20,7 @@ from wo_resolver import (  # noqa: E402
     parse_wo_number,
     parse_wo_number_from_branch,
     resolve_wo_for_pr,
+    resolve_wo_for_pr_with_source,
     wo_number_from_id,
 )
 
@@ -118,3 +119,33 @@ def test_resolve_wo_for_pr_branch_only():
 def test_resolve_wo_for_pr_title_only():
     pr = {"title": "WO-1041: implement resolver", "head": {"ref": "feature/no-wo"}}
     assert resolve_wo_for_pr(pr) == 1041
+
+
+# ── WO-1042: corroboration gate — resolve_wo_for_pr_with_source ──────────────
+
+
+def test_resolve_with_source_branch():
+    pr = {"title": "WO-410 unrelated", "head": {"ref": "wo/1042-guard"}}
+    num, src = resolve_wo_for_pr_with_source(pr)
+    assert num == 1042
+    assert src == "branch"
+
+
+def test_resolve_with_source_title_fallback():
+    pr = {"title": "WO-1042 guard", "head": {"ref": "main"}}
+    num, src = resolve_wo_for_pr_with_source(pr)
+    assert num == 1042
+    assert src == "title"
+
+
+def test_resolve_with_source_none():
+    pr = {"title": "chore: cleanup", "head": {"ref": "dependabot/pip/requests"}}
+    num, src = resolve_wo_for_pr_with_source(pr)
+    assert num is None
+    assert src is None
+
+
+def test_title_only_does_not_count_as_branch():
+    pr = {"title": "Fix regression from WO-410", "head": {"ref": "fix/regression"}}
+    num, src = resolve_wo_for_pr_with_source(pr)
+    assert src == "title"  # must NOT be "branch"
