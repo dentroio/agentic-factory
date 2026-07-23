@@ -3265,8 +3265,6 @@ async def poll() -> None:
     _plan_overlay = []
     for num, spec in sorted(specs.items()):
         wo_id = f"WO-{num}"
-        if wo_id in plan_registered:
-            continue
         if _is_done(spec.get("status", "")) or _is_blocked(spec.get("status", "")):
             continue
         if spec.get("repo", GITHUB_REPO) != GITHUB_REPO:
@@ -3279,6 +3277,15 @@ async def poll() -> None:
             "status": spec.get("status", "open"),
             "_overlay": True,
         }
+        if wo_id in plan_registered:
+            # Already registered — only refresh priority/title/effort from spec.
+            # Never overwrite human-set phase/pin/position for existing rows.
+            with sqlite3.connect(DB_PATH) as _conn:
+                _conn.execute(
+                    "UPDATE queue SET priority=?, title=?, effort=? WHERE wo=?",
+                    (entry["priority"], entry["title"], entry["effort"], wo_id),
+                )
+            continue
         _plan_overlay.append(entry)
         # Persist to SQLite so the queue stays current without manual PLAN.json edits.
         # ON CONFLICT DO UPDATE preserves any human-set position/pin/phase already in the DB.
