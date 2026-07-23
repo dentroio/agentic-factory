@@ -292,6 +292,7 @@ async def run_intelligence_pass(
     dispatch_state: dict,
     enqueue_wo: Callable[[dict], None],
     update_dispatch: Callable[[str, dict], None],
+    reserve_wo: Callable[[str], str] | None = None,
 ) -> dict:
     """
     Run one intelligence pass. Returns a summary dict logged to /api/intelligence/status.
@@ -302,6 +303,7 @@ async def run_intelligence_pass(
         anthropic_key: Anthropic API key (may be empty)
         dispatch_state: current _dispatch_state dict (read-only snapshot)
         enqueue_wo: callable(entry_dict) to add a WO to the plan queue
+        reserve_wo: optional callable(title) -> "WO-NNN" for real WO number allocation
         update_dispatch: callable(wo_id, patch_dict) to update dispatch state
     """
     started_at = datetime.now(UTC).isoformat()
@@ -366,7 +368,13 @@ async def run_intelligence_pass(
             if merge_state == "dirty" and not _already_acted("conflict_wo", str(pr_num)):
                 issues_found.append(f"PR #{pr_num}: merge conflict (DIRTY)")
                 wo_desc = await _llm_describe_conflict(anthropic_key, pr_num, pr_title, github_repo)
-                wo_id = f"WO-CONF-{pr_num}"
+                if reserve_wo:
+                    try:
+                        wo_id = reserve_wo(f"conflict: pr-{pr_num}")
+                    except Exception:
+                        wo_id = f"WO-CONF-{pr_num}"
+                else:
+                    wo_id = f"WO-CONF-{pr_num}"
                 try:
                     enqueue_wo({
                         "wo": wo_id,
@@ -419,7 +427,13 @@ async def run_intelligence_pass(
                             diag_summary = diagnosis.get("summary", "")
 
                             if diag_action == "create_wo":
-                                wo_id = f"WO-CI-{pr_num}"
+                                if reserve_wo:
+                                    try:
+                                        wo_id = reserve_wo(f"ci-fix: pr-{pr_num}")
+                                    except Exception:
+                                        wo_id = f"WO-CI-{pr_num}"
+                                else:
+                                    wo_id = f"WO-CI-{pr_num}"
                                 enqueue_wo({
                                     "wo": wo_id,
                                     "title": diagnosis.get("wo_title", f"Fix CI failure on PR #{pr_num}")[:100],

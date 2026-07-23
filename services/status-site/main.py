@@ -1693,7 +1693,23 @@ async def api_backends():
 
 @app.get("/api/plan/next-wo-number")
 async def api_next_wo_number():
-    """Return the next available WO number."""
+    """Return the next available WO number via orchestrator reservation (prevents races)."""
+    # Try orchestrator reservation API first — atomic, race-free
+    if ORCHESTRATOR_URL:
+        try:
+            async with httpx.AsyncClient(timeout=5) as c:
+                r = await c.post(
+                    f"{ORCHESTRATOR_URL}/api/wos/reserve",
+                    json={"title": "status-site next-wo-number query", "reserved_by": "status-site"},
+                    headers=_orch_headers(),
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    return {"next": data["number"], "wo_id": data["wo_id"], "reserved": True}
+        except Exception:
+            pass  # fall through to scan-based fallback
+
+    # Fallback: scan GitHub directly (may race under concurrent usage)
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return {"next": 374}
     try:
