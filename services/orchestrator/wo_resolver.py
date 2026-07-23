@@ -84,11 +84,25 @@ def resolve_wo_for_pr(pr: dict) -> int | None:
 
     Returns None if no WO can be identified.
     """
+    n, _ = resolve_wo_for_pr_with_source(pr)
+    return n
+
+
+def resolve_wo_for_pr_with_source(pr: dict) -> tuple[int | None, str | None]:
+    """
+    Like resolve_wo_for_pr but also returns the resolution source.
+
+    Returns (wo_num, source) where source is "branch", "title", or None.
+    Only "branch" is safe for destructive actions (auto-complete, ghost cleanup).
+    """
     head_ref = pr.get("head", {}).get("ref", "") or ""
     n = extract_wo_from_branch(head_ref)
     if n is not None:
-        return n
-    return extract_wo_from_title(pr.get("title", "") or "")
+        return n, "branch"
+    n = extract_wo_from_title(pr.get("title", "") or "")
+    if n is not None:
+        return n, "title"
+    return None, None
 
 
 def spec_glob_pattern(wo_num: int) -> str:
