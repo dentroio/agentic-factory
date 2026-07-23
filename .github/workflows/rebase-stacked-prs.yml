@@ -1,0 +1,77 @@
+name: Rebase Stacked PRs on Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  rebase-stacked:
+    name: Retarget stacked PRs to main
+    runs-on: ubuntu-latest
+    # Only act on merged PRs (not manually closed ones)
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - name: Find and retarget stacked PRs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const mergedBranch = context.payload.pull_request.head.ref;
+            const mergedPR = context.payload.pull_request.number;
+
+            console.log(`PR #${mergedPR} merged — head branch was: ${mergedBranch}`);
+
+            // Find open PRs whose base is the branch we just merged
+            const { data: openPRs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              base: mergedBranch,
+              per_page: 100,
+            });
+
+            if (openPRs.length === 0) {
+              console.log('No stacked PRs found — nothing to do.');
+              return;
+            }
+
+            console.log(`Found ${openPRs.length} stacked PR(s): ${openPRs.map(p => '#' + p.number).join(', ')}`);
+
+            for (const pr of openPRs) {
+              try {
+                // Retarget the PR's base to main
+                await github.rest.pulls.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pr.number,
+                  base: 'main',
+                });
+
+                console.log(`Retargeted PR #${pr.number} ("${pr.title}") base: ${mergedBranch} → main`);
+
+                // Post a comment so the author knows what happened
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  body: `🔁 **Base branch updated automatically**
+
+PR #${mergedPR} merged and deleted \`${mergedBranch}\`. This PR's base has been retargeted from \`${mergedBranch}\` to \`main\` to keep it open.
+
+You may need to rebase your branch to resolve any conflicts:
+\`\`\`
+git fetch origin
+git rebase origin/main
+git push --force-with-lease
+\`\`\``,
+                });
+
+              } catch (err) {
+                console.error(`Failed to retarget PR #${pr.number}: ${err.message}`);
+              }
+            }
