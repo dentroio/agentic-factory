@@ -98,6 +98,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout agentic-factory
@@ -130,8 +131,10 @@ jobs:
 
           python3 scripts/doc_writer.py $ARGS
 
-      - name: Commit and push factory wiki updates
+      - name: Open PR with factory wiki updates
         if: ${{ inputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name  "factory-doc-writer[bot]"
           git config user.email "noreply@dentroio.com"
@@ -142,10 +145,40 @@ jobs:
             exit 0
           fi
 
+          # main requires a PR (repo ruleset) — a direct push here always gets rejected.
           CHANGED=$(git diff --cached --name-only | grep "^docs/wiki/" | sed 's|docs/wiki/||' | tr '\n' ', ' | sed 's/,$//')
+          BRANCH="doc-writer/factory-wiki-${{ github.run_id }}"
+          git checkout -b "$BRANCH"
           git commit -m "docs(wiki): auto-update factory wiki ${CHANGED} [doc-writer-agent]
 
           Updated by the AI Factory doc-writer agent (self-maintenance).
           Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          git push -u origin "$BRANCH"
 
-          git push
+          PR_URL=$(gh pr create \
+            --title "docs(wiki): auto-update factory wiki ${CHANGED}" \
+            --body "Automated update by the doc-writer agent (self-maintenance).
+
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --base main --head "$BRANCH")
+          echo "Opened $PR_URL"
+
+          # required_approving_review_count is 0 — only the Unit Tests status check
+          # gates merge. GITHUB_TOKEN-authored pushes don't trigger the pull_request
+          # workflow that produces that check, so kick it manually against this SHA
+          # instead of waiting on an event that will never fire.
+          gh workflow run ci.yml --ref "$BRANCH" || true
+
+          for i in $(seq 1 20); do
+            sleep 15
+            BUCKET=$(gh pr checks "$PR_URL" --json name,bucket -q '.[] | select(.name=="Unit Tests") | .bucket' 2>/dev/null || echo "")
+            if [ "$BUCKET" = "pass" ]; then
+              gh pr merge "$PR_URL" --squash --delete-branch
+              exit 0
+            fi
+            if [ "$BUCKET" = "fail" ]; then
+              echo "Unit Tests failed on $PR_URL — leaving PR open for review."
+              exit 0
+            fi
+          done
+          echo "Unit Tests didn't complete in time — leaving $PR_URL open for review."
