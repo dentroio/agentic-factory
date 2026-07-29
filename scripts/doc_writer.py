@@ -67,6 +67,19 @@ def build_frontmatter(fm: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def strip_code_fence(text: str) -> str:
+    """Strip a ```/```markdown wrapper Claude sometimes adds despite being told not to."""
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if lines and lines[-1].strip() == "```":
+        lines = lines[1:-1]
+    else:
+        lines = lines[1:]
+    return "\n".join(lines).strip()
+
+
 def is_stale(fm: dict[str, str], days: int = STALE_DAYS) -> bool:
     lv = fm.get("last_verified", "")
     if not lv:
@@ -228,11 +241,15 @@ def update_wiki_page(
 Return the complete updated page."""
 
     logger.info("Calling Claude for %s ...", rel)
-    updated = call_claude(system_prompt, user_msg)
+    updated = strip_code_fence(call_claude(system_prompt, user_msg))
 
     # Validate the response has frontmatter
     if not updated.startswith("---"):
-        logger.warning("Claude returned content without frontmatter for %s — skipping", rel)
+        logger.warning(
+            "Claude returned content without frontmatter for %s — skipping. First 120 chars: %r",
+            rel,
+            updated[:120],
+        )
         return None
 
     fm, _ = parse_frontmatter(updated)
