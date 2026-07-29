@@ -1,8 +1,13 @@
 ---
 title: "Customization"
-description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, and WO execution instructions"
-last_verified: 2026-07-12
-covers_wos: []
+description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, WO execution instructions, and agent memory"
+last_verified: 2026-07-29
+covers_wos:
+  - WO-1014
+  - WO-1021
+  - WO-1023
+  - WO-1032
+  - WO-1040
 doc_owner: factory-team
 ---
 
@@ -76,6 +81,109 @@ Common things to put in the Execution section:
 - How to run the smoke test
 - The commit and PR workflow (branch naming, merge strategy)
 - Mandatory review steps the agent must complete before opening a PR
+
+## WO template
+
+The canonical WO spec template lives at `docs/work_orders/TEMPLATE.md`. Every complete WO spec must contain the following sections:
+
+| Section | Purpose |
+|---------|---------|
+| `## Background` | Why this WO exists and what pain it solves |
+| `## What to Build` | Concrete implementation spec with file names and pseudo-code; no ambiguity |
+| `## Requirements` | YAML block listing required connectors and services |
+| `## Acceptance Criteria` | Independently verifiable checklist items (minimum 3; no subjective items) |
+| `## Files` | List of files to create or modify |
+| `## Domain Notes` | Gotchas, conflict risks, recently changed dependencies for the services this WO touches |
+
+When creating WOs via the Plan Authoring UI or the PM, the template is used automatically. For manually authored WOs, copy `TEMPLATE.md` as your starting point.
+
+## WO queue
+
+The WO queue is stored in the orchestrator's SQLite database (`factory.db`), not in `PLAN.json`. The `queue`, `phases`, and `milestones` tables are the source of truth for backlog ordering and milestone tracking. `PLAN.json` remains in the repository as a read-only reference snapshot but is no longer written by the orchestrator.
+
+Key queue behaviours:
+- When a WO spec file is marked ✅ Done, the orchestrator removes it from the `queue` table automatically on the next poll cycle.
+- Queue order, priority, phase assignment, and pinning are all editable via the Plan Authoring UI or the queue CRUD endpoints.
+
+See [TECHNICAL_ARCHITECTURE.md](../TECHNICAL_ARCHITECTURE.md) for the full DB schema and orchestrator endpoint reference.
+
+## Plan Authoring UI
+
+WOs, phases, and milestones can be created directly from the status site without editing files manually.
+
+- Navigate to **Settings → Plan Authoring** (`/settings/plan`) to see the current open WO backlog, phases, and milestones.
+- Click **New WO** to open the WO creation form. The form auto-numbers the WO, lets you assign a phase, priority, effort, services, dependencies, and acceptance criteria, and opens a PR for human review before the WO enters the dispatch queue.
+- Phases and milestones can be added inline from the Plan Authoring hub.
+
+WO specs are written to `docs/factory/work_orders/WO-NNN-<slug>.md` via the GitHub Contents API — no local git clone is required inside the container.
+
+## Agent memory
+
+Agents start with context about your project's current state injected into every prompt. This context is stored in `services/agent-runner/memory/factory_memory.json` and includes:
+
+- **Lessons learned** — gotchas, failure patterns, and conflict warnings distilled from previous WO runs, tagged by service
+- **Environment state** — connected connectors, healthy services, recently added DB tables, recently registered routes (refreshed every 30 minutes)
+- **Recently completed WOs** — the last 5 completed WOs so agents know what was recently shipped and don't duplicate it
+
+Only lessons whose `applies_to` services intersect with the current WO's services are injected, keeping the context focused.
+
+**Memory is updated automatically:**
+- After a WO completes successfully, the runner distills 1–3 lessons from the agent thread and appends them to `factory_memory.json`.
+- After a CI failure or reviewer rejection, a `failure_pattern` lesson is added.
+
+To add a lesson manually, edit `factory_memory.json` directly and follow the existing entry structure:
+
+```json
+{
+  "id": "lesson-003",
+  "added_at": "2026-07-29T00:00:00Z",
+  "source_wo": "WO-1041",
+  "category": "gotcha",
+  "applies_to": ["data-service"],
+  "content": "Describe the gotcha here."
+}
+```
+
+Valid `category` values: `gotcha`, `conflict_magnet`, `failure_pattern`.
+
+## CLARION_PATTERNS / agent patterns doc
+
+The agent pattern rules (formerly a hardcoded constant in `prompt_builder.py`) are now loaded from `services/agent-runner/clarion_patterns.md` at runtime. This file is the living document for project-specific coding patterns injected into every agent prompt.
+
+To update a pattern, edit `clarion_patterns.md` directly and commit. The change takes effect on the next agent dispatch — no rebuild required.
+
+If `clarion_patterns.md` is missing, `prompt_builder.py` falls back to its built-in default patterns.
+
+## Documentation enforcement
+
+For P0/P1/P2 WOs, a documentation reviewer runs automatically as part of the review chain after the four standard reviewers (security, architecture, correctness, performance). It checks whether the diff includes updates to every file listed in the WO spec's `## Documentation Required` section.
+
+- A missing documentation update produces a `HIGH` severity finding that blocks the chain — the coding agent must address it before human validation is requested.
+- The documentation reviewer is skipped when a WO has no `Documentation Required` items.
+
+The coding agent is also given a **Documentation Mandate** in its prompt listing the required doc files, so it knows to update them before calling `POST /api/validate`.
+
+To ensure your WO specs trigger this enforcement, include a `## Documentation Required` section with specific file-level checklist items:
+
+```markdown
+## Documentation Required
+
+- [ ] Update `docs/TECHNICAL_ARCHITECTURE.md` — add new endpoint to the API table
+- [ ] Update `docs/wiki/Configuration.md` — document the new environment variable
+```
+
+## Agent process documentation
+
+Agent operating rules are split across two files in the project repository:
+
+| File | Purpose |
+|------|---------|
+| `AGENT_PROCESS.md` | **What to do** — risk tiers, branch/PR workflow (numbered steps), container rebuild table, critical patterns, container danger zones. Agents read this before every task. Under 200 lines. |
+| `AGENT_PROCESS_DETAIL.md` | **Why** — detailed explanations of each rule: worktree system, `db.commit()` rationale, `--no-deps` requirement, migration registration, role guard rationale. Optional reading. |
+
+`CLAUDE.md` instructs agents: *"Read `AGENT_PROCESS.md` before starting any implementation task. If you need the reasoning behind a rule, see `AGENT_PROCESS_DETAIL.md`."*
+
+If you add a new project-wide invariant that every agent must know, add it to `AGENT_PROCESS.md` in the `## ⚠️ You must know these` section near the top of the file.
 
 ## Agent backend selection
 
