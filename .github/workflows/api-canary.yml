@@ -1,0 +1,48 @@
+# =============================================================================
+# api-canary.yml — daily proof the real Anthropic API call + response-parsing
+# path still works
+#
+# Why this exists: unit tests mock the API, so they can't catch a real
+# response-shape mismatch. On 2026-07-30, switching the default model to
+# claude-sonnet-5 broke message.content[0].text across every script here
+# (sonnet-5 sometimes returns a ThinkingBlock as content[0], which has no
+# .text) -- undetected until a real PR happened to exercise it, with 49/49
+# unit tests green the entire time.
+#
+# scripts/api_canary.py makes one minimal real API call (max_tokens=16,
+# trivial prompt) using the same model-resolution and text-extraction logic
+# every other script here shares, and fails loudly if either breaks. Costs
+# a fraction of a cent per run.
+#
+# Feeds into automation-watchdog.yml like any other monitored workflow --
+# two consecutive failures files a tracking issue, no separate alerting
+# needed here.
+# =============================================================================
+
+name: API Canary
+
+on:
+  schedule:
+    - cron: "0 12 * * *"    # once daily
+  workflow_dispatch:
+
+jobs:
+  canary:
+    name: API Canary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install anthropic
+
+      - name: Run API canary
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+        run: python3 scripts/api_canary.py

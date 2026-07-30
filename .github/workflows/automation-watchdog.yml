@@ -30,6 +30,7 @@ on:
       - "Doc Writer — Update Clarion + Factory Wikis"
       - "Planning Agent — Draft WO Spec"
       - "Dependabot → WO Bridge"
+      - "API Canary"
     types: [completed]
 
 permissions:
