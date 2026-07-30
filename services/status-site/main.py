@@ -1169,7 +1169,7 @@ async def settings_agents(request: Request, saved: str = "", error: str = ""):
             r = await client.get(f"{ORCHESTRATOR_URL}/api/backends")
             if r.status_code == 200:
                 data = r.json()
-                for b in ("claude", "cursor"):
+                for b in ("claude", "cursor", "codex", "gemini"):
                     installed_backends[b] = bool(data.get(b, False))
     except Exception:
         pass
@@ -1200,6 +1200,7 @@ async def settings_agents_save(request: Request):
             "architecture": str(form.get("reviewer_architecture", "claude")).strip(),
             "correctness": str(form.get("reviewer_correctness", "claude")).strip(),
             "performance": str(form.get("reviewer_performance", "claude")).strip(),
+            "documentation": str(form.get("reviewer_documentation", "claude")).strip(),
         },
     }
     anthropic_key = str(form.get("anthropic_key", "")).strip()
