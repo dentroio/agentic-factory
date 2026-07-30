@@ -7,6 +7,7 @@ from pathlib import Path
 import usage_tracker
 from backends import get_backend
 from backends.base import BackendHangError, QuotaExceededError
+from backends.claude import AGENT_MODEL, _subscription_env
 from backends.cursor import CursorConnectionError
 import backends.quota_state as quota_state
 
@@ -84,8 +85,9 @@ async def _analyze_failure(wo_id: str, context: str) -> str:
     def _run() -> str:
         try:
             result = _sp.run(
-                ["claude", "-p", prompt],
+                ["claude", "-p", prompt, "--model", AGENT_MODEL],
                 capture_output=True, text=True, timeout=90,
+                env=_subscription_env(),
             )
             return result.stdout.strip()
         except Exception as e:
@@ -152,8 +154,9 @@ Keep the total response under 300 words."""
     def _run() -> str:
         try:
             result = _sp.run(
-                ["claude", "-p", prompt],
+                ["claude", "-p", prompt, "--model", AGENT_MODEL],
                 capture_output=True, text=True, timeout=90,
+                env=_subscription_env(),
             )
             return result.stdout.strip()
         except Exception:

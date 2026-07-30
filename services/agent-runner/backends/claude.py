@@ -13,6 +13,12 @@ _QUOTA_RE = re.compile(
     re.I,
 )
 
+# Pin the model explicitly rather than let the CLI fall back to whatever a
+# developer's own global ~/.claude/settings.json last had selected — this
+# daemon's headless invocations must not be implicitly coupled to whatever
+# model a human happens to have picked for their own interactive sessions.
+AGENT_MODEL = os.getenv("AGENT_MODEL", "claude-sonnet-5")
+
 
 def _subscription_env() -> dict[str, str]:
     """Env for the claude CLI subprocess, with ANTHROPIC_API_KEY stripped.
@@ -42,7 +48,8 @@ class ClaudeBackend(AgentBackend):
             raise RuntimeError("claude CLI not found in PATH — install Claude Code CLI")
 
         proc = await asyncio.create_subprocess_exec(
-            claude_bin, "--print", "--permission-mode", "bypassPermissions", "-p", prompt,
+            claude_bin, "--print", "--permission-mode", "bypassPermissions",
+            "--model", AGENT_MODEL, "-p", prompt,
             cwd=worktree,
             env=_subscription_env(),
             stdin=asyncio.subprocess.DEVNULL,
@@ -73,7 +80,7 @@ class ClaudeBackend(AgentBackend):
         if not claude_bin:
             return "[claude not available]"
         proc = await asyncio.create_subprocess_exec(
-            claude_bin, "--print", "-p", question,
+            claude_bin, "--print", "--model", AGENT_MODEL, "-p", question,
             env=_subscription_env(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
