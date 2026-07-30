@@ -254,8 +254,15 @@ def _next_wo_number() -> int:
                 n = _parse_wo_number(f.name)
                 if n:
                     known.add(n)
-    # Also include dispatch state WO numbers
-    for wo_id in _dispatch_state:
+    # Include dispatch state WO numbers, but only for entries still in flight.
+    # Completed entries don't need protecting — if they landed a spec file
+    # it's already in the scan above; if not (e.g. one-off process/conflict-
+    # resolution WOs dispatched without ever writing a spec), they're
+    # historical noise that would otherwise permanently inflate "next" past
+    # whatever high-water mark they happened to use.
+    for wo_id, meta in _dispatch_state.items():
+        if isinstance(meta, dict) and meta.get("status") == "complete":
+            continue
         try:
             known.add(int(wo_id.replace("WO-", "")))
         except ValueError:
