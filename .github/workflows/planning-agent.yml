@@ -1,7 +1,15 @@
 # =============================================================================
 # planning-agent.yml — WO Spec Drafting
 #
-# Triggered when a GitHub issue is labeled 'new-wo'.
+# Triggered when a GitHub issue carries the 'new-wo' label — either added to an
+# existing issue, or present at creation (needs both trigger types: GitHub's
+# `labeled` webhook only fires for the former; an issue opened with the label
+# already attached only emits `opened`, never a separate `labeled` event. The
+# Dependabot->WO bridge creates issues with labels in one API call, so it hits
+# exactly this case — missed here for the bridge's entire history until fixed
+# 2026-07-30, confirmed via `gh run list` showing zero runs ever on Clarion,
+# the repo actually running this bridge).
+#
 # Calls planning_agent.py to draft a WO spec and opens a PR for human review.
 #
 # The agent drafts; a human reviews and adjusts risk tier and AC before merging.
@@ -16,7 +24,7 @@ name: Planning Agent — Draft WO Spec
 
 on:
   issues:
-    types: [labeled]
+    types: [opened, labeled]
 
 permissions:
   contents: write
@@ -27,7 +35,9 @@ jobs:
   draft-wo-spec:
     name: Draft WO Spec
     runs-on: ubuntu-latest
-    if: github.event.label.name == 'new-wo'
+    if: >
+      (github.event.action == 'labeled' && github.event.label.name == 'new-wo') ||
+      (github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'new-wo'))
 
     steps:
       - uses: actions/checkout@v4
