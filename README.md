@@ -179,7 +179,7 @@ make up                       # reads Keychain → starts Docker services
 open http://localhost:8099
 ```
 
-Open **Settings → Authentication** to verify credentials are live, or update them without restarting.
+Open **Settings → Authentication** to verify credentials are live, or update them without restarting. This is true for the API keys/tokens (`GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, Slack, ntfy) — rotate any of those and the change takes effect on the next request, no restart needed. `GITHUB_REPO` is different: it's read once at startup and used as a default throughout the orchestrator, so changing *which repo* the factory targets does require a restart.
 
 ### 5. Set up CI
 

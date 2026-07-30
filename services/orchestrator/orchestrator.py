@@ -1081,7 +1081,7 @@ async def _intelligence_job() -> None:
 
     try:
         result = await _intel.run_intelligence_pass(
-            github_token=GITHUB_TOKEN,
+            github_token=_get_github_token(),
             github_repo=GITHUB_REPO,
             anthropic_key=_get_anthropic_key(),
             dispatch_state=dict(_dispatch_state),
@@ -1117,7 +1117,14 @@ async def lifespan(app: FastAPI):
     _load_pm_memory()
     await _init_secrets()
 
-    if not GITHUB_TOKEN or not GITHUB_REPO:
+    # _init_secrets() just ran, so Vault-only tokens are already loadable here —
+    # check via _get_github_token(), not the bare env-only constant, or a
+    # dashboard-only (no .env) token would leave the scheduler permanently
+    # disabled even across a restart. GITHUB_REPO has no such live-vs-static
+    # distinction to fix: it's baked into dozens of function default-parameter
+    # values throughout this file, evaluated once at import — changing it
+    # legitimately still needs a restart, unlike a rotated token.
+    if not _get_github_token() or not GITHUB_REPO:
         print("[orchestrator] WARNING: GITHUB_TOKEN or GITHUB_REPO not set — poll loop disabled")
     else:
         scheduler = AsyncIOScheduler()
@@ -2580,8 +2587,9 @@ async def stream_log(request: Request, agent: str = "", tail: int = 150):
 
 def _headers() -> dict:
     h = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
-    if GITHUB_TOKEN:
-        h["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    token = _get_github_token()
+    if token:
+        h["Authorization"] = f"Bearer {token}"
     return h
 
 
@@ -3144,9 +3152,10 @@ async def _sync_local_repo() -> None:
     """
     if not LOCAL_REPO_MOUNT:
         return
-    if not GITHUB_TOKEN or not GITHUB_REPO:
+    token = _get_github_token()
+    if not token or not GITHUB_REPO:
         return
-    https_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+    https_url = f"https://x-access-token:{token}@github.com/{GITHUB_REPO}.git"
     try:
         proc = await asyncio.create_subprocess_exec(
             "git", "fetch", "--prune", https_url,
@@ -3904,6 +3913,22 @@ AGENT_RUNNER_URL = os.getenv("AGENT_RUNNER_URL", "http://host.docker.internal:81
 def _get_anthropic_key() -> str:
     """Read ANTHROPIC_API_KEY from env first, then secrets volume (set via UI)."""
     return os.getenv("ANTHROPIC_API_KEY") or _load_secrets().get("ANTHROPIC_API_KEY", "")
+
+
+def _get_github_token() -> str:
+    """Read GITHUB_TOKEN from env first, then secrets volume (set via UI).
+
+    Unlike the module-level GITHUB_TOKEN constant (captured once at import,
+    used unchanged for the process lifetime), this re-reads on every call —
+    Settings -> Authentication's "update without restarting" claim was false
+    for this specific value until this existed: the dashboard wrote the
+    rotated token into Vault correctly, but every GitHub API call still used
+    the stale constant, since _headers() read that directly. Cheap: Vault
+    lookups here aren't a network call, unlike the GitHub-repo-variable-backed
+    automation model, which is why this doesn't need the cache/refresh-job
+    machinery that one has.
+    """
+    return os.getenv("GITHUB_TOKEN") or _load_secrets().get("GITHUB_TOKEN", "")
 
 
 @app.post("/api/internal/anthropic-key")
