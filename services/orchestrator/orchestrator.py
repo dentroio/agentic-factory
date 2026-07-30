@@ -1131,11 +1131,13 @@ async def lifespan(app: FastAPI):
         scheduler.add_job(poll, "interval", seconds=POLL_INTERVAL)
         scheduler.add_job(_intelligence_job, "interval", seconds=INTELLIGENCE_INTERVAL)
         scheduler.add_job(_refresh_model_cache, "interval", seconds=600)
+        scheduler.add_job(_refresh_agent_runner_url, "interval", seconds=60)
         scheduler.start()
         app.state.scheduler = scheduler
         # Fire first poll in background — store ref so it isn't GC'd
         app.state.initial_poll = asyncio.create_task(poll())
         app.state.initial_model_refresh = asyncio.create_task(_refresh_model_cache())
+        app.state.initial_agent_runner_refresh = asyncio.create_task(_refresh_agent_runner_url())
 
     start_slack_bot(secrets=_load_secrets())
 
@@ -3916,7 +3918,38 @@ async def put_secrets(request: Request):
 
 # ── WO Draft generation ────────────────────────────────────────────────────────
 
-AGENT_RUNNER_URL = os.getenv("AGENT_RUNNER_URL", "http://host.docker.internal:8101")
+# Each backend now runs as its own native launchd process (claude/cursor/codex on
+# ports 8102/8103/8104 — see scripts/agent-install.sh), not one generic runner on
+# 8101. Any single draft-server instance can answer for the whole fleet (it manages
+# LaunchAgents by label, and probes all backend CLIs, not just its own), so this
+# just needs to resolve to whichever port is actually alive right now.
+_AGENT_RUNNER_ENV_OVERRIDE = os.getenv("AGENT_RUNNER_URL", "")
+_AGENT_RUNNER_CANDIDATES = [
+    "http://host.docker.internal:8102",
+    "http://host.docker.internal:8103",
+    "http://host.docker.internal:8104",
+    "http://host.docker.internal:8101",
+]
+AGENT_RUNNER_URL = _AGENT_RUNNER_ENV_OVERRIDE or _AGENT_RUNNER_CANDIDATES[0]
+
+
+async def _refresh_agent_runner_url() -> None:
+    """Probe candidate runner ports and point AGENT_RUNNER_URL at whichever
+    responds — runs on a schedule so a runner restarting onto a different
+    port (or a new backend being added) doesn't need a manual config change.
+    Skipped entirely if AGENT_RUNNER_URL was set explicitly via env var."""
+    global AGENT_RUNNER_URL
+    if _AGENT_RUNNER_ENV_OVERRIDE:
+        return
+    async with httpx.AsyncClient(timeout=3) as client:
+        for candidate in _AGENT_RUNNER_CANDIDATES:
+            try:
+                r = await client.get(f"{candidate}/health")
+                if r.status_code == 200:
+                    AGENT_RUNNER_URL = candidate
+                    return
+            except Exception:
+                continue
 
 
 def _get_anthropic_key() -> str:

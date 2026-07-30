@@ -794,6 +794,8 @@
             {% set backends = [
               ('claude', 'Claude (Pro/Max) — claude code --dangerously-skip-permissions'),
               ('cursor', 'Cursor — agent --headless'),
+              ('codex', 'Codex (OpenAI/ChatGPT subscription) — codex login'),
+              ('gemini', 'Gemini (Google subscription) — gemini OAuth'),
             ] %}
             {% for val, label in backends %}
             {% set is_installed = installed_backends.get(val, false) %}
@@ -861,6 +863,7 @@
         ('architecture', 'Architecture', 'Validates service boundaries, coupling, scalability, and design patterns'),
         ('correctness', 'Correctness', 'Verifies the implementation matches the WO spec and acceptance criteria'),
         ('performance', 'Performance', 'Flags N+1 queries, missing indexes, blocking calls, and memory issues'),
+        ('documentation', 'Documentation', 'Checks the WO\'s Documentation Required checklist against the diff (only runs when a WO specifies docs_required)'),
       ] %}
 
       <div id="manual-reviewers" class="grid grid-cols-1 md:grid-cols-2 gap-4 transition-opacity"
@@ -872,7 +875,7 @@
           <select name="reviewer_{{ role_key }}"
                   class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100
                          focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
-            {% for val, label in [('claude','Claude'), ('cursor','Cursor')] %}
+            {% for val, label in [('claude','Claude'), ('cursor','Cursor'), ('codex','Codex'), ('gemini','Gemini')] %}
             {% set is_installed = installed_backends.get(val, false) %}
             <option value="{{ val }}" {% if reviewer_cfg.get(role_key, 'claude') == val %}selected{% endif %}
               {% if not is_installed %}disabled{% endif %}>

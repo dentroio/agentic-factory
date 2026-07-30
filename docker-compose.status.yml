@@ -89,7 +89,7 @@ services:
       - CODEX_WORKFLOW_FILE=${CODEX_WORKFLOW_FILE:-codex-dispatch.yml}
       - API_PORT=8100
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - AGENT_RUNNER_URL=${AGENT_RUNNER_URL:-http://host.docker.internal:8101}
+      - AGENT_RUNNER_URL=${AGENT_RUNNER_URL:-}
       - LOCAL_REPO_MOUNT=/repos/primary
       - VAULT_ADDR=http://vault:8200
       - API_SECRET=${API_SECRET:-}
