@@ -1692,15 +1692,28 @@ async def api_backends():
 
 
 @app.get("/api/plan/next-wo-number")
-async def api_next_wo_number():
-    """Return the next available WO number via orchestrator reservation (prevents races)."""
+async def api_next_wo_number(repo: str | None = None, wo_path: str | None = None):
+    """Return the next available WO number via orchestrator reservation (prevents races).
+
+    Defaults to GITHUB_REPO/WO_PATH (Clarion) when repo/wo_path are omitted —
+    pass repo (e.g. a SECONDARY_REPOS entry like "dentroio/agentic-factory")
+    to number WOs in a different repo instead.
+    """
+    target_repo = repo or GITHUB_REPO
+    target_wo_path = wo_path or WO_PATH
+
     # Try orchestrator reservation API first — atomic, race-free
     if ORCHESTRATOR_URL:
         try:
             async with httpx.AsyncClient(timeout=5) as c:
                 r = await c.post(
                     f"{ORCHESTRATOR_URL}/api/wos/reserve",
-                    json={"title": "status-site next-wo-number query", "reserved_by": "status-site"},
+                    json={
+                        "title": "status-site next-wo-number query",
+                        "reserved_by": "status-site",
+                        "repo": target_repo,
+                        "wo_path": target_wo_path,
+                    },
                     headers=_orch_headers(),
                 )
                 if r.status_code == 200:
@@ -1710,10 +1723,10 @@ async def api_next_wo_number():
             pass  # fall through to scan-based fallback
 
     # Fallback: scan GitHub directly (may race under concurrent usage)
-    if not GITHUB_TOKEN or not GITHUB_REPO:
+    if not GITHUB_TOKEN or not target_repo:
         return {"next": 374}
     try:
-        next_num = await gw.next_wo_number(GITHUB_REPO, WO_PATH, GITHUB_TOKEN)
+        next_num = await gw.next_wo_number(target_repo, target_wo_path, GITHUB_TOKEN)
         return {"next": next_num}
     except Exception:
         return {"next": 374}

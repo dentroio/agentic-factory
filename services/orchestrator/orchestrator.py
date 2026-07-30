@@ -119,7 +119,7 @@ RESERVATION_TTL_HOURS = 1
 
 _pm_memory: dict = {}   # persisted PM preferences, decisions, dispatched history
 _overrides: dict[str, dict] = {}  # WO-NNN → {"action": "no-auto-complete", ...}
-_reserved: dict[int, dict] = {}   # WO number → {reserved_by, reserved_at, title}
+_reserved: dict[str, dict[int, dict]] = {}   # repo → WO number → {reserved_by, reserved_at, title}
 
 _factory_paused: bool = False   # when True, get_next() returns null — drains gracefully
 
@@ -190,40 +190,63 @@ def _is_overridden(wo_id: str, action: str) -> bool:
 
 
 def _load_reserved() -> None:
+    """Load persisted reservations, keyed by repo.
+
+    Migrates the pre-multi-repo flat format ({"1035": {...}}) to the current
+    nested one ({"dentroio/clarion": {"1035": {...}}}) — detected by whether
+    the top-level keys look like repo names (contain "/") or bare numbers.
+    """
     global _reserved
-    if RESERVED_WOS_PATH.exists():
-        try:
-            raw = json.loads(RESERVED_WOS_PATH.read_text())
-            _reserved = {int(k): v for k, v in raw.items()}
-        except Exception:
-            _reserved = {}
+    if not RESERVED_WOS_PATH.exists():
+        return
+    try:
+        raw = json.loads(RESERVED_WOS_PATH.read_text())
+    except Exception:
+        _reserved = {}
+        return
+    if raw and all("/" not in k for k in raw):
+        raw = {GITHUB_REPO: raw}
+    _reserved = {repo: {int(k): v for k, v in bucket.items()} for repo, bucket in raw.items()}
 
 
 def _save_reserved() -> None:
     try:
         RESERVED_WOS_PATH.write_text(
-            json.dumps({str(k): v for k, v in _reserved.items()}, indent=2)
+            json.dumps(
+                {repo: {str(k): v for k, v in bucket.items()} for repo, bucket in _reserved.items()},
+                indent=2,
+            )
         )
     except Exception as e:
         print(f"[orchestrator] reserved_wos save failed: {e}")
 
 
 def _expire_stale_reservations() -> None:
-    """Remove reservations older than RESERVATION_TTL_HOURS."""
+    """Remove reservations older than RESERVATION_TTL_HOURS, across all repos."""
     cutoff = datetime.now(UTC) - timedelta(hours=RESERVATION_TTL_HOURS)
-    stale = [
-        num for num, meta in _reserved.items()
-        if datetime.fromisoformat(meta.get("reserved_at", "2000-01-01T00:00:00+00:00")) < cutoff
-    ]
-    for num in stale:
-        del _reserved[num]
-    if stale:
+    changed = False
+    for repo, bucket in list(_reserved.items()):
+        stale = [
+            num for num, meta in bucket.items()
+            if datetime.fromisoformat(meta.get("reserved_at", "2000-01-01T00:00:00+00:00")) < cutoff
+        ]
+        for num in stale:
+            del bucket[num]
+            changed = True
+        if not bucket:
+            del _reserved[repo]
+    if changed:
         _save_reserved()
 
 
 def _next_wo_number() -> int:
-    """Return the next available WO number, including reserved numbers in the count."""
-    known: set[int] = set(_reserved)
+    """Next available number for the default repo (GITHUB_REPO/WO_PATH).
+
+    Synchronous — used by internal callers (intelligence loop, claim-reserve
+    consume) that only ever number the primary repo's WOs. For any other
+    repo, use `_next_wo_number_for`, which can scan via the GitHub API.
+    """
+    known: set[int] = set(_reserved.get(GITHUB_REPO, {}))
     if LOCAL_REPO_MOUNT:
         wo_dir = Path(LOCAL_REPO_MOUNT) / WO_PATH
         if wo_dir.is_dir():
@@ -237,6 +260,39 @@ def _next_wo_number() -> int:
             known.add(int(wo_id.replace("WO-", "")))
         except ValueError:
             pass
+    return (max(known) + 1) if known else 1000
+
+
+async def _next_wo_number_for(client: httpx.AsyncClient, repo: str, wo_path: str) -> int:
+    """Next available number for an arbitrary repo/wo_path.
+
+    Deliberately does *not* reuse `_fetch_wo_specs` — that fetches and parses
+    the full content of every WO file (title, status, priority...), which for
+    a repo the size of agentic-factory's own docs/work_orders/ is 50+ GitHub
+    API calls and blew past callers' timeouts (status-site's 5s reservation
+    call). All we need here is filenames, so a single directory-listing call
+    (same approach as github_writer.next_wo_number's API fallback) suffices.
+    """
+    if repo == GITHUB_REPO:
+        return _next_wo_number()
+    known: set[int] = set(_reserved.get(repo, {}))
+    if LOCAL_REPO_MOUNT:
+        wo_dir = Path(LOCAL_REPO_MOUNT) / wo_path
+        if wo_dir.is_dir():
+            for f in wo_dir.glob("WO-*.md"):
+                n = _parse_wo_number(f.name)
+                if n:
+                    known.add(n)
+            return (max(known) + 1) if known else 1000
+    try:
+        items = await _get(client, f"/repos/{repo}/contents/{wo_path}")
+        for item in items:
+            if item.get("type") == "file":
+                n = _parse_wo_number(item["name"])
+                if n:
+                    known.add(n)
+    except Exception as e:
+        print(f"[orchestrator] _next_wo_number_for failed for {repo}: {e}")
     return (max(known) + 1) if known else 1000
 
 
@@ -1008,7 +1064,7 @@ async def _intelligence_job() -> None:
     def _reserve_wo(title: str) -> str:
         _expire_stale_reservations()
         num = _next_wo_number()
-        _reserved[num] = {
+        _reserved.setdefault(GITHUB_REPO, {})[num] = {
             "reserved_by": "intelligence-loop",
             "reserved_at": _utcnow(),
             "title": title,
@@ -1374,30 +1430,41 @@ async def get_override(wo_id: str):
 class ReserveRequest(BaseModel):
     title: str = ""
     reserved_by: str = "unknown"
+    # Defaults to GITHUB_REPO/WO_PATH (Clarion) when omitted — existing callers
+    # are unaffected. Pass repo to number WOs in a different repo, e.g.
+    # SECONDARY_REPOS entries like "dentroio/agentic-factory".
+    repo: str | None = None
+    wo_path: str | None = None
 
 
 @app.post("/api/wos/reserve")
 async def reserve_wo_number(req: ReserveRequest):
     """Atomically reserve the next WO number. Prevents concurrent number collisions."""
     _expire_stale_reservations()
-    num = _next_wo_number()
-    _reserved[num] = {
+    repo = req.repo or GITHUB_REPO
+    wo_path = req.wo_path or WO_PATH
+    async with httpx.AsyncClient(timeout=15) as client:
+        num = await _next_wo_number_for(client, repo, wo_path)
+    bucket = _reserved.setdefault(repo, {})
+    bucket[num] = {
         "reserved_by": req.reserved_by,
         "reserved_at": _utcnow(),
         "title": req.title,
     }
     _save_reserved()
-    return {"wo_id": f"WO-{num}", "number": num, "reserved_at": _reserved[num]["reserved_at"]}
+    return {"wo_id": f"WO-{num}", "number": num, "repo": repo, "reserved_at": bucket[num]["reserved_at"]}
 
 
 @app.get("/api/wos/reserved")
-async def list_reserved_wos():
-    """List currently active WO number reservations."""
+async def list_reserved_wos(repo: str = GITHUB_REPO):
+    """List currently active WO number reservations for a repo (defaults to GITHUB_REPO)."""
     _expire_stale_reservations()
+    bucket = _reserved.get(repo, {})
     return {
+        "repo": repo,
         "reserved": [
             {"number": num, "wo_id": f"WO-{num}", **meta}
-            for num, meta in sorted(_reserved.items())
+            for num, meta in sorted(bucket.items())
         ]
     }
 
@@ -1521,9 +1588,10 @@ async def claim_wo(req: ClaimRequest):
                    "Use POST /api/dispatch/{wo_id}/reset to force-clear the attempt counter.",
         )
 
-    # Consume reservation if one exists for this WO number
-    if wo_num in _reserved:
-        del _reserved[wo_num]
+    # Consume reservation if one exists for this WO number (claims are always
+    # against the primary repo — dispatch state doesn't track secondary repos)
+    if wo_num in _reserved.get(GITHUB_REPO, {}):
+        del _reserved[GITHUB_REPO][wo_num]
         _save_reserved()
 
     _dispatch_state[wo_id] = {

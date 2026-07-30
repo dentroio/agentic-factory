@@ -112,3 +112,78 @@ def test_scan_fallback_wo_resolver():
     """wo_resolver.branch_name_for works correctly for a reserved number."""
     from wo_resolver import branch_name_for
     assert branch_name_for(1044, "my new feature") == "wo/1044-my-new-feature"
+
+
+# ── WO-1052: per-repo reservation ──────────────────────────────────────────────
+# Root cause was not a stale counter — GITHUB_REPO/WO_PATH were hardcoded to
+# Clarion, so any caller numbering a different repo's WOs (e.g. agentic-factory's
+# own docs/work_orders/) always got Clarion's next number back. Fix makes repo
+# an explicit dimension of both the reservation bucket and the known-numbers scan.
+
+DEFAULT_REPO = "dentroio/clarion"
+FACTORY_REPO = "dentroio/agentic-factory"
+
+
+def _next_wo_num_for_repo(
+    repo: str,
+    known_by_repo: dict[str, set[int]],
+    reserved_by_repo: dict[str, dict[int, dict]],
+) -> int:
+    all_nums = known_by_repo.get(repo, set()) | set(reserved_by_repo.get(repo, {}))
+    return (max(all_nums) + 1) if all_nums else 1000
+
+
+def _migrate_reserved(raw: dict, default_repo: str) -> dict[str, dict[int, dict]]:
+    """Mirrors orchestrator._load_reserved's flat -> nested migration."""
+    if raw and all("/" not in k for k in raw):
+        raw = {default_repo: raw}
+    return {repo: {int(k): v for k, v in bucket.items()} for repo, bucket in raw.items()}
+
+
+def test_two_repos_number_independently_even_with_overlapping_ranges():
+    """Clarion and agentic-factory both use WO numbers in the low-1000s —
+    a reservation in one repo must not consume a number in the other."""
+    known_by_repo = {
+        DEFAULT_REPO: {1030, 1031, 1032, 1033, 1034},  # clarion's own WO-1035 already exists
+        FACTORY_REPO: {1043, 1044, 1045, 1046},
+    }
+    reserved_by_repo: dict[str, dict[int, dict]] = {}
+
+    clarion_num = _next_wo_num_for_repo(DEFAULT_REPO, known_by_repo, reserved_by_repo)
+    factory_num = _next_wo_num_for_repo(FACTORY_REPO, known_by_repo, reserved_by_repo)
+
+    assert clarion_num == 1035
+    assert factory_num == 1047
+    assert clarion_num != factory_num  # the actual bug: both used to resolve to 1035
+
+
+def test_reservation_in_one_repo_does_not_block_the_other():
+    known_by_repo = {DEFAULT_REPO: {1040}, FACTORY_REPO: {1040}}
+    reserved_by_repo: dict[str, dict[int, dict]] = {}
+
+    num_a = _next_wo_num_for_repo(DEFAULT_REPO, known_by_repo, reserved_by_repo)
+    reserved_by_repo.setdefault(DEFAULT_REPO, {})[num_a] = {
+        "reserved_by": "x", "reserved_at": datetime.now(UTC).isoformat(), "title": "t",
+    }
+
+    # Factory's next number is unaffected by Clarion's reservation
+    num_b = _next_wo_num_for_repo(FACTORY_REPO, known_by_repo, reserved_by_repo)
+    assert num_b == 1041
+
+
+def test_migrate_flat_format_promotes_to_default_repo():
+    old_flat = {"1035": {"reserved_by": "x", "reserved_at": "2026-01-01T00:00:00+00:00", "title": "t"}}
+    migrated = _migrate_reserved(old_flat, DEFAULT_REPO)
+    assert migrated == {DEFAULT_REPO: {1035: old_flat["1035"]}}
+
+
+def test_migrate_leaves_nested_format_untouched():
+    already_nested = {
+        FACTORY_REPO: {"1047": {"reserved_by": "x", "reserved_at": "2026-01-01T00:00:00+00:00", "title": "t"}}
+    }
+    migrated = _migrate_reserved(already_nested, DEFAULT_REPO)
+    assert migrated == {FACTORY_REPO: {1047: already_nested[FACTORY_REPO]["1047"]}}
+
+
+def test_migrate_empty_dict_is_a_noop():
+    assert _migrate_reserved({}, DEFAULT_REPO) == {}
