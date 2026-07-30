@@ -26,6 +26,8 @@ import os
 import re
 import sys
 
+MODEL = os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-5"
+
 SYSTEM_PROMPT = """You are a memory agent for an AI engineering team. After each merged PR,
 you identify lessons that future agents should know — things that were non-obvious,
 surprising, or that represent project-specific invariants discovered during the change.
@@ -121,7 +123,7 @@ What should future agents know about this change that they would NOT discover by
 
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=MODEL,
         max_tokens=512,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_content}],

@@ -162,6 +162,17 @@ async def _get_check_failure_summary(
 
 # ── LLM diagnosis ─────────────────────────────────────────────────────────────
 
+def _current_automation_model(fallback: str = "claude-sonnet-5") -> str:
+    """Live model from orchestrator's cache (Settings → Agents). Deferred import —
+    orchestrator.py imports this module, so importing it back at module load time
+    would be circular; by call time (well after startup) it's safe."""
+    try:
+        import orchestrator
+        return orchestrator._get_model()
+    except Exception:
+        return fallback
+
+
 async def _llm_diagnose_ci_failure(
     anthropic_key: str,
     pr_number: int,
@@ -205,7 +216,7 @@ async def _llm_diagnose_ci_failure(
         import anthropic
         client = anthropic.Anthropic(api_key=anthropic_key)
         msg = client.messages.create(
-            model="claude-sonnet-4-6",
+            model=_current_automation_model(),
             max_tokens=512,
             system=system,
             messages=[{"role": "user", "content": user}],

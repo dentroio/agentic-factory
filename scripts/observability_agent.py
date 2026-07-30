@@ -37,6 +37,8 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
+MODEL = os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-5"
+
 SYSTEM_PROMPT = """You are an observability agent. You receive a health/metrics snapshot
 and a list of threshold violations. Write a concise incident report in WO Problem format.
 
@@ -123,7 +125,7 @@ Write the incident report."""
 
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=MODEL,
         max_tokens=512,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_content}],

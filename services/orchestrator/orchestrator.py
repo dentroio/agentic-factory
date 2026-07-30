@@ -1123,10 +1123,12 @@ async def lifespan(app: FastAPI):
         scheduler = AsyncIOScheduler()
         scheduler.add_job(poll, "interval", seconds=POLL_INTERVAL)
         scheduler.add_job(_intelligence_job, "interval", seconds=INTELLIGENCE_INTERVAL)
+        scheduler.add_job(_refresh_model_cache, "interval", seconds=600)
         scheduler.start()
         app.state.scheduler = scheduler
         # Fire first poll in background — store ref so it isn't GC'd
         app.state.initial_poll = asyncio.create_task(poll())
+        app.state.initial_model_refresh = asyncio.create_task(_refresh_model_cache())
 
     start_slack_bot(secrets=_load_secrets())
 
@@ -2590,6 +2592,37 @@ async def _get(client: httpx.AsyncClient, path: str, params: dict | None = None)
     return resp.json()
 
 
+async def _get_repo_variable(client: httpx.AsyncClient, repo: str, name: str) -> str | None:
+    """Read a GitHub Actions repo variable. None if unset or the repo/token can't be reached."""
+    try:
+        resp = await client.get(
+            f"https://api.github.com/repos/{repo}/actions/variables/{name}", headers=_headers()
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json().get("value")
+    except Exception as e:
+        print(f"[orchestrator] _get_repo_variable {repo}/{name} failed: {e}")
+        return None
+
+
+async def _set_repo_variable(client: httpx.AsyncClient, repo: str, name: str, value: str) -> None:
+    """Create or update a GitHub Actions repo variable (PATCH if it exists, else POST)."""
+    resp = await client.patch(
+        f"https://api.github.com/repos/{repo}/actions/variables/{name}",
+        headers=_headers(),
+        json={"name": name, "value": value},
+    )
+    if resp.status_code == 404:
+        resp = await client.post(
+            f"https://api.github.com/repos/{repo}/actions/variables",
+            headers=_headers(),
+            json={"name": name, "value": value},
+        )
+    resp.raise_for_status()
+
+
 # ── WO spec parsing ───────────────────────────────────────────────────────────
 
 def _parse_wo_number(filename: str) -> int | None:
@@ -3535,7 +3568,12 @@ def _load_agent_config() -> dict:
 
 @app.get("/api/config")
 async def get_agent_config():
-    return _load_agent_config()
+    # automation_model is a convenience read here for callers (e.g. agent-runner)
+    # that already poll this endpoint for live config. It's not persisted in
+    # agent_config.json — /api/settings/automation-model is the write path,
+    # backed by a GitHub repo variable rather than the local config file since
+    # GitHub-Actions-run scripts need to read it too.
+    return {**_load_agent_config(), "automation_model": _get_model()}
 
 
 @app.put("/api/config")
@@ -3558,10 +3596,14 @@ async def put_agent_config(request: Request):
 USAGE_PATH = DATA_DIR / "usage.json"
 ANTHROPIC_USAGE_PATH = DATA_DIR / "anthropic_usage.json"
 
-# Approximate cost per million tokens (USD) — update if Anthropic changes pricing
+# Approximate cost per million tokens (USD) — update if Anthropic changes pricing.
+# Falls back to the sonnet-tier rate below for any model not listed here (e.g. a
+# model chosen via the Automation Model setting that predates this table) —
+# an estimate, not a crash, since the model is now user-changeable.
 _ANTHROPIC_PRICING: dict[str, dict] = {
     "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.00},
     "claude-sonnet-4-6":         {"input": 3.00, "output": 15.00},
+    "claude-sonnet-5":           {"input": 3.00, "output": 15.00},
     "claude-opus-4-8":           {"input": 15.00, "output": 75.00},
 }
 
@@ -3863,6 +3905,62 @@ def _get_anthropic_key() -> str:
     """Read ANTHROPIC_API_KEY from env first, then secrets volume (set via UI)."""
     return os.getenv("ANTHROPIC_API_KEY") or _load_secrets().get("ANTHROPIC_API_KEY", "")
 
+
+# ── Automation model (Settings → Agents) ───────────────────────────────────────
+# Single source of truth for which Claude model every direct-Anthropic-SDK call
+# site uses (WO drafting, PM chat, ai-review/planning-agent/etc. GitHub Actions
+# scripts, doc-writer). Persisted as a GitHub repo variable on GITHUB_REPO rather
+# than an env var, so it's changeable from the dashboard without editing .env or
+# redeploying — GitHub Actions scripts read the same variable directly via
+# `${{ vars.ANTHROPIC_MODEL }}`, which is why this must be a repo variable and
+# not something stored only in orchestrator's local volume.
+
+DEFAULT_MODEL = "claude-sonnet-5"
+_current_model: str = os.getenv("ANTHROPIC_MODEL") or DEFAULT_MODEL
+
+
+def _get_model() -> str:
+    """Current automation model for local (non-GitHub-Actions) callers."""
+    return _current_model
+
+
+async def _refresh_model_cache() -> None:
+    """Pick up changes made directly on GitHub (gh variable set) as well as via
+    the dashboard — runs on a schedule, not just after a PUT from the UI."""
+    global _current_model
+    if not GITHUB_REPO:
+        return
+    async with httpx.AsyncClient(timeout=10) as client:
+        value = await _get_repo_variable(client, GITHUB_REPO, "ANTHROPIC_MODEL")
+    if value:
+        _current_model = value
+
+
+@app.get("/api/settings/automation-model")
+async def get_automation_model():
+    return {"model": _current_model, "repo": GITHUB_REPO, "default": DEFAULT_MODEL}
+
+
+class AutomationModelRequest(BaseModel):
+    model: str
+
+
+@app.put("/api/settings/automation-model")
+async def set_automation_model(req: AutomationModelRequest):
+    """Persist the model as a GitHub repo variable on GITHUB_REPO. Applies to
+    local callers immediately; GitHub-Actions-run scripts pick it up on their
+    next run since `vars.ANTHROPIC_MODEL` is read fresh every workflow run."""
+    global _current_model
+    model = req.model.strip()
+    if not model:
+        raise HTTPException(status_code=422, detail="model must not be empty")
+    if not GITHUB_REPO:
+        raise HTTPException(status_code=409, detail="GITHUB_REPO is not configured")
+    async with httpx.AsyncClient(timeout=15) as client:
+        await _set_repo_variable(client, GITHUB_REPO, "ANTHROPIC_MODEL", model)
+    _current_model = model
+    return {"model": _current_model, "repo": GITHUB_REPO}
+
 _DRAFT_SYSTEM_BASE = (
     "You are a software engineering planning agent. Convert a plain-English feature request "
     "into a structured Work Order spec.\n\n"
@@ -4097,8 +4195,9 @@ async def plan_draft(req: DraftRequest):
                 hints.append(f"Depends on: {req.depends_on}")
             hint_block = ("\n\nUser-provided hints (respect these in your output):\n" + "\n".join(hints)) if hints else ""
             draft_system = _build_draft_system(_pm_situational_brief())
+            model = _get_model()
             msg = client.messages.create(
-                model="claude-sonnet-4-6",
+                model=model,
                 max_tokens=1024,
                 system=draft_system,
                 messages=[{
@@ -4106,7 +4205,7 @@ async def plan_draft(req: DraftRequest):
                     "content": f"WO number: {req.next_wo_num:03d}\n\nRequest:\n{req.description}{hint_block}",
                 }],
             )
-            _record_anthropic_usage("claude-sonnet-4-6", msg.usage.input_tokens, msg.usage.output_tokens, "plan/draft")
+            _record_anthropic_usage(model, msg.usage.input_tokens, msg.usage.output_tokens, "plan/draft")
             text = msg.content[0].text.strip()
             if text.startswith("```"):
                 text = re.sub(r"^```[a-z]*\n?", "", text)
@@ -4668,7 +4767,7 @@ async def pm_chat(req: PMChatRequest):
             try:
                 import anthropic as _anthropic
                 _aclient = _anthropic.Anthropic(api_key=api_key)
-                _model = "claude-sonnet-4-6"
+                _model = _get_model()
                 tools = _PM_TOOLS if LOCAL_REPO_MOUNT else []
                 tool_messages = list(messages)
                 tool_messages.append({"role": "user", "content": user_message if not req.images else [

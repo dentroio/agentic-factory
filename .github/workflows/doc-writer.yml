@@ -11,6 +11,13 @@ name: Doc Writer — Update Clarion + Factory Wikis
 # Variables (optional):
 #   CLARION_REPO       — default: dentroio/clarion
 #   DOC_WRITER_MAX_PAGES — default: 5
+#   ANTHROPIC_MODEL    — default: claude-sonnet-5 (script's own fallback).
+#                         Settable from the dashboard: Settings -> Agents ->
+#                         Automation Model. Note that field writes to GITHUB_REPO
+#                         (the product repo, e.g. Clarion), not this repo — set
+#                         this repo's own variable directly (gh variable set
+#                         ANTHROPIC_MODEL --repo dentroio/agentic-factory) if you
+#                         want doc-writer specifically on a non-default model.
 
 on:
   schedule:
@@ -59,6 +66,7 @@ jobs:
       - name: Run doc writer (Clarion)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
         run: |
           ARGS="--clarion-path ./clarion --max-pages ${{ inputs.max_pages || vars.DOC_WRITER_MAX_PAGES || '5' }}"
 
@@ -118,6 +126,7 @@ jobs:
       - name: Run doc writer (factory)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
         run: |
           ARGS="--factory-path . --max-pages ${{ inputs.max_pages || vars.DOC_WRITER_MAX_PAGES || '5' }}"
 
