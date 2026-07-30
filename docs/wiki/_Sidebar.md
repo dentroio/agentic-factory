@@ -19,6 +19,7 @@
 - [GitHub Integrations](GitHub-Integrations)
 - [Intelligence Loop](Intelligence-Loop)
 - [Doc Writer Agent](Doc-Writer-Agent)
+- [Reliability & Monitoring](Reliability)
 - [Notifications](Notifications)
 - [Customization](Customization)
 - [Troubleshooting](Troubleshooting)
