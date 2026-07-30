@@ -174,7 +174,7 @@ def main() -> None:
                 }
             ],
         )
-        raw = message.content[0].text.strip()
+        raw = next(b.text for b in message.content if b.type == "text").strip()
 
         if raw.startswith("```"):
             lines = raw.split("\n")

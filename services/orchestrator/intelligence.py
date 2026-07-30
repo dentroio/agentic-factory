@@ -221,7 +221,7 @@ async def _llm_diagnose_ci_failure(
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        text = msg.content[0].text.strip()
+        text = next(b.text for b in msg.content if b.type == "text").strip()
         # Strip markdown fences if present
         text = re.sub(r"^```[a-z]*\n?", "", text)
         text = re.sub(r"\n?```$", "", text.strip())
@@ -259,7 +259,7 @@ async def _llm_describe_conflict(
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        return msg.content[0].text.strip()
+        return next(b.text for b in msg.content if b.type == "text").strip()
     except Exception:
         return f"Resolve merge conflict on PR #{pr_number} ({repo}): {pr_title}. Fetch the branch, rebase onto main, resolve any conflicts, and force-push."
 
