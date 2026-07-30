@@ -3906,6 +3906,17 @@ def _get_anthropic_key() -> str:
     return os.getenv("ANTHROPIC_API_KEY") or _load_secrets().get("ANTHROPIC_API_KEY", "")
 
 
+@app.post("/api/internal/anthropic-key")
+async def get_anthropic_key_internal():
+    """Resolve the Anthropic key for other in-stack services (agent-runner) that
+    can't read orchestrator's own env/Vault directly. POST (not GET) so this goes
+    through the bearer-auth middleware below, which only guards non-GET requests —
+    a raw key must never sit behind an unauthenticated route, unlike GET /api/secrets
+    which deliberately only ever returns presence booleans.
+    """
+    return {"api_key": _get_anthropic_key()}
+
+
 # ── Automation model (Settings → Agents) ───────────────────────────────────────
 # Single source of truth for which Claude model every direct-Anthropic-SDK call
 # site uses (WO drafting, PM chat, ai-review/planning-agent/etc. GitHub Actions
