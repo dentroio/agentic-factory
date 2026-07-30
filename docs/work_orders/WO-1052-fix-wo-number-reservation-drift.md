@@ -2,11 +2,11 @@
 
 **Created:** 2026-07-23
 **Priority:** P2
-**Effort:** S
-**Services:** orchestrator
+**Effort:** S → M (see below)
+**Services:** orchestrator, status-site
 **Repos:** `dentroio/agentic-factory`
 **Depends on:** —
-**Status:** Open
+**Status:** ✅ Done
 
 ---
 
@@ -14,47 +14,79 @@
 
 Observed 2026-07-23 while scoping the Oryntra program: `GET /api/plan/next-wo-number`
 returned `{"next": 1035, "wo_id": "WO-1035", "reserved": true}` while spec files in
-`docs/work_orders/` already reach WO-1046. WO-1035 has existed since the
-factory-UI-simplification work. Any caller trusting this endpoint (WO-1043 built it
-for agents drafting specs) would collide with an existing WO — and the endpoint
-*reserves* the number as a side effect, so each probe advances a counter that is
-already wrong.
+`docs/work_orders/` already reach WO-1046.
 
-`POST /api/factory/wos` is unaffected — it numbers from the spec files in the repo
-via `gw.next_wo_number()`, which is why it remains the authoritative creation path.
+## Actual root cause (differs from the original diagnosis above)
 
-## What to Build
+This was never a stale persisted counter — investigation on 2026-07-29 found the
+reservation endpoint has no notion of "which repo" at all. `GITHUB_REPO` and `WO_PATH`
+are hardcoded in `.env` to `dentroio/clarion` / `docs/project_management/work_orders`.
+`/api/wos/reserve` always numbered against Clarion's WO space, permanently — it just
+happened to answer correctly when Clarion's own WO-1035 already existed there. There
+was no "flooring the counter" that would have fixed this: the scan target itself was
+wrong for any caller asking about agentic-factory's own WOs.
+
+Two independent WO-number sequences — Clarion's and agentic-factory's own
+`docs/work_orders/` — use overlapping numeric ranges (both in the low-1000s), which is
+exactly what made this collision-prone rather than merely inconvenient.
+
+`POST /api/factory/wos` was and remains unaffected — it numbers from spec files
+directly via `gw.next_wo_number()`, which already takes `repo`/`wo_path` params.
+
+## What was built
 
 In `services/orchestrator`:
 
-1. **Floor the counter on the spec files** — on every reservation request, compute
-   `max(existing spec file numbers, PLAN entries, DB queue entries)` and return
-   `max(counter, computed) + 1`, persisting the corrected counter. The counter may
-   only ever move forward.
-2. **Startup reconciliation** — on orchestrator start, run the same computation and
-   log at WARN if the stored counter was behind the spec files (include both values).
-3. **Test** — unit test: counter behind files → reservation returns file-max + 1 and
-   the counter is persisted forward; counter ahead of files (numbers reserved but
-   specs not yet written) → counter is respected.
+- `_reserved` restructured from `dict[int, meta]` to `dict[repo, dict[int, meta]]`,
+  with migration of the old flat-format `reserved_wos.json` on load.
+- `ReserveRequest` gained optional `repo` / `wo_path` fields (default to
+  `GITHUB_REPO`/`WO_PATH` — existing callers unaffected).
+- New `_next_wo_number_for(client, repo, wo_path)`: for the default repo, delegates to
+  the existing local-mount scan; for any other repo, does a single GitHub directory-
+  listing call to collect WO numbers from filenames. Deliberately does **not** reuse
+  `_fetch_wo_specs` (which fetches and parses full file content for every WO — 50+
+  API calls for agentic-factory's own directory, which blew past status-site's 5s
+  timeout on the first live test).
+- `/api/wos/reserved` takes an optional `repo` query param.
+- Claim-consume and the intelligence loop's internal reservations stay pinned to
+  `GITHUB_REPO` explicitly — both are Clarion-only flows.
+
+In `services/status-site`:
+
+- `/api/plan/next-wo-number` takes optional `repo`/`wo_path` query params, forwarded
+  to the orchestrator reservation call and to the GitHub-API fallback path.
+
+No startup-reconciliation warning was added — with the redesign there's no separate
+persisted "counter" to drift from the files; each reservation is computed live against
+current known numbers (reserved + on-disk/API scan), so there's nothing to reconcile
+at startup.
 
 ## Domain Notes
 
-- Reserved-but-unwritten numbers are legitimate (an agent reserves, then opens a PR)
-  — that is why the fix is `max(counter, files) + 1`, not "always files + 1".
-- Check where the counter is stored (SQLite vs JSON state file) before writing; the
-  reservation logic landed in WO-1043 (PR #34).
+- Reserved-but-unwritten numbers are legitimate (an agent reserves, then opens a PR).
+- Verified live 2026-07-29 against running containers: Clarion reservation → 1036
+  (correct next after the real WO-1035), agentic-factory reservation → 1053 (correct
+  next after real spec files through WO-1052) — previously both would have returned
+  the same (wrong, for one of the two) number.
 
 ## Acceptance Criteria
 
-- [ ] With spec files up to WO-1046 and a stale counter, `GET /api/plan/next-wo-number`
-      returns ≥ 1047
-- [ ] Two consecutive reservations return strictly increasing numbers
-- [ ] Startup log warns when the stored counter is behind the spec-file max
-- [ ] Unit tests cover both drift directions (counter behind / counter ahead)
+- [x] Reserving against `dentroio/agentic-factory` (`docs/work_orders`) returns a
+      number past its own real spec-file max, not Clarion's
+- [x] Reserving against the default repo is unaffected (still returns Clarion's next
+      number)
+- [x] Two consecutive reservations in the same repo return strictly increasing numbers
+- [x] A reservation in one repo does not consume or block a number in the other, even
+      when their ranges overlap
+- [x] Unit tests cover: independent numbering per repo, non-interference across repos,
+      and flat→nested `reserved_wos.json` migration (11 tests, all passing)
+- [x] Live-verified against running orchestrator + status-site containers, including
+      the timeout regression found and fixed during that verification
 
 ## Files
 
 | Action | File | Purpose |
 |--------|------|---------|
-| Modify | `services/orchestrator/orchestrator.py` (or module owning reservation) | Floor counter on spec-file max |
-| Create/Modify | orchestrator tests | Drift regression tests |
+| Modify | `services/orchestrator/orchestrator.py` | Per-repo `_reserved`, `_next_wo_number_for`, reserve/list endpoints take `repo`/`wo_path` |
+| Modify | `services/status-site/main.py` | `/api/plan/next-wo-number` forwards `repo`/`wo_path` |
+| Modify | `tests/unit/test_reservation.py` | Per-repo independence + migration tests |
