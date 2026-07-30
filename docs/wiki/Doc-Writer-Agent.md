@@ -1,6 +1,6 @@
 ---
 title: "Doc Writer Agent"
-description: "Autonomous agent that keeps Clarion and factory wiki pages up to date, running every 6 hours via GitHub Actions"
+description: "Autonomous agent that keeps Clarion and factory wiki pages up to date, running daily via GitHub Actions"
 last_verified: 2026-07-30
 covers_wos:
   - WO-1052
@@ -9,7 +9,9 @@ doc_owner: factory-team
 
 # Doc Writer Agent
 
-The factory maintains its own documentation, and Clarion's, without a human triggering it. `scripts/doc_writer.py`, run by `.github/workflows/doc-writer.yml` every 6 hours, finds stale or WO-uncovered wiki pages, reads the relevant WO specs, and asks Claude to write updated content.
+The factory maintains its own documentation, and Clarion's, without a human triggering it. `scripts/doc_writer.py`, run by `.github/workflows/doc-writer.yml` once daily, finds stale or WO-uncovered wiki pages, reads the relevant WO specs, and asks Claude to write updated content.
+
+**Cost note:** each page costs roughly $0.10–0.20 (it stuffs up to 5 WO specs, up to 64KB each, into context) — paid even when Claude decides the page doesn't need changing. Clarion's wiki had 182 of 189 pages flagged "uncovered" (empty `covers_wos`) when this was tuned 2026-07-30 — most predate the `covers_wos` convention and don't actually need rewrites, they're just untagged. `max-pages` defaults to 2/run and the schedule is daily specifically to cap spend while that backlog exists, rather than burning through it at full throughput. Consider relaxing the "uncovered" trigger (only fire on real `last_verified` staleness) before raising `max-pages` back up.
 
 It has two independent jobs in the same workflow:
 
@@ -21,7 +23,7 @@ It has two independent jobs in the same workflow:
 ## What it does each run
 
 1. Scans wiki pages for staleness (`last_verified` older than 180 days) or an empty `covers_wos` frontmatter field.
-2. For each candidate page (up to `--max-pages`, default 5), gathers the WO specs and design docs that look relevant by keyword match.
+2. For each candidate page (up to `--max-pages`, default 2), gathers the WO specs and design docs that look relevant by keyword match.
 3. Sends the current page + that context to Claude, with instructions to only document shipped (✅ Complete) features, never invent facts, and set `last_verified` to today.
 4. If Claude's response doesn't parse as valid frontmatter (it sometimes wraps the answer in a ` ```markdown ` fence despite being told not to — `strip_code_fence()` handles this), or if it returns the page unchanged, the page is skipped.
 5. Commits whatever changed.
