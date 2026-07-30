@@ -5,6 +5,7 @@ import shutil
 from typing import AsyncIterator
 
 from backends.base import AgentBackend
+from backends.claude import AGENT_MODEL, _subscription_env
 
 _RECONNECT_RE = re.compile(r"connection lost|reconnecting to|connecting to.*cursor\.sh", re.I)
 _MAX_CONN_FAILURES = 5
@@ -126,7 +127,8 @@ class CursorBackend(AgentBackend):
         if claude_bin:
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    claude_bin, "--print", "-p", question,
+                    claude_bin, "--print", "--model", AGENT_MODEL, "-p", question,
+                    env=_subscription_env(),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
