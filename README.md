@@ -197,7 +197,9 @@ In your GitHub repo: **Settings → Secrets and variables → Actions → New re
 - Name: `ANTHROPIC_API_KEY`
 - Value: your key from [console.anthropic.com](https://console.anthropic.com)
 
-For the factory runtime (WO spec drafting), you can also set the key via **Settings → Authentication** in the dashboard. The subscription CLI backends don't need it at all.
+For the factory runtime (WO spec drafting, PM chat, and peer review), you can also set the key via **Settings → Authentication** in the dashboard rather than editing `.env` — this is the recommended path. The subscription CLI backends (Claude Code, Cursor) don't need it at all: those authenticate via `claude`/`cursor` CLI login, not this key.
+
+**Cost note:** setting this key turns on peer review's parallel API-based reviewers (4 passes for P0–P2 WOs) instead of the sequential CLI/subscription-based fallback. Each reviewer call is a few cents; leave the key unset if you'd rather peer review ride on your Claude subscription instead.
 
 **If you want the [Doc Writer Agent](docs/wiki/Doc-Writer-Agent.md)** (auto-updates wiki pages every 6h — optional but on by default), also add:
 

@@ -7,9 +7,36 @@ import re
 import anthropic
 import httpx
 from backends import get_backend
+from config import API_SECRET
 from thread_monitor import ThreadMonitor
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
+_ORCH_AUTH = {"Authorization": f"Bearer {API_SECRET}"} if API_SECRET else {}
+
+
+async def _resolve_anthropic_key() -> str:
+    """Same precedence as orchestrator._get_anthropic_key(): a local env override
+    wins if set (advanced/self-hosted case), otherwise the key configured through
+    the dashboard (Settings -> Authentication, Vault-backed) is used. This process
+    can't read orchestrator's own env/Vault directly, so the second case means
+    asking orchestrator for it — previously this only ever checked the local env
+    var, so a dashboard-configured key was invisible here and peer review silently
+    fell back to CLI/subscription-backed reviewers regardless of what was set in
+    Settings -> Authentication.
+    """
+    local = os.getenv("ANTHROPIC_API_KEY", "")
+    if local:
+        return local
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.post(
+                f"{ORCHESTRATOR_URL}/api/internal/anthropic-key", headers=_ORCH_AUTH
+            )
+            if r.status_code == 200:
+                return r.json().get("api_key", "")
+    except Exception:
+        pass
+    return ""
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -435,9 +462,10 @@ async def run_review_chain(
 
     Returns (chain_passed, all_findings).
 
-    When ANTHROPIC_API_KEY is set, all 4 reviewers run in parallel via the
-    Anthropic SDK with structured tool_use output. Otherwise falls back to the
-    sequential backend.ask() path.
+    When an Anthropic key is available (local ANTHROPIC_API_KEY env var, or one
+    configured via the dashboard's Settings -> Authentication), all 4 reviewers
+    run in parallel via the Anthropic SDK with structured tool_use output.
+    Otherwise falls back to the sequential backend.ask() (CLI/subscription) path.
 
     coding_backend — the backend that wrote the code; used by the sequential
     fallback to auto-assign reviewers to different LLMs.
@@ -453,7 +481,7 @@ async def run_review_chain(
 
     all_findings = list(previous_findings)
     chain_passed = True
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    api_key = await _resolve_anthropic_key()
     agent_config: dict | None = None
 
     if api_key:
