@@ -25,7 +25,7 @@ import argparse
 import os
 import sys
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+MODEL = os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-5"
 
 # ---------------------------------------------------------------------------
 # Universal checks applied to every project

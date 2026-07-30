@@ -3916,7 +3916,7 @@ def _get_anthropic_key() -> str:
 # not something stored only in orchestrator's local volume.
 
 DEFAULT_MODEL = "claude-sonnet-5"
-_current_model: str = os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL)
+_current_model: str = os.getenv("ANTHROPIC_MODEL") or DEFAULT_MODEL
 
 
 def _get_model() -> str:

@@ -26,7 +26,7 @@ import os
 import re
 import sys
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+MODEL = os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-5"
 
 SYSTEM_PROMPT = """You are a memory agent for an AI engineering team. After each merged PR,
 you identify lessons that future agents should know — things that were non-obvious,

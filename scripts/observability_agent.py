@@ -37,7 +37,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+MODEL = os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-5"
 
 SYSTEM_PROMPT = """You are an observability agent. You receive a health/metrics snapshot
 and a list of threshold violations. Write a concise incident report in WO Problem format.

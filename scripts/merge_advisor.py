@@ -44,7 +44,7 @@ import sys
 import urllib.request
 import urllib.error
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+MODEL = os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-5"
 MAX_DIFF_LINES = 3000
 
 SYSTEM_PROMPT = """You are a merge advisor for an AI engineering team. Your job is to help

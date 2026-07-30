@@ -25,7 +25,7 @@ import os
 import re
 import sys
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+MODEL = os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-5"
 
 SYSTEM_PROMPT = """You are a verification agent. You check whether a pull request diff
 satisfies the acceptance criteria listed in a Work Order specification.
