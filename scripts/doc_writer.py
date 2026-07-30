@@ -41,7 +41,7 @@ STALE_DAYS = 90
 MAX_FILE_BYTES = 64_000
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?(.*)", re.DOTALL)
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 
 
 # ── Frontmatter helpers ───────────────────────────────────────────────────────
