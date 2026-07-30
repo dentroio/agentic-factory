@@ -187,3 +187,51 @@ def test_migrate_leaves_nested_format_untouched():
 
 def test_migrate_empty_dict_is_a_noop():
     assert _migrate_reserved({}, DEFAULT_REPO) == {}
+
+
+# ── Follow-up fix: completed dispatch entries shouldn't inflate "next" ────────
+# Found live: Clarion's real spec files top out at WO-441, but dispatch_state
+# had five completed one-off process/conflict-resolution WOs numbered in the
+# 1000s (e.g. "WO-1035: Resolve conflict...", merged as real PRs but never
+# given a spec file). Merging ALL dispatch_state numbers into the known set
+# permanently pinned "next" at 1036 instead of 442. Only in-flight (non-
+# "complete") dispatch entries should count — completed ones are either
+# already reflected in the spec-file scan, or historical noise.
+
+def _known_from_dispatch_state(dispatch_state: dict[str, dict]) -> set[int]:
+    """Mirrors orchestrator._next_wo_number's dispatch-state filtering."""
+    known: set[int] = set()
+    for wo_id, meta in dispatch_state.items():
+        if isinstance(meta, dict) and meta.get("status") == "complete":
+            continue
+        try:
+            known.add(int(wo_id.replace("WO-", "")))
+        except ValueError:
+            pass
+    return known
+
+
+def test_completed_dispatch_entries_are_excluded_from_known_numbers():
+    dispatch_state = {
+        "WO-1035": {"status": "complete"},
+        "WO-1034": {"status": "complete"},
+    }
+    assert _known_from_dispatch_state(dispatch_state) == set()
+
+
+def test_in_flight_dispatch_entries_still_protect_against_collision():
+    dispatch_state = {
+        "WO-442": {"status": "claimed"},
+        "WO-441": {"status": "complete"},
+    }
+    assert _known_from_dispatch_state(dispatch_state) == {442}
+
+
+def test_spec_file_max_wins_when_only_completed_dispatch_noise_is_present():
+    spec_file_known = {437, 438, 439, 440, 441}
+    dispatch_known = _known_from_dispatch_state({
+        "WO-1027": {"status": "complete"},
+        "WO-1035": {"status": "complete"},
+    })
+    all_known = spec_file_known | dispatch_known
+    assert (max(all_known) + 1) == 442
