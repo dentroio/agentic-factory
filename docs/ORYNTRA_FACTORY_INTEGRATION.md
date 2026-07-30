@@ -81,11 +81,21 @@ Design principles:
 | WO-1049 | Factory validation queue in Review Studio | P2 | Oryntra (+ status-site if gaps found) |
 | WO-1050 | Factory as execution target in IDE registry | P3 | Oryntra |
 | WO-1051 | Retire legacy annotation extension; truth-up docs | P3 | both |
-| WO-1052 | Fix WO number reservation counter drift | P2 | agentic-factory |
+| WO-1052 | Fix WO number reservation counter drift ✅ Done | P2 | agentic-factory |
 
 WO-1052 is not Oryntra work — it is a factory bug found while scoping this program
-(`GET /api/plan/next-wo-number` returned `WO-1035` while spec files reach `WO-1046`) —
-but it must be fixed before any automation calls that endpoint.
+(`GET /api/plan/next-wo-number` returned `WO-1035` while spec files reach `WO-1046`).
+
+**✅ Done, 2026-07-30 — but the root cause was not what it looked like.** It was never
+a stale counter. `GITHUB_REPO`/`WO_PATH` were hardcoded to Clarion, so the endpoint had
+no notion of "which repo" and always numbered against Clarion's WO space — it happened
+to answer with Clarion's own WO-1035 rather than a made-up number. Fixed by making
+`/api/wos/reserve` repo-scoped (optional `repo`/`wo_path`, default unchanged). See
+[Technical Architecture](TECHNICAL_ARCHITECTURE.md) ("WO number reservation is
+repo-scoped") and the [WO-1052
+spec](work_orders/WO-1052-fix-wo-number-reservation-drift.md) for the full writeup,
+including a second bug (completed-but-spec-file-less dispatch entries from Clarion's
+own history inflating "next" to 1036 instead of 442) caught during verification.
 
 ## Sequencing
 
@@ -96,6 +106,7 @@ but it must be fixed before any automation calls that endpoint.
    client module.
 3. WO-1050 is exploratory — do not start until 1047–1049 have been dogfooded.
 4. WO-1051 anytime after 1047 ships.
-5. WO-1052 anytime; before 1048 if 1048's implementation chooses to call the
-   reservation endpoint (it should not — `POST /api/factory/wos` numbers from spec
-   files and is authoritative).
+5. ~~WO-1052 anytime; before 1048 if 1048's implementation chooses to call the
+   reservation endpoint~~ — done; moot either way, `POST /api/factory/wos` remains
+   the authoritative numbering path and 1048 should still use that, not the
+   reservation endpoint.
