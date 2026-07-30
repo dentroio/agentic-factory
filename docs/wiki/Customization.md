@@ -139,7 +139,7 @@ Each agent run starts with context injected from a persistent memory store at `s
 
 ### What is injected
 
-The memory is filtered to the WO's services and injected as a `## Factory Memory` block in the agent prompt, containing:
+The memory is filtered to the WO's services and injected as a `## Factory Memory` block in the agent prompt, between the WO spec and CLARION_PATTERNS. It contains:
 
 - **Lessons learned** — gotchas, conflict-magnet files, failure patterns recorded from previous WO runs
 - **Environment state** — connected connectors, healthy services, recently added DB tables and routes (refreshed every 30 minutes)
@@ -149,6 +149,7 @@ The memory is filtered to the WO's services and injected as a `## Factory Memory
 
 - **After a successful WO:** the runner distills 1–3 lessons from the agent's thread and appends them to `factory_memory.json`.
 - **After a CI failure or reviewer rejection:** a `failure_pattern` lesson is added automatically.
+- **Environment state** is refreshed every 30 minutes by polling the connectors and health endpoints and reading the migration history table.
 
 ### Editing memory manually
 
@@ -199,6 +200,8 @@ The agent process is split across two files:
 |------|---------|
 | `AGENT_PROCESS.md` | The "what to do" cheatsheet — under 200 lines. Risk tiers, branch/PR workflow (numbered steps), container rebuild table, critical patterns, danger zones. Read before every task. |
 | `AGENT_PROCESS_DETAIL.md` | The "why" reference — worktree system explanation, rationale for rules, migration registration detail. Optional reading. |
+
+`AGENT_PROCESS.md` is structured for agent parsing: imperative command lists, no prose paragraphs. Critical patterns appear within the first 30 lines under a `## ⚠️ You must know these` header. A container danger zones table lists the operations that have caused incidents, their safe replacements, and what goes wrong if you use the dangerous form. The WO workflow uses explicit numbered steps (Step 1 through Step 8) so agents can reference them unambiguously.
 
 When writing WO specs or configuring agent prompts, reference `AGENT_PROCESS.md` as the primary instruction source. If you need to add a project-specific rule that all agents must follow, add it to `AGENT_PROCESS.md` (keep it imperative and concise) rather than burying it in a WO's Execution section.
 

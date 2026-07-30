@@ -1,22 +1,34 @@
 ---
 title: "Dashboard Guide"
 description: "Factory dashboard tabs, settings, and controls at localhost:8099"
-last_verified: 2026-07-11
-covers_wos: []
+last_verified: 2026-07-30
+covers_wos:
+  - WO-1002
+  - WO-1003
+  - WO-1014
+  - WO-1035
+  - WO-1036
 doc_owner: factory-team
 ---
 
 # Dashboard Guide
 
-The factory dashboard runs at `http://localhost:8099`. It has five main tabs and a Settings section. The page auto-refreshes every 60 seconds.
+The factory dashboard runs at `http://localhost:8099`. It has six main tabs and a Settings section. The page auto-refreshes every 60 seconds.
 
 ## Overview
 
 The landing page. Shows:
 
-- **Active WO card** — the WO currently claimed by an agent, which agent backend is running it, and what step it is on. Clicking the WO number goes to the thread detail page.
+- **Health score banner** — a single line at the top indicating overall system state: `● HEALTHY`, `⚠ DEGRADED`, or `✖ CRITICAL`. Derived from watchdog data and runner state. Includes active agent count, PRs in flight, WOs completed this week, and runner utilization.
+- **Alert panel** — appears below the header only when alerts exist. Each alert shows severity, PR number, rule label, and duration (e.g., `[ERROR] #204 pytest-asyncio — CI failing for 127m`). Collapses if more than 5 alerts; hidden entirely when no alerts are present.
+- **Active WO card** — the WO currently claimed by an agent, which agent backend is running it, what step it is on, how long it has been running, the last git push time, and an inline CI badge if a PR exists. Clicking the WO number goes to the thread detail page.
 - **Pending validation badge** — when an agent has requested human review and is waiting for your approval, this badge appears here. Click it to go to the WO thread.
-- **Agent-runner status** — online/offline indicator. Online means the draft server on port 8101 is responding. Offline means the agent-runner process is not running on the host.
+- **Pending approval panel** — if any P1 WOs are waiting for pre-dispatch approval, they appear here with **Approve**, **Skip**, and **Hold** buttons. The panel is hidden when there are no pending approvals.
+- **Agent-runner status** — online/offline indicator. Online means the draft server on port 8101 is responding.
+- **WO board (enriched kanban)** — each WO card shows an age badge (`2d`, `5d`, `14d` — green to amber to red past 7 days), the assigned agent name or `unassigned`, the current step, a block reason if applicable, and a direct PR link.
+- **PR queue (enriched table)** — all open PRs with per-check CI icons (✅ ❌ ⏳), auto-merge indicator, merge conflict badge, age color, and inline watchdog flags.
+- **CI Health panel** — runner utilization bar, queue depth, average CI time, and 7-day rolling pass rate.
+- **Dispatch Queue panel** — WOs ready to start (from `orchestrator.json`), shown in priority order. Includes WOs that are holding due to unmet dependencies.
 - **Quick stats** — WOs completed this week, active PRs, queue depth.
 - **Recent completions** — last few WOs that reached `done`, with PR links.
 
@@ -26,10 +38,12 @@ If you are waiting on a notification, this tab tells you the current state at a 
 
 The PM — your AI project lead — lives here. Left panel is the chat interface. Right panel shows:
 
-- **Program roll-ups** — WOs grouped by program label, with completion percentages and velocity
-- **Blocked alerts** — WOs stuck on dependencies or holds
-- **Velocity bar chart** — completions per week over the last 8 weeks
+- **Program roll-up table** — WOs grouped by program label, with total WOs, done, in-progress, blocked, open, and completion percentage. WOs without a program field appear under "Standalone."
+- **Blocked alerts** — WOs stuck on dependencies or CI failures, with how long they have been blocked
+- **Velocity bar chart** — WOs completed per week over the last 8 weeks
 - **Milestone progress** — which milestones are approaching and how many blocking WOs remain
+- **Recommendations panel** — plain-text advisory from the orchestrator (e.g., "WO-1001 is ready to start — no dependencies, P2 priority"), timestamped so you know when the last advisory ran
+- **Active agents table** — which agents are working, on which WO, what step, when they started, and for how long
 
 The PM is the fastest way to do most things: create WOs, dispatch agents, merge PRs, manage phases and milestones. See [PM Chat](PM-Chat) for the full reference.
 
@@ -37,12 +51,16 @@ The PM is the fastest way to do most things: create WOs, dispatch agents, merge 
 
 PR health and CI state. Shows:
 
-- **All open PRs** for the repository — CI status (passing/failing/pending), staleness, auto-merge eligibility
-- **CI run history** — recent runs with pass/fail status and links to the GitHub Actions run
-- **Pass rate** — percentage of CI runs passing over the last 30 days
-- **Stale PR list** — PRs that have not had activity in the configured staleness window (default: 3 days). The PR watchdog populates this.
+- **All open PRs** for the repository — per-check CI breakdown (one icon per check instead of a single state label), staleness, auto-merge eligibility, merge conflict warning, and watchdog alert flags
+- **Runner panel** — live runner names, current job, and how long each job has been running
+- **Queue panel** — jobs waiting for a runner, with job type, branch, and how long they have been queued
+- **PR CI breakdown table** — one row per check per PR, with state, duration, and attempt count
+- **Flaky detection** — checks that have `attempts > 1` but eventually passed are flagged `⚠ flaky` and summarized at the top of the tab
+- **CI timing panel** — average, fastest, and slowest CI times from the last 20 runs, broken down by check
+- **Pass rate** — 7-day rolling pass rate
+- **Stale PR list** — PRs with no activity in the configured staleness window (default: 3 days), populated by the PR watchdog
 
-Use this tab when you want to check the state of all in-flight PRs without clicking around GitHub. The watchdog detects merge eligibility — if a PR is green but not auto-merging, the eligibility badge tells you why (e.g., "requires human approval" for P1 WOs).
+Use this tab when you want to diagnose pipeline issues or check the state of all in-flight PRs without clicking around GitHub.
 
 ## Plan
 
@@ -61,6 +79,18 @@ From the queue table you can:
 
 This is the right tab for day-to-day queue management: reordering, holding WOs that are waiting on a dependency, and checking milestone progress.
 
+## Factory
+
+The Factory tab shows agent activity and the live log feed.
+
+- **Status bar** — one line showing runner health (● online / ✖ offline), active WO count, the configured backend (e.g., `Cursor`), and the pause button. Replaces the old per-backend agent cards, which showed stale state.
+- **Active Jobs list** (left column) — WOs currently being worked on.
+- **Live Feed** (right column) — streaming log output from the agent runner. Filter by WO using the dropdown (e.g., select `WO-407` to see only that WO's log lines). The SSE endpoint accepts `?wo=WO-NNN`.
+- **Dependabot PR panel** — Dependabot PRs and their CI state.
+- **API usage banner** — current API usage indicators.
+
+> **Note:** The per-backend agent cards (Claude / Cursor / Codex / Gemini) were removed in WO-1035. Stale dispatch state no longer causes misleading "Claude: working" displays.
+
 ## WO Thread pages
 
 There is no dedicated Threads tab. Instead, each WO has its own detail page at `/wo/NNN`, accessible via **"View thread →"** links that appear on the Overview tab and in the PM tab next to active WOs.
@@ -76,7 +106,7 @@ Use these pages when you want to check what an agent is doing mid-run, or review
 
 ## Settings
 
-The settings hub links to three sub-pages.
+The settings hub links to four sub-pages.
 
 ### Settings → Authentication
 
@@ -99,6 +129,7 @@ Configure how agents run:
 - **Timeout** — seconds before a WO run is forcibly stopped (default: 7200)
 - **Force cross-LLM review** toggle — when on (the default), reviewer roles are automatically assigned to different AI models from the one that wrote the code. When off, you assign reviewers manually using the per-reviewer dropdowns below.
 - **Per-reviewer backend dropdowns** — only relevant when the force cross-LLM toggle is off. Set which backend runs each of the four reviewers: security, architecture, correctness, performance.
+- **Pre-dispatch approval** — controlled by `REQUIRE_APPROVAL_FOR` on the orchestrator (default: `P1`). P1 WOs enter a `pending_approval` state before an agent is assigned. See [Pre-Dispatch Approval](#pre-dispatch-approval) below.
 
 Changes here take effect on the next WO the runner picks up. No restart needed.
 
@@ -106,11 +137,68 @@ Changes here take effect on the next WO the runner picks up. No restart needed.
 
 The Plan Authoring Hub. This is where you manage the WO queue, phases, and milestones through the UI rather than the PM chat.
 
-- **Open WOs list** — with hold/unhold and edit buttons
-- **Create WO button** — goes to the new WO form
-- **Phases section** — list of phases with Add/Delete controls
-- **Milestones section** — list of milestones with Add/Delete controls
+- **Open WOs list** — current `status=open` WOs from PLAN.json, with priority and phase, plus hold/unhold and edit buttons
+- **Create WO button** — opens the WO creation form at `/settings/plan/wos/new`
+- **Phases section** — collapsible list with Add/Delete controls
+- **Milestones section** — collapsible list with Add/Delete controls
 
-Phase and milestone changes go directly to the orchestrator database. They take effect immediately — no git commit, no PR.
+#### Creating a WO from the UI
 
-The WO spec file is the exception: creating or editing a WO writes or updates a markdown file on disk. The orchestrator picks it up on the next poll.
+The WO creation form at `/settings/plan/wos/new` includes:
+
+- Auto-numbered WO (next available number computed from PLAN.json)
+- Title, phase, priority (P0–P3), effort (XS–XL), services, depends-on, blocks-milestones
+- Problem statement, what to build, acceptance criteria (dynamic list), notes
+
+Submitting the form creates a feature branch, writes the WO markdown spec to `docs/factory/work_orders/WO-NNN-<slug>.md`, updates `PLAN.json`, and opens a PR for human review before the WO enters the dispatch queue. The submit button disables immediately on click to prevent double-submit.
+
+Phase and milestone changes (Add/Delete) go directly to the orchestrator database and take effect immediately — no git commit, no PR needed.
+
+### Settings → (Orchestrator)
+
+The orchestrator is configured via environment variables in `docker-compose.status.yml`. Key variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `POLL_INTERVAL` | `300` | Seconds between orchestrator loop runs |
+| `DAILY_SUMMARY_HOUR` | _(unset)_ | UTC hour to post the daily GitHub issue summary |
+| `SUMMARY_ISSUE_NUMBER` | _(unset)_ | GitHub issue to post daily summaries to |
+| `MAX_PARALLEL_WOS` | `2` | Maximum WOs recommended in-progress simultaneously |
+| `REQUIRE_APPROVAL_FOR` | `P1` | Comma-separated priorities that require pre-dispatch approval |
+| `WO_PATH` | `docs/project_management/work_orders` | Path to WO spec files |
+
+---
+
+## Pre-Dispatch Approval
+
+P1 WOs (and optionally P2, via `REQUIRE_APPROVAL_FOR=P1,P2`) do not dispatch immediately. Instead they enter a `pending_approval` state:
+
+```
+queue → pending_approval → claimed → in_progress → awaiting_human → complete
+```
+
+When a WO enters `pending_approval`, a Slack notification fires with a link to the approvals panel. The **Overview** tab shows the pending approval card with three actions:
+
+- **Approve →** — the agent claims the WO on the next poll cycle
+- **Skip** — returns the WO to the queue; it will not re-enter `pending_approval` for 24 hours
+- **Hold** — moves the WO to held state
+
+"View spec" expands an inline preview of the WO spec (first 40 lines) without leaving the tab.
+
+P2 and P3 WOs bypass approval and dispatch immediately as before.
+
+---
+
+## Orchestrator Advisory
+
+The orchestrator runs on a schedule (default: every 5 minutes) and writes `orchestrator.json`. The status site reads this file to populate:
+
+- The **Dispatch Queue panel** on Overview and PM tabs — WOs ready to start, in priority order
+- The **Holding Queue** — WOs whose dependencies are not yet met, with the blocking WO listed
+- The **Recommendations panel** on the PM tab — human-readable advisory (e.g., "Both runners currently busy — wait before dispatching new work")
+
+If `DAILY_SUMMARY_HOUR` and `SUMMARY_ISSUE_NUMBER` are configured, the orchestrator posts or updates a comment on that GitHub issue each day summarizing board state, ready WOs, in-progress work, blocked items, CI health, and weekly velocity.
+
+The orchestrator is advisory only — it does not dispatch agents or write to branches. All write operations are opt-in (the daily GitHub comment requires both env vars to be set).
+
+If the orchestrator is offline, the status site degrades gracefully: the dispatch queue and recommendations panels show "data unavailable" rather than erroring.
