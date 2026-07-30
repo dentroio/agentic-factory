@@ -128,6 +128,100 @@
 })();
 </script>
 
+{# ── Review Model (optional override) ───────────────────────────────────────── #}
+<div class="glass-panel overflow-hidden mb-6">
+  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
+    <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Review Model <span class="text-slate-600 font-normal normal-case">(optional)</span></span>
+    <p class="text-xs text-slate-500 mt-0.5">Overrides the Automation Model above specifically for code/merge review (ai_review.py, merge_advisor.py). Leave blank to let those scripts use the Automation Model, or their own built-in default if that's blank too.</p>
+  </div>
+  <div class="px-5 py-5">
+    <div class="max-w-md">
+      <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Model</label>
+      <input type="text" id="rm-model" list="am-model-options" placeholder="(inherits Automation Model)"
+        class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+               focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+      <p class="text-xs text-slate-600 mt-1" id="rm-status">Loading…</p>
+      <div class="flex items-center gap-2 mt-3">
+        <button type="button" onclick="saveReviewModel()" id="rm-save-btn"
+          class="px-4 py-2 text-xs font-bold bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-lg transition-colors border border-violet-500/50">
+          Save
+        </button>
+        <button type="button" onclick="clearReviewModel()" id="rm-clear-btn"
+          class="px-4 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors border border-slate-700">
+          Clear override
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  async function loadReviewModel() {
+    const input = document.getElementById('rm-model');
+    const status = document.getElementById('rm-status');
+    try {
+      const r = await fetch('/api/factory/review-model');
+      const d = await r.json();
+      input.value = d.model || '';
+      status.textContent = d.model
+        ? `Currently overridden to ${d.model} for review scripts on ${d.repo}.`
+        : `No override set — review scripts inherit the Automation Model (or their own built-in default).`;
+    } catch (e) {
+      status.textContent = `Could not load: ${e.message}`;
+    }
+  }
+
+  window.saveReviewModel = async function() {
+    const input = document.getElementById('rm-model');
+    const status = document.getElementById('rm-status');
+    const btn = document.getElementById('rm-save-btn');
+    const model = input.value.trim();
+    if (!model) { status.textContent = 'Enter a model name, or use "Clear override" to remove it.'; return; }
+    btn.disabled = true;
+    status.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/factory/review-model', {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model }),
+      });
+      const d = await r.json();
+      if (r.ok) status.textContent = `Saved — review scripts now use ${d.model}.`;
+      else status.textContent = `⚠ ${d.detail || 'Save failed'}`;
+    } catch (e) {
+      status.textContent = `⚠ Network error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  window.clearReviewModel = async function() {
+    const input = document.getElementById('rm-model');
+    const status = document.getElementById('rm-status');
+    const btn = document.getElementById('rm-clear-btn');
+    btn.disabled = true;
+    status.textContent = 'Clearing…';
+    try {
+      const r = await fetch('/api/factory/review-model', {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model: '' }),
+      });
+      if (r.ok) {
+        input.value = '';
+        status.textContent = 'Override cleared — review scripts inherit the Automation Model.';
+      } else {
+        const d = await r.json();
+        status.textContent = `⚠ ${d.detail || 'Clear failed'}`;
+      }
+    } catch (e) {
+      status.textContent = `⚠ Network error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  loadReviewModel();
+})();
+</script>
+
 {# ── Add/Edit Provider Modal ────────────────────────────────────────────────── #}
 <div id="provider-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" style="display:none!important">
   <div class="bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto mx-4">

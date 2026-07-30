@@ -2216,6 +2216,45 @@ async def api_put_automation_model(request: Request):
         raise HTTPException(status_code=502, detail=f"Orchestrator unreachable: {e}")
 
 
+# ── Review model override (optional, per-purpose — see orchestrator.py) ────
+
+@app.get("/api/factory/review-model")
+async def api_get_review_model():
+    fallback = {"model": "", "repo": GITHUB_REPO}
+    if not ORCHESTRATOR_URL:
+        return JSONResponse(content=fallback)
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(
+                f"{ORCHESTRATOR_URL}/api/settings/review-model", headers=_orch_headers()
+            )
+            if r.status_code == 200:
+                return JSONResponse(content=r.json())
+    except Exception:
+        pass
+    return JSONResponse(content=fallback)
+
+
+@app.put("/api/factory/review-model")
+async def api_put_review_model(request: Request):
+    body = await request.json()
+    model = (body.get("model") or "").strip()  # empty is valid here — clears the override
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.put(
+                f"{ORCHESTRATOR_URL}/api/settings/review-model",
+                json={"model": model},
+                headers=_orch_headers(),
+            )
+        if r.status_code == 200:
+            return JSONResponse(content=r.json())
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Orchestrator unreachable: {e}")
+
+
 @app.get("/api/factory/intelligence/status")
 async def api_intelligence_status():
     try:
