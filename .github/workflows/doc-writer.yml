@@ -104,7 +104,7 @@ jobs:
       - name: Checkout agentic-factory
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -134,7 +134,7 @@ jobs:
       - name: Open PR with factory wiki updates
         if: ${{ inputs.dry_run != 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           git config user.name  "factory-doc-writer[bot]"
           git config user.email "noreply@dentroio.com"
@@ -164,11 +164,8 @@ jobs:
           echo "Opened $PR_URL"
 
           # required_approving_review_count is 0 — only the Unit Tests status check
-          # gates merge. GITHUB_TOKEN-authored pushes don't trigger the pull_request
-          # workflow that produces that check, so kick it manually against this SHA
-          # instead of waiting on an event that will never fire.
-          gh workflow run ci.yml --ref "$BRANCH" || true
-
+          # gates merge. This push/PR is authored by GH_PAT (a real user identity),
+          # so the normal pull_request-triggered CI run fires on its own.
           for i in $(seq 1 20); do
             sleep 15
             BUCKET=$(gh pr checks "$PR_URL" --json name,bucket -q '.[] | select(.name=="Unit Tests") | .bucket' 2>/dev/null || echo "")
