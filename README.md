@@ -99,13 +99,13 @@ The agent-runner starts a local HTTP server (`draft_server.py`) on port **8101**
 | `Makefile.template` | Copy to `Makefile` — fill in `{{FILL IN}}` sections for your stack |
 | `.env.example` | Environment variable reference for the container runtime |
 | **Container Runtime** | |
-| `docker-compose.status.yml` | Brings up all factory services; `agent` profile enables agent-runner |
+| `docker-compose.status.yml` | Brings up all factory services (dashboard, orchestrator, vault, pr-watchdog) — does **not** include agent-runner, see below |
 | `services/status-site/` | FastAPI + Jinja2 status dashboard (Overview, PM, Engineering, Plan, Threads, Settings) |
 | `services/orchestrator/` | Dispatch REST API — claim/checkin/validate/complete, thread storage, notifications, intelligence loop |
 | `services/orchestrator/intelligence.py` | Autonomous background loop (10 min): closes major-version Dependabot PRs, queues conflict/CI-fix WOs, clears ghost dispatch entries |
 | `services/vault/` | HashiCorp Vault container — file storage backend, auto-init + auto-unseal, KV v2 at `secret/factory/secrets` |
 | `services/pr-watchdog/` | PR lifecycle monitor — CI health, stale PRs, merge eligibility |
-| `services/agent-runner/` | Autonomous WO executor — subscription CLI backends, quality gate, peer review chain |
+| `services/agent-runner/` | Autonomous WO executor — runs **natively via launchd** (`scripts/agent-install.sh`), never in Docker. It needs a real local repo clone and the host's Docker daemon (to rebuild/test the product's own containers) and uses each backend's own subscription-authenticated CLI (Claude Code, Cursor) rather than metered API keys |
 | `services/agent-runner/backends/` | Pluggable AI backends: `claude.py`, `cursor.py`, `codex.py`, `gemini.py` |
 | `services/agent-runner/draft_server.py` | Local HTTP daemon (port 8101) — probes installed CLIs, serves `POST /api/draft` to orchestrator |
 | `services/agent-runner/quality_gate.py` | Parallel CI + bandit + semgrep + JS/TS security scan |

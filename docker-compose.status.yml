@@ -65,32 +65,6 @@ services:
     depends_on:
       - orchestrator
 
-  agent-runner:
-    build:
-      context: ./services/agent-runner
-    environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8100
-      - PREFERRED_AGENT=${PREFERRED_AGENT:-claude}
-      - AGENT_NAME=${AGENT_NAME:-claude-runner}
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - GITHUB_REPO=${GITHUB_REPO}
-      - CURSOR_API_KEY=${CURSOR_API_KEY:-}
-      - POLL_INTERVAL=${POLL_INTERVAL:-60}
-      - WORKTREE_BASE=/workspace
-      - AGENT_TIMEOUT=${AGENT_TIMEOUT:-7200}
-      - SECURITY_REVIEWER_BACKEND=${SECURITY_REVIEWER_BACKEND:-claude}
-      - ARCH_REVIEWER_BACKEND=${ARCH_REVIEWER_BACKEND:-claude}
-      - CORRECTNESS_REVIEWER_BACKEND=${CORRECTNESS_REVIEWER_BACKEND:-claude}
-      - PERF_REVIEWER_BACKEND=${PERF_REVIEWER_BACKEND:-claude}
-      - API_SECRET=${API_SECRET:-}
-    volumes:
-      - workspace:/workspace
-    restart: unless-stopped
-    depends_on:
-      - orchestrator
-    profiles:
-      - agent   # opt-in: `docker compose --profile agent up -d`
-
   orchestrator:
     build:
       context: ./services/orchestrator
@@ -133,6 +107,5 @@ volumes:
   watchdog-data:
   orchestrator-data:
   factory-config:
-  workspace:
   vault-data:
   vault-keys:

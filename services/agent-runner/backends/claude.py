@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 import shutil
 from typing import AsyncIterator
@@ -11,6 +12,22 @@ _QUOTA_RE = re.compile(
     r"exceeded.*limit|limit.*exceeded|upgrade your plan|claude\.ai/upgrade",
     re.I,
 )
+
+
+def _subscription_env() -> dict[str, str]:
+    """Env for the claude CLI subprocess, with ANTHROPIC_API_KEY stripped.
+
+    This backend runs natively (via a launchd LaunchAgent, see
+    scripts/agent-install.sh) using whatever Claude Code CLI is already logged
+    in on this machine (subscription auth). ANTHROPIC_API_KEY is present in
+    this process's own environment because review_chain.py needs it for direct
+    Anthropic API calls during peer review — but if the *CLI* subprocess also
+    sees it, it takes precedence over the subscription login and silently
+    switches billing to metered API usage. Strip it for this subprocess only.
+    """
+    env = dict(os.environ)
+    env.pop("ANTHROPIC_API_KEY", None)
+    return env
 
 
 class ClaudeBackend(AgentBackend):
@@ -27,6 +44,7 @@ class ClaudeBackend(AgentBackend):
         proc = await asyncio.create_subprocess_exec(
             claude_bin, "--print", "--permission-mode", "bypassPermissions", "-p", prompt,
             cwd=worktree,
+            env=_subscription_env(),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -56,6 +74,7 @@ class ClaudeBackend(AgentBackend):
             return "[claude not available]"
         proc = await asyncio.create_subprocess_exec(
             claude_bin, "--print", "-p", question,
+            env=_subscription_env(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )

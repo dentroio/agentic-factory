@@ -67,7 +67,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Daily summary posting to GitHub issue | 🟡 | Optional; needs `SUMMARY_ISSUE_NUMBER` env var | WO-1003 |
 | Multi-repo orchestration | 🔵 | Currently single-repo per instance | — |
 
-## Dimension 4: Agent Runner (agent-runner, opt-in profile)
+## Dimension 4: Agent Runner (agent-runner, native launchd service — not Docker)
 
 | Capability | Status | Notes | WO |
 |------------|--------|-------|----|

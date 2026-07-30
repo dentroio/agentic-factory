@@ -701,7 +701,17 @@ async def main(once: bool = False) -> None:
             run_backend = backend_override or active_backend
             if backend_override and backend_override != active_backend:
                 _log(f"PM dispatch override: backend={run_backend}")
-            await run_wo(next_wo, preferred_agent=run_backend)
+            wo_number = next_wo.get("wo", next_wo.get("number", "?"))
+            wo_id = f"WO-{wo_number}" if not str(wo_number).startswith("WO-") else str(wo_number)
+            try:
+                await run_wo(next_wo, preferred_agent=run_backend)
+            except Exception as e:
+                # A crash here (e.g. missing CLI, bad auth) must not take down the whole
+                # process — launchd's KeepAlive would just relaunch it straight into
+                # re-claiming the same WO and crashing again, looping forever. Release
+                # the claim so it's retryable and keep polling instead.
+                _log(f"{wo_id} run_wo crashed: {e!r} — releasing claim so it can be retried")
+                await release_dispatch(wo_id)
             if once:
                 _log("--once: WO complete, exiting")
                 break
