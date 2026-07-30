@@ -18,11 +18,19 @@ from pathlib import Path
 
 import httpx
 
+from backends.claude import _subscription_env
+
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8100")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 LOCAL_REPO_PATH = os.getenv("LOCAL_REPO_PATH", "")
 POLL_INTERVAL = int(os.getenv("REVIEWER_POLL_INTERVAL", "30"))
 REVIEWER_NAME = "claude-reviewer"
+
+# Pin the model explicitly rather than let the CLI fall back to whatever a global
+# ~/.claude/settings.json last had selected (e.g. a model this daemon's subscription
+# tier doesn't have credits for) — this subprocess runs with no cwd inside a repo
+# that would otherwise override it, so it's exposed to that ambient default.
+REVIEW_MODEL = os.getenv("REVIEWER_MODEL", "claude-sonnet-5")
 
 # Files under these paths count as direct UI changes
 UI_PATHS = ("frontend/src/",)
@@ -183,8 +191,9 @@ REJECT must say exactly what to change."""
 
     try:
         r = subprocess.run(
-            ["claude", "-p", prompt],
+            ["claude", "-p", prompt, "--model", REVIEW_MODEL],
             input=None, capture_output=True, text=True, timeout=180,
+            env=_subscription_env(),
         )
         out = r.stdout.strip()
         if out.startswith("APPROVE"):
@@ -326,8 +335,9 @@ and CI gates already confirmed correctness."""
 
     try:
         result = subprocess.run(
-            ["claude", "-p", prompt],
+            ["claude", "-p", prompt, "--model", REVIEW_MODEL],
             capture_output=True, text=True, timeout=120,
+            env=_subscription_env(),
         )
         text = result.stdout.strip()
         if text and len(text) > 100:
