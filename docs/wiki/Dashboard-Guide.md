@@ -124,6 +124,9 @@ All credentials are stored in the orchestrator's secrets vault (`/data/secrets.j
 
 Configure how agents run:
 
+- **LLM Providers** — the CLI-based backends available to execute WOs (Claude Code, Cursor, etc.): name, auth type (subscription/API key/both), CLI command, and — for subscription auth — the setup steps shown to whoever installs that agent. Purely descriptive/local config, stored on this dashboard only (not synced to any repo).
+- **Automation Model** — the Claude model used by everything that calls the Anthropic API directly rather than through a CLI backend: WO drafting, PM chat, and the GitHub Actions scripts (`ai_review`, `planning_agent`, `doc_writer`, etc.). Separate from Execution Backend below, which is about *which tool* writes the code, not which model powers the surrounding automation. Persisted as a GitHub repo variable (`ANTHROPIC_MODEL`) on the repo this factory instance builds — the only thing readable by both this dashboard and the GitHub-Actions-run scripts, which have no network path back to your machine. Changing it here takes effect immediately for local calls (PM chat, WO drafting); GitHub Actions scripts pick it up on their next run.
+- **Review Model** *(optional)* — overrides Automation Model specifically for code/merge review scripts (`ai_review`, `merge_advisor`). Exists because a single shared model can't express "sonnet for most things, but a cheaper/faster model for the review that runs on every single PR." Leave blank to inherit Automation Model. Persisted the same way, as `ANTHROPIC_MODEL_REVIEW`.
 - **Preferred backend** — which AI backend executes WOs (Claude, Cursor, Codex, Gemini, or claude-api)
 - **Agent name** — display name shown in the dashboard
 - **Timeout** — seconds before a WO run is forcibly stopped (default: 7200)
@@ -131,7 +134,7 @@ Configure how agents run:
 - **Per-reviewer backend dropdowns** — only relevant when the force cross-LLM toggle is off. Set which backend runs each of the four reviewers: security, architecture, correctness, performance.
 - **Pre-dispatch approval** — controlled by `REQUIRE_APPROVAL_FOR` on the orchestrator (default: `P1`). P1 WOs enter a `pending_approval` state before an agent is assigned. See [Pre-Dispatch Approval](#pre-dispatch-approval) below.
 
-Changes here take effect on the next WO the runner picks up. No restart needed.
+Changes here take effect on the next WO the runner picks up. No restart needed — this applies to Automation Model and Review Model too (unlike the target repo itself, `GITHUB_REPO`, which is read once at startup).
 
 ### Settings → Plan
 

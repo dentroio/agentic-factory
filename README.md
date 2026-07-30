@@ -201,7 +201,9 @@ For the factory runtime (WO spec drafting, PM chat, and peer review), you can al
 
 **Cost note:** setting this key turns on peer review's parallel API-based reviewers (4 passes for P0–P2 WOs) instead of the sequential CLI/subscription-based fallback. Each reviewer call is a few cents; leave the key unset if you'd rather peer review ride on your Claude subscription instead.
 
-**If you want the [Doc Writer Agent](docs/wiki/Doc-Writer-Agent.md)** (auto-updates wiki pages every 6h — optional but on by default), also add:
+**Which model gets used** is configurable from **Settings → Agents** in the dashboard (Automation Model, and an optional Review Model override for the per-PR review scripts specifically) — no `.env` editing needed. See [Dashboard Guide](docs/wiki/Dashboard-Guide.md#settings--agents).
+
+**If you want the [Doc Writer Agent](docs/wiki/Doc-Writer-Agent.md)** (auto-updates wiki pages daily — optional but on by default), also add:
 
 - Name: `GH_PAT`
 - Value: a fine-grained PAT with **Contents: Read and write** and **Pull requests: Read and write** on this repo and on the repo it's building (e.g. your product repo, if different)
