@@ -2631,6 +2631,15 @@ async def _set_repo_variable(client: httpx.AsyncClient, repo: str, name: str, va
     resp.raise_for_status()
 
 
+async def _delete_repo_variable(client: httpx.AsyncClient, repo: str, name: str) -> None:
+    """Remove a GitHub Actions repo variable. No-op (not an error) if it never existed."""
+    resp = await client.delete(
+        f"https://api.github.com/repos/{repo}/actions/variables/{name}", headers=_headers()
+    )
+    if resp.status_code not in (204, 404):
+        resp.raise_for_status()
+
+
 # ── WO spec parsing ───────────────────────────────────────────────────────────
 
 def _parse_wo_number(filename: str) -> int | None:
@@ -3996,6 +4005,43 @@ async def set_automation_model(req: AutomationModelRequest):
         await _set_repo_variable(client, GITHUB_REPO, "ANTHROPIC_MODEL", model)
     _current_model = model
     return {"model": _current_model, "repo": GITHUB_REPO}
+
+
+# ── Review model override (optional, per-purpose) ───────────────────────────
+# A second, narrower knob: scripts whose job is specifically code/merge
+# review (ai_review.py, merge_advisor.py) check ANTHROPIC_MODEL_REVIEW before
+# falling back to the general ANTHROPIC_MODEL, then their own hardcoded
+# default. Exists because one shared variable can't express "sonnet-5
+# generally, but haiku for review" — found 2026-07-30 when the general
+# variable silently overrode a deliberate cost/speed choice in those two
+# scripts. Unlike ANTHROPIC_MODEL, nothing in this process reads this value
+# for its own calls, so there's no local cache/getter to keep live — this is
+# purely a GitHub-repo-variable read/write pass-through for the dashboard.
+
+@app.get("/api/settings/review-model")
+async def get_review_model():
+    if not GITHUB_REPO:
+        return {"model": "", "repo": GITHUB_REPO}
+    async with httpx.AsyncClient(timeout=10) as client:
+        value = await _get_repo_variable(client, GITHUB_REPO, "ANTHROPIC_MODEL_REVIEW")
+    return {"model": value or "", "repo": GITHUB_REPO}
+
+
+@app.put("/api/settings/review-model")
+async def set_review_model(req: AutomationModelRequest):
+    """Empty model clears the override (falls through to ANTHROPIC_MODEL, then
+    each script's own hardcoded default) — unlike the general automation
+    model, an empty value here is a meaningful, valid choice, not an error."""
+    if not GITHUB_REPO:
+        raise HTTPException(status_code=409, detail="GITHUB_REPO is not configured")
+    model = req.model.strip()
+    async with httpx.AsyncClient(timeout=15) as client:
+        if model:
+            await _set_repo_variable(client, GITHUB_REPO, "ANTHROPIC_MODEL_REVIEW", model)
+        else:
+            await _delete_repo_variable(client, GITHUB_REPO, "ANTHROPIC_MODEL_REVIEW")
+    return {"model": model, "repo": GITHUB_REPO}
+
 
 _DRAFT_SYSTEM_BASE = (
     "You are a software engineering planning agent. Convert a plain-English feature request "
