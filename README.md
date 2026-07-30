@@ -199,6 +199,13 @@ In your GitHub repo: **Settings → Secrets and variables → Actions → New re
 
 For the factory runtime (WO spec drafting), you can also set the key via **Settings → Authentication** in the dashboard. The subscription CLI backends don't need it at all.
 
+**If you want the [Doc Writer Agent](docs/wiki/Doc-Writer-Agent.md)** (auto-updates wiki pages every 6h — optional but on by default), also add:
+
+- Name: `GH_PAT`
+- Value: a fine-grained PAT with **Contents: Read and write** and **Pull requests: Read and write** on this repo and on the repo it's building (e.g. your product repo, if different)
+
+Without it the doc-writer workflow fails on every scheduled run with no visible error — see the wiki page for why it needs a real PAT rather than the default `GITHUB_TOKEN`.
+
 ### 7. Configure GitHub Ruleset (required status checks)
 
 In your GitHub repo: **Settings → Rules → Rulesets → New ruleset**

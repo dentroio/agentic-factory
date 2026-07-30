@@ -18,6 +18,7 @@
 - [Dashboard Guide](Dashboard-Guide)
 - [GitHub Integrations](GitHub-Integrations)
 - [Intelligence Loop](Intelligence-Loop)
+- [Doc Writer Agent](Doc-Writer-Agent)
 - [Notifications](Notifications)
 - [Customization](Customization)
 - [Troubleshooting](Troubleshooting)
