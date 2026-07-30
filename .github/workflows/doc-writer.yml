@@ -1,8 +1,17 @@
 name: Doc Writer — Update Clarion + Factory Wikis
 
-# Runs every 6 hours and on-demand.
+# Runs once daily and on-demand.
 # Job 1: Updates Clarion wiki pages (dentroio/clarion wiki/docs/)
 # Job 2: Updates factory's own wiki pages (docs/wiki/) — self-maintenance
+#
+# Cost note (2026-07-30): each page costs ~$0.10-0.20 (stuffs up to 5 WO specs,
+# up to 64KB each, into context) — and that cost is paid even when Claude
+# decides no change is needed. Clarion's wiki had 182/189 pages flagged
+# "uncovered" (empty covers_wos) at the time this was tuned — most predate the
+# covers_wos convention and don't actually need rewrites. max-pages defaults to
+# 2/run (was 5) and the schedule is daily (was every 6h) to cap spend while
+# that backlog exists. Raise DOC_WRITER_MAX_PAGES once the backlog is real
+# staleness, not just untagged history.
 #
 # Secrets required (set on dentroio/agentic-factory):
 #   ANTHROPIC_API_KEY  — Claude API key
@@ -10,7 +19,7 @@ name: Doc Writer — Update Clarion + Factory Wikis
 #
 # Variables (optional):
 #   CLARION_REPO       — default: dentroio/clarion
-#   DOC_WRITER_MAX_PAGES — default: 5
+#   DOC_WRITER_MAX_PAGES — default: 2
 #   ANTHROPIC_MODEL    — default: claude-sonnet-5 (script's own fallback).
 #                         Settable from the dashboard: Settings -> Agents ->
 #                         Automation Model. Note that field writes to GITHUB_REPO
@@ -21,7 +30,7 @@ name: Doc Writer — Update Clarion + Factory Wikis
 
 on:
   schedule:
-    - cron: "0 */6 * * *"    # every 6 hours
+    - cron: "0 0 * * *"    # once daily — see docs/wiki/Doc-Writer-Agent.md for cost rationale
   workflow_dispatch:
     inputs:
       page:
@@ -68,7 +77,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
         run: |
-          ARGS="--clarion-path ./clarion --max-pages ${{ inputs.max_pages || vars.DOC_WRITER_MAX_PAGES || '5' }}"
+          ARGS="--clarion-path ./clarion --max-pages ${{ inputs.max_pages || vars.DOC_WRITER_MAX_PAGES || '2' }}"
 
           if [ -n "${{ inputs.page }}" ]; then
             ARGS="$ARGS --page ${{ inputs.page }}"
@@ -128,7 +137,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
         run: |
-          ARGS="--factory-path . --max-pages ${{ inputs.max_pages || vars.DOC_WRITER_MAX_PAGES || '5' }}"
+          ARGS="--factory-path . --max-pages ${{ inputs.max_pages || vars.DOC_WRITER_MAX_PAGES || '2' }}"
 
           if [ -n "${{ inputs.page }}" ]; then
             ARGS="$ARGS --page ${{ inputs.page }}"
