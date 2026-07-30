@@ -51,6 +51,7 @@ jobs:
         id: memory
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           PR_TITLE: ${{ github.event.head_commit.message }}
         run: |
           pip install anthropic --quiet

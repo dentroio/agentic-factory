@@ -50,6 +50,7 @@ jobs:
         id: draft
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
         run: |
           pip install anthropic --quiet
           WO_NUM=${{ steps.wo_num.outputs.next }}

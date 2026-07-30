@@ -25,6 +25,8 @@ import os
 import re
 import sys
 
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+
 SYSTEM_PROMPT = """You are a verification agent. You check whether a pull request diff
 satisfies the acceptance criteria listed in a Work Order specification.
 
@@ -146,7 +148,7 @@ Check each acceptance criterion against the diff."""
 
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=MODEL,
         max_tokens=1500,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_content}],

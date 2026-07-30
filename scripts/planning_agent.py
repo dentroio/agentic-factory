@@ -27,6 +27,8 @@ import os
 import re
 import sys
 
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+
 SYSTEM_PROMPT = """You are a software engineering planning agent. You convert problem statements
 into structured Work Order (WO) specifications that AI agents can execute.
 
@@ -177,7 +179,7 @@ def main():
 
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=MODEL,
         max_tokens=2048,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_content}],

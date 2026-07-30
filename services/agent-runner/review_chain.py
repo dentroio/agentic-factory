@@ -193,6 +193,7 @@ def _run_sdk_reviewer_sync(
     diff: str,
     previous_findings: list[dict],
     api_key: str,
+    model: str,
 ) -> list[dict]:
     cfg = REVIEWER_CONFIG[reviewer_name]
     previous_str = (
@@ -224,7 +225,7 @@ def _run_sdk_reviewer_sync(
     )
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=model,
         max_tokens=2048,
         system=system,
         tools=[_FINDING_TOOL],
@@ -244,8 +245,10 @@ async def _run_sdk_reviewer(
     previous_findings: list[dict],
     api_key: str,
 ) -> list[dict]:
+    config = await _fetch_agent_config()
+    model = config.get("automation_model", "claude-sonnet-5")
     return await asyncio.to_thread(
-        _run_sdk_reviewer_sync, reviewer_name, wo_spec, diff, previous_findings, api_key
+        _run_sdk_reviewer_sync, reviewer_name, wo_spec, diff, previous_findings, api_key, model
     )
 
 

@@ -2171,6 +2171,51 @@ async def api_delete_llm_provider(provider_id: str):
     return JSONResponse(content={"ok": True})
 
 
+# ── Automation model (Anthropic model used by direct-SDK automation: WO drafting,
+# ai-review/planning-agent/etc. GitHub Actions scripts, doc-writer) ────────────
+# Proxied to the orchestrator, not stored locally — the orchestrator persists it
+# as a GitHub repo variable (GITHUB_REPO), which is the only thing readable by
+# both this locally-running dashboard and the GitHub-Actions-run scripts.
+
+@app.get("/api/factory/automation-model")
+async def api_get_automation_model():
+    fallback = {"model": "claude-sonnet-5", "repo": GITHUB_REPO, "default": "claude-sonnet-5"}
+    if not ORCHESTRATOR_URL:
+        return JSONResponse(content=fallback)
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(
+                f"{ORCHESTRATOR_URL}/api/settings/automation-model", headers=_orch_headers()
+            )
+            if r.status_code == 200:
+                return JSONResponse(content=r.json())
+    except Exception:
+        pass
+    return JSONResponse(content=fallback)
+
+
+@app.put("/api/factory/automation-model")
+async def api_put_automation_model(request: Request):
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.put(
+                f"{ORCHESTRATOR_URL}/api/settings/automation-model",
+                json={"model": model},
+                headers=_orch_headers(),
+            )
+        if r.status_code == 200:
+            return JSONResponse(content=r.json())
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Orchestrator unreachable: {e}")
+
+
 @app.get("/api/factory/intelligence/status")
 async def api_intelligence_status():
     try:

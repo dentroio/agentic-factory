@@ -44,6 +44,7 @@ import sys
 import urllib.request
 import urllib.error
 
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 MAX_DIFF_LINES = 3000
 
 SYSTEM_PROMPT = """You are a merge advisor for an AI engineering team. Your job is to help
@@ -235,7 +236,7 @@ Write the merge advisory."""
 
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=MODEL,
         max_tokens=1200,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_content}],

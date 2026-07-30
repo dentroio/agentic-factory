@@ -147,6 +147,7 @@ jobs:
         if: steps.pr_context.outputs.skip != 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           PR_TITLE: ${{ steps.pr_context.outputs.pr_title }}
           PR_BODY: ${{ steps.pr_context.outputs.pr_body }}
           PR_NUMBER: ${{ steps.pr_context.outputs.pr_number }}

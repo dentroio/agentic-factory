@@ -207,6 +207,7 @@ jobs:
             --output-file /tmp/ai_fix_result.json
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
 
       - name: Check if edits were applied
         id: apply
