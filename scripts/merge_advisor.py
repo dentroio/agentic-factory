@@ -242,7 +242,7 @@ Write the merge advisory."""
         messages=[{"role": "user", "content": user_content}],
     )
 
-    advisory = message.content[0].text
+    advisory = next(b.text for b in message.content if b.type == "text")
 
     with open(args.output, "w") as f:
         f.write(advisory)

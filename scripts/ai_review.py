@@ -184,7 +184,7 @@ Git Diff:
         print("The diff may be too large. Increase MAX_DIFF_LINES or max_tokens in ai_review.py.", file=sys.stderr)
         sys.exit(1)
 
-    review = message.content[0].text
+    review = next(b.text for b in message.content if b.type == "text")
 
     with open(args.output, "w") as f:
         f.write(review)

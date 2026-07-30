@@ -185,7 +185,7 @@ def main():
         messages=[{"role": "user", "content": user_content}],
     )
 
-    wo_spec = message.content[0].text
+    wo_spec = next(b.text for b in message.content if b.type == "text")
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     with open(args.output, "w") as f:

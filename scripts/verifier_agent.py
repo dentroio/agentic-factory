@@ -154,7 +154,7 @@ Check each acceptance criterion against the diff."""
         messages=[{"role": "user", "content": user_content}],
     )
 
-    report = message.content[0].text
+    report = next(b.text for b in message.content if b.type == "text")
 
     with open(args.output, "w") as f:
         f.write(report)

@@ -166,7 +166,7 @@ def call_claude(system: str, user: str) -> str:
         system=system,
         messages=[{"role": "user", "content": user}],
     )
-    return msg.content[0].text
+    return next(b.text for b in msg.content if b.type == "text")
 
 
 _TODAY = date.today().isoformat()

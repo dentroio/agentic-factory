@@ -130,7 +130,7 @@ Write the incident report."""
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_content}],
     )
-    return message.content[0].text
+    return next(b.text for b in message.content if b.type == "text")
 
 
 def main():

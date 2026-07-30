@@ -4206,7 +4206,7 @@ async def plan_draft(req: DraftRequest):
                 }],
             )
             _record_anthropic_usage(model, msg.usage.input_tokens, msg.usage.output_tokens, "plan/draft")
-            text = msg.content[0].text.strip()
+            text = next(b.text for b in msg.content if b.type == "text").strip()
             if text.startswith("```"):
                 text = re.sub(r"^```[a-z]*\n?", "", text)
                 text = re.sub(r"\n?```$", "", text)

@@ -129,7 +129,7 @@ What should future agents know about this change that they would NOT discover by
         messages=[{"role": "user", "content": user_content}],
     )
 
-    result = message.content[0].text.strip()
+    result = next(b.text for b in message.content if b.type == "text").strip()
 
     if result == "NOTHING_TO_REMEMBER" or not result:
         print("Memory agent: nothing noteworthy in this PR.")
