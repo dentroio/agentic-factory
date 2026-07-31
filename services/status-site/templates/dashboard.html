@@ -30,7 +30,7 @@
     <span class="text-slate-700 font-normal">|</span>
     <span class="text-xs text-slate-400 font-normal">
       {{ watchdog.summary.total_open_prs }} open PRs &nbsp;·&nbsp;
-      {{ watchdog.runner_health.runners | selectattr('busy') | list | length }}/{{ watchdog.runner_health.runners | length }} runners busy
+      {{ watchdog.runner_health.runners | selectattr('busy') | list | length }}/{{ watchdog.runner_health.runners | length }} CI runners busy
     </span>
     {% endif %}
   </div>

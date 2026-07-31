@@ -28,7 +28,11 @@
 
   {# ── Factory Status Bar ──────────────────────────────────────────────────── #}
   {% set exhausted = backends.get('exhausted_backends', []) %}
-  {% set cur_backend = 'Cursor' if backends.get('cursor') else '—' %}
+  {% set _backend_labels = {'claude': 'Claude', 'cursor': 'Cursor', 'codex': 'Codex', 'gemini': 'Gemini'} %}
+  {% set active_backend_names = [] %}
+  {% for key, label in _backend_labels.items() %}
+    {% if backends.get(key) %}{% set _ = active_backend_names.append(label) %}{% endif %}
+  {% endfor %}
   <div class="glass-panel px-4 py-2.5 flex items-center gap-3 flex-wrap">
     {% if backends.agent_runner_online %}
     <span class="relative flex h-2 w-2 flex-shrink-0">
@@ -41,9 +45,9 @@
     <span class="text-xs font-mono text-rose-400">Runner offline</span>
     {% endif %}
     <span class="text-slate-700 text-xs">|</span>
-    <span class="text-xs font-mono text-slate-400"><span id="sb-active-count">{{ active_wos | length }}</span> active</span>
+    <span class="text-xs font-mono text-slate-400"><span id="sb-active-count">{{ active_wos | length }}</span> WOs active</span>
     <span class="text-slate-700 text-xs">|</span>
-    <span class="text-xs font-mono text-slate-500">{{ cur_backend }}</span>
+    <span class="text-xs font-mono text-slate-500">{{ active_backend_names | join(', ') if active_backend_names else '—' }}</span>
   </div>
 
   {# ── Agent Management Panel ──────────────────────────────────────────────── #}
