@@ -2132,6 +2132,38 @@ _DEFAULT_LLM_PROVIDERS: dict = {
         "is_default": False,
         "enabled": True,
     },
+    "codex": {
+        "id": "codex",
+        "name": "Codex",
+        "provider": "openai",
+        "description": "Runs WOs via OpenAI Codex CLI. No API key required — all calls go through your ChatGPT/OpenAI subscription, not pay-per-use billing",
+        "auth_type": "subscription",
+        "cli_command": "codex exec",
+        "setup_steps": [
+            "Subscribe to ChatGPT Plus/Pro/Team at chatgpt.com",
+            "Install: npm install -g @openai/codex",
+            "Login: run 'codex login' and follow the OAuth flow",
+            "Verify: codex --version",
+        ],
+        "is_default": False,
+        "enabled": True,
+    },
+    "gemini": {
+        "id": "gemini",
+        "name": "Gemini",
+        "provider": "google",
+        "description": "Runs WOs via Gemini CLI in --yolo mode (auto-approves tool use, required for unattended runs)",
+        "auth_type": "subscription",
+        "cli_command": "gemini --yolo",
+        "setup_steps": [
+            "Subscribe to a Gemini plan at gemini.google.com (or use the free tier)",
+            "Install: npm install -g @google/gemini-cli",
+            "Login: run 'gemini' and follow the Google OAuth flow on first launch",
+            "Verify: gemini --version",
+        ],
+        "is_default": False,
+        "enabled": True,
+    },
 }
 
 
