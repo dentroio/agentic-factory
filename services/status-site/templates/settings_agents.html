@@ -284,23 +284,10 @@
           <input type="text" id="pm-api-key-env" placeholder="e.g., ANTHROPIC_API_KEY"
             class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
                    focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
-          <p class="text-xs text-slate-600 mt-1">The env var name the runner uses on this machine.</p>
-        </div>
-        <div>
-          <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">API Key</label>
-          <div class="relative">
-            <input type="password" id="pm-api-key" autocomplete="off" placeholder="Paste key to set or replace…"
-              class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 pr-10 text-xs text-slate-100 font-mono
-                     focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
-            <button type="button" onclick="toggleApiKeyVisibility()"
-              class="absolute right-2 top-1.5 p-1 text-slate-500 hover:text-slate-200 transition-colors">
-              <svg id="pm-eye-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-              </svg>
-            </button>
-          </div>
-          <p class="text-xs text-slate-600 mt-1">Leave blank to keep the current key.</p>
+          <p class="text-xs text-slate-600 mt-1">
+            Documentation only — the env var name this provider expects. To actually set a key,
+            use the Anthropic API Key field under "API Keys" below.
+          </p>
         </div>
       </div>
 
@@ -470,7 +457,6 @@
     document.getElementById('pm-auth').value = p?.auth_type || 'subscription';
     document.getElementById('pm-description').value = p?.description || '';
     document.getElementById('pm-api-key-env').value = p?.api_key_env || '';
-    document.getElementById('pm-api-key').value = '';
     document.getElementById('pm-cli-cmd').value = p?.cli_command || '';
     document.getElementById('pm-default').checked = p?.is_default || false;
     document.getElementById('modal-error').classList.add('hidden');
@@ -526,11 +512,6 @@
     document.querySelectorAll('#pm-sub-steps .step-num').forEach((el, i) => { el.textContent = i + 1; });
   };
 
-  window.toggleApiKeyVisibility = function() {
-    const inp = document.getElementById('pm-api-key');
-    inp.type = inp.type === 'password' ? 'text' : 'password';
-  };
-
   window.saveProvider = async function() {
     const name = document.getElementById('pm-name').value.trim();
     if (!name) { showModalError('Provider name is required.'); return; }
@@ -538,7 +519,6 @@
     const steps = Array.from(document.querySelectorAll('#pm-sub-steps .step-input'))
       .map(el => el.value.trim()).filter(Boolean);
     const id = _editingId || name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const apiKey = document.getElementById('pm-api-key').value.trim();
     const payload = {
       id, name,
       provider: document.getElementById('pm-provider').value,
@@ -550,7 +530,6 @@
       is_default: document.getElementById('pm-default').checked,
       enabled: true,
     };
-    if (apiKey) payload.api_key = apiKey;
 
     const btn = document.getElementById('pm-save-btn');
     btn.disabled = true;
