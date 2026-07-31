@@ -518,6 +518,7 @@ def _init_db() -> None:
               pin         INTEGER NOT NULL DEFAULT 0,
               blocks_milestones TEXT DEFAULT '[]',
               depends_on  TEXT DEFAULT '[]',
+              files_likely_changed TEXT DEFAULT '[]',
               notes       TEXT DEFAULT '',
               docs_required TEXT DEFAULT '[]',
               added_at    TEXT NOT NULL DEFAULT (datetime('now'))
@@ -550,6 +551,12 @@ def _init_db() -> None:
               added_at    TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+        # CREATE TABLE IF NOT EXISTS is a no-op on an already-existing table —
+        # it does not add new columns. Migrate existing databases explicitly.
+        try:
+            conn.execute("ALTER TABLE queue ADD COLUMN files_likely_changed TEXT DEFAULT '[]'")
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 
 def _db_load_all_runs() -> dict[str, dict]:
@@ -625,6 +632,7 @@ def _db_get_queue() -> list[dict]:
                 d["pin"] = bool(d.get("pin", 0))
                 d["blocks_milestones"] = json.loads(d.get("blocks_milestones") or "[]")
                 d["depends_on"] = json.loads(d.get("depends_on") or "[]")
+                d["files_likely_changed"] = json.loads(d.get("files_likely_changed") or "[]")
                 result.append(d)
             return result
     except Exception:
@@ -720,14 +728,14 @@ def _db_upsert_queue_entry(entry: dict) -> None:
             conn.execute("""
                 INSERT INTO queue
                   (wo, title, phase, priority, effort, position, pin,
-                   blocks_milestones, depends_on, notes, docs_required)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   blocks_milestones, depends_on, files_likely_changed, notes, docs_required)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(wo) DO UPDATE SET
                   title=excluded.title, phase=excluded.phase, priority=excluded.priority,
                   effort=excluded.effort, pin=excluded.pin,
                   blocks_milestones=excluded.blocks_milestones,
-                  depends_on=excluded.depends_on, notes=excluded.notes,
-                  docs_required=excluded.docs_required
+                  depends_on=excluded.depends_on, files_likely_changed=excluded.files_likely_changed,
+                  notes=excluded.notes, docs_required=excluded.docs_required
             """, (
                 entry["wo"],
                 entry.get("title", entry["wo"]),
@@ -738,6 +746,7 @@ def _db_upsert_queue_entry(entry: dict) -> None:
                 1 if entry.get("pin") else 0,
                 json.dumps(entry.get("blocks_milestones", [])),
                 json.dumps(entry.get("depends_on", [])),
+                json.dumps(entry.get("files_likely_changed", [])),
                 entry.get("notes", ""),
                 entry.get("docs_required", "[]"),
             ))
@@ -1286,6 +1295,18 @@ async def get_next(domain: str = ""):
 
     domain_tokens = [t.lower() for t in domain.split(",") if t.strip()] if domain else []
 
+    # Files currently being touched by whatever's actively claimed right now —
+    # used below to hold off dispatching a WO that overlaps with in-flight
+    # work even when the two WOs declare no formal depends_on relationship to
+    # each other. depends_on only catches conflicts the WO author thought to
+    # write down; two WOs can genuinely collide on the same file (e.g. both
+    # editing NetworkSegments.tsx) without either ever declaring a dependency.
+    files_by_wo = {w.get("wo", ""): set(w.get("files_likely_changed") or []) for w in queue}
+    files_in_flight: set[str] = set()
+    for active_id, active_entry in _dispatch_state.items():
+        if active_entry.get("status") in active_statuses - {"complete"}:
+            files_in_flight |= files_by_wo.get(active_id, set())
+
     for wo in queue:
         wo_id = wo.get("wo", "")
         if wo_id in _held_wos:
@@ -1299,6 +1320,12 @@ async def get_next(domain: str = ""):
         deps = wo.get("depends_on") or []
         unmet = [d for d in deps if _dispatch_state.get(d, {}).get("status") != "complete"]
         if unmet:
+            continue
+        # File-overlap guard — skip WOs whose declared scope collides with a
+        # WO actively being worked right now, dependency or not. Comes back
+        # into consideration next poll once the in-flight WO stops being active.
+        overlap = files_by_wo.get(wo_id, set()) & files_in_flight
+        if overlap:
             continue
         # Domain filter — skip WOs not in this runner's domain
         if domain_tokens:
@@ -2697,6 +2724,22 @@ def _parse_depends_on(content: str) -> list[int]:
     return [int(n) for n in re.findall(r"WO-(\d+)", m.group(1))]
 
 
+def _parse_files_likely_changed(content: str) -> list[str]:
+    """Extract the file paths from a WO's '## Files Likely Changed' section.
+
+    Used to warn the dispatcher off handing out a WO whose declared scope
+    overlaps with one already being actively worked by another agent — WOs
+    with no declared relationship to each other (no depends_on) can still
+    genuinely collide on the same file. Backtick-quoted, dot-extension
+    tokens only, so inline symbol/variable names mentioned in parens
+    (e.g. "`ROLE_GROUPS` lives with the other metadata") aren't mistaken
+    for file paths."""
+    m = re.search(r"## Files Likely Changed\s*\n(.*?)(?:\n## |\Z)", content, re.DOTALL)
+    if not m:
+        return []
+    return re.findall(r"`([^`]+\.[a-zA-Z]+)`", m.group(1))
+
+
 def _is_done(status: str) -> bool:
     # Match on status PREFIX only — substring matching causes "conflict advisor v1 done"
     # or "deferred to WO-226" to incorrectly mark a WO as done/deferred.
@@ -2752,6 +2795,7 @@ def _read_local_wo_specs(repo_root: str, wo_path: str, repo: str) -> dict[int, d
                 "priority": _parse_priority(content),
                 "effort": _parse_effort(content),
                 "depends_on": _parse_depends_on(content),
+                "files_likely_changed": _parse_files_likely_changed(content),
                 "_raw_body": content,
             }
         except Exception as e:
@@ -2790,6 +2834,7 @@ async def _fetch_wo_specs(client: httpx.AsyncClient, repo: str = GITHUB_REPO, wo
                 "priority": _parse_priority(content),
                 "effort": _parse_effort(content),
                 "depends_on": _parse_depends_on(content),
+                "files_likely_changed": _parse_files_likely_changed(content),
                 "_raw_body": content,
             }
         except Exception as e:
@@ -3409,22 +3454,22 @@ async def poll() -> None:
             "effort": spec.get("effort", ""),
             "status": spec.get("status", "open"),
             "depends_on": spec.get("depends_on", []),
+            "files_likely_changed": spec.get("files_likely_changed", []),
             "_overlay": True,
         }
         if wo_id in plan_registered:
-            # Already registered — only refresh priority/title/effort/depends_on
-            # from spec. Never overwrite human-set phase/pin/position for
-            # existing rows. depends_on is spec-derived (not something humans
-            # hand-edit via the board the way phase/pin/position are), so it
-            # must stay in sync — previously frozen at whatever it was on
-            # first registration, silently going stale if a WO's spec later
-            # added or changed its "Depends on:" line, letting dependent WOs
-            # get dispatched in parallel with unfinished prerequisites.
+            # Already registered — only refresh spec-derived fields (priority/
+            # title/effort/depends_on/files_likely_changed). Never overwrite
+            # human-set phase/pin/position for existing rows. depends_on and
+            # files_likely_changed aren't something humans hand-edit via the
+            # board the way phase/pin/position are, so they must stay in sync
+            # — previously frozen at whatever they were on first registration,
+            # silently going stale if a WO's spec changed later.
             with sqlite3.connect(DB_PATH) as _conn:
                 _conn.execute(
-                    "UPDATE queue SET priority=?, title=?, effort=?, depends_on=? WHERE wo=?",
+                    "UPDATE queue SET priority=?, title=?, effort=?, depends_on=?, files_likely_changed=? WHERE wo=?",
                     (entry["priority"], entry["title"], entry["effort"],
-                     json.dumps(entry["depends_on"]), wo_id),
+                     json.dumps(entry["depends_on"]), json.dumps(entry["files_likely_changed"]), wo_id),
                 )
             continue
         _plan_overlay.append(entry)
