@@ -46,18 +46,31 @@ if command -v npm &>/dev/null; then
     esac
 fi
 
-# Add nvm-managed node bin (codex/gemini install here via npm -g under nvm)
+# Add nvm-managed node bin (codex/gemini install here via npm -g under nvm).
+# Search every installed version rather than guessing one via mtime — a plain
+# `nvm install` for a newer node version (no global packages migrated) sorts
+# first by mtime but won't have codex/gemini, silently shadowing the version
+# that actually does. Most-recently-modified still goes first on PATH so node/
+# npm resolution is unaffected; older versions are added after as a fallback
+# for tool lookup only.
 NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 if [ -d "$NVM_DIR/versions/node" ]; then
-    # Pick the most-recently-modified version (matches `nvm current` in most setups)
-    NVM_VER=$(ls -t "$NVM_DIR/versions/node" 2>/dev/null | head -1)
-    if [ -n "$NVM_VER" ]; then
+    _nvm_first=1
+    while IFS= read -r NVM_VER; do
+        [ -z "$NVM_VER" ] && continue
         NVM_BIN="$NVM_DIR/versions/node/$NVM_VER/bin"
         case ":$PATH:" in
             *":$NVM_BIN:"*) ;;
-            *) export PATH="$NVM_BIN:$PATH" ;;
+            *)
+                if [ "$_nvm_first" = 1 ]; then
+                    export PATH="$NVM_BIN:$PATH"   # most-recent version: priority for node/npm
+                else
+                    export PATH="$PATH:$NVM_BIN"   # older versions: fallback for tool lookup only
+                fi
+                ;;
         esac
-    fi
+        _nvm_first=0
+    done < <(ls -t "$NVM_DIR/versions/node" 2>/dev/null)
 fi
 
 # ── Find Claude CLI (inside app bundle — version number changes with updates) ─
