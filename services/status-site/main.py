@@ -364,7 +364,20 @@ def _apply_live_status(
             pr = pr_wo_map[num]
             spec.pr_number = pr["number"]
             spec.ci_state = pr["ci_state"]
-            if pr["ci_state"] == "failing":
+            # An open PR with passing CI isn't necessarily "ready" — it may have
+            # already been rejected by review (or failed and been requeued for
+            # another attempt) without the PR itself ever being closed. Dispatch
+            # status is the actual outcome; PR/CI state alone doesn't know that.
+            dispatch_status = dispatch_map.get(num, {}).get("status", "")
+            if dispatch_status == "rejected":
+                spec.status = "🔴 Rejected — awaiting rework"
+            elif dispatch_status == "retry_queued":
+                # No 🔄 prefix here on purpose — that maps board_column to
+                # "in_progress" (shown as RUNNING), which is wrong for a WO
+                # that isn't actively being worked, just eligible for re-claim.
+                # Falls through WOSpec.board_column's default case: "open".
+                spec.status = "Queued for retry — not currently claimed"
+            elif pr["ci_state"] == "failing":
                 spec.status = "🔴 Blocked (CI failing)"
             elif pr["ci_state"] == "pending":
                 spec.status = "👀 In Review (CI running)"
