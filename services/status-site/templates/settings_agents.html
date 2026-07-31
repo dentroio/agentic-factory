@@ -253,7 +253,8 @@
                    focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="cursor">Cursor</option>
-            <option value="openai">OpenAI</option>
+            <option value="openai">OpenAI (Codex)</option>
+            <option value="google">Google (Gemini)</option>
             <option value="custom">Custom</option>
           </select>
         </div>
@@ -366,11 +367,12 @@
     api: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400">API Key</span>',
   };
 
-  const PROVIDER_LABELS = { anthropic: 'Anthropic', cursor: 'Cursor', openai: 'OpenAI', custom: 'Custom' };
+  const PROVIDER_LABELS = { anthropic: 'Anthropic', cursor: 'Cursor', openai: 'OpenAI', google: 'Google', custom: 'Custom' };
   const PROVIDER_DEFAULTS = {
     anthropic: { auth: 'both',         env: 'ANTHROPIC_API_KEY', cli: 'claude code --dangerously-skip-permissions' },
     cursor:    { auth: 'subscription', env: '',                   cli: 'cursor --headless' },
-    openai:    { auth: 'api',          env: 'OPENAI_API_KEY',     cli: '' },
+    openai:    { auth: 'subscription', env: 'OPENAI_API_KEY',     cli: 'codex exec' },
+    google:    { auth: 'subscription', env: 'GEMINI_API_KEY',     cli: 'gemini --yolo' },
     custom:    { auth: 'api',          env: '',                   cli: '' },
   };
 
