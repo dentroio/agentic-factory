@@ -109,6 +109,7 @@ _pm_dispatch: dict | None = None       # PM-requested direct dispatch {wo, backe
 _plan_overlay: list[dict] = []         # spec-file WOs not in PLAN.json — runtime-only, never written to disk
 _approval_skips: dict[str, str] = {}   # wo_id → ISO timestamp until approval is bypassed
 _preflight_held: dict[str, dict] = {}  # wo_id → {hold_reason, held_at, last_checked}
+_max_retry_notified: set[str] = set()  # wo_ids already alerted for exceeding MAX_RETRY_ATTEMPTS
 
 HOLD_PATH = DATA_DIR / "held_wos.json"
 PAUSE_PATH = DATA_DIR / "factory_paused.json"
@@ -1627,6 +1628,20 @@ async def claim_wo(req: ClaimRequest):
     prev = _dispatch_state.get(wo_id, {})
     attempt_count = prev.get("attempt_count", 0) + 1
     if attempt_count > MAX_RETRY_ATTEMPTS:
+        if wo_id not in _max_retry_notified:
+            _max_retry_notified.add(wo_id)
+            thread_store.append_message(wo_id, thread_store.system_message(
+                f"🛑 {wo_id} exceeded max retry attempts ({MAX_RETRY_ATTEMPTS}) — "
+                f"blocked from further claims until manually reset."
+            ))
+            asyncio.create_task(notify_factory_alert(
+                title=f"{wo_id} needs manual reset",
+                body=f"Exceeded max retry attempts ({MAX_RETRY_ATTEMPTS}). "
+                     f"POST /api/dispatch/{wo_id}/reset to clear and let the factory retry it.",
+                level="urgent",
+                source="max-retry-gate",
+                secrets=_load_secrets(),
+            ))
         raise HTTPException(
             status_code=429,
             detail=f"{wo_id} exceeded max retry attempts ({MAX_RETRY_ATTEMPTS}). "
@@ -1924,6 +1939,7 @@ async def reset_dispatch(wo_id: str):
     if wo_id in _dispatch_state:
         del _dispatch_state[wo_id]
         _save_dispatch()
+    _max_retry_notified.discard(wo_id)
     print(f"[orchestrator] {wo_id} dispatch state hard-reset (attempt counter cleared)")
     return {"ok": True, "reset": wo_id}
 
