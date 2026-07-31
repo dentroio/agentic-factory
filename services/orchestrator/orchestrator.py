@@ -2686,7 +2686,12 @@ def _infer_phase(priority: str) -> str:
 
 
 def _parse_depends_on(content: str) -> list[int]:
-    m = re.search(r"\*\*Depends on:\*\*\s*(.+)", content)
+    # Stop at the first ';' — the convention for soft/non-blocking notes is
+    # "**Depends on:** WO-A, WO-B; WO-C should ideally land first ... but is
+    # not blocking" on one line. Capturing the whole line (previous behavior)
+    # pulled WO-C in as a hard dependency despite the spec explicitly saying
+    # it isn't one.
+    m = re.search(r"\*\*Depends on:\*\*\s*([^;\n]+)", content)
     if not m:
         return []
     return [int(n) for n in re.findall(r"WO-(\d+)", m.group(1))]
@@ -3403,15 +3408,23 @@ async def poll() -> None:
             "priority": spec.get("priority", "P2"),
             "effort": spec.get("effort", ""),
             "status": spec.get("status", "open"),
+            "depends_on": spec.get("depends_on", []),
             "_overlay": True,
         }
         if wo_id in plan_registered:
-            # Already registered — only refresh priority/title/effort from spec.
-            # Never overwrite human-set phase/pin/position for existing rows.
+            # Already registered — only refresh priority/title/effort/depends_on
+            # from spec. Never overwrite human-set phase/pin/position for
+            # existing rows. depends_on is spec-derived (not something humans
+            # hand-edit via the board the way phase/pin/position are), so it
+            # must stay in sync — previously frozen at whatever it was on
+            # first registration, silently going stale if a WO's spec later
+            # added or changed its "Depends on:" line, letting dependent WOs
+            # get dispatched in parallel with unfinished prerequisites.
             with sqlite3.connect(DB_PATH) as _conn:
                 _conn.execute(
-                    "UPDATE queue SET priority=?, title=?, effort=? WHERE wo=?",
-                    (entry["priority"], entry["title"], entry["effort"], wo_id),
+                    "UPDATE queue SET priority=?, title=?, effort=?, depends_on=? WHERE wo=?",
+                    (entry["priority"], entry["title"], entry["effort"],
+                     json.dumps(entry["depends_on"]), wo_id),
                 )
             continue
         _plan_overlay.append(entry)
