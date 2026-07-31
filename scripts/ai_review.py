@@ -173,7 +173,7 @@ Git Diff:
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
         model=MODEL,
-        max_tokens=4096,
+        max_tokens=8192,
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
