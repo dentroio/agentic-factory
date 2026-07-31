@@ -1,7 +1,7 @@
 ---
 title: "Customization"
 description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, WO execution instructions, and agent memory"
-last_verified: 2026-07-30
+last_verified: 2026-07-31
 covers_wos:
   - WO-1014
   - WO-1021
@@ -190,54 +190,4 @@ The agent-runner's built-in code patterns are loaded from `services/agent-runner
 
 To add a pattern:
 1. Edit `services/agent-runner/clarion_patterns.md` directly (or let the post-completion memory update propose one).
-2. Commit and push. The runner picks up the change on the next WO dispatch — no rebuild required.
-
-## Agent process documentation
-
-The agent process is split across two files:
-
-| File | Purpose |
-|------|---------|
-| `AGENT_PROCESS.md` | The "what to do" cheatsheet — under 200 lines. Risk tiers, branch/PR workflow (numbered steps), container rebuild table, critical patterns, danger zones. Read before every task. |
-| `AGENT_PROCESS_DETAIL.md` | The "why" reference — worktree system explanation, rationale for rules, migration registration detail. Optional reading. |
-
-`AGENT_PROCESS.md` is structured for agent parsing: imperative command lists, no prose paragraphs. Critical patterns appear within the first 30 lines under a `## ⚠️ You must know these` header. A container danger zones table lists the operations that have caused incidents, their safe replacements, and what goes wrong if you use the dangerous form. The WO workflow uses explicit numbered steps (Step 1 through Step 8) so agents can reference them unambiguously.
-
-When writing WO specs or configuring agent prompts, reference `AGENT_PROCESS.md` as the primary instruction source. If you need to add a project-specific rule that all agents must follow, add it to `AGENT_PROCESS.md` (keep it imperative and concise) rather than burying it in a WO's Execution section.
-
-## Agent backend selection
-
-The default backend is set during `make agent-setup`. To change it after setup:
-
-```bash
-# Edit the prefs file directly
-echo "PREFERRED_AGENT=cursor" >> ~/.config/factory-agent/prefs
-```
-
-Or run `make agent-setup` again and pick a different backend when prompted.
-
-To dispatch a specific WO with a different backend than the default, tell the PM:
-
-> "Start WO-123 with Gemini."
-
-The PM sends a dispatch signal that overrides the default for that one WO.
-
-See [Agent Backends](Agent-Backends) for a comparison of when to use each backend.
-
-## Environment variables
-
-Non-secret configuration is stored in `~/.config/factory-agent/prefs`. Secrets (GitHub token, API keys, ntfy topic, Slack webhook) are stored in the macOS Keychain under the service name `dentroio-factory` and read at runtime by `scripts/factory-env.sh`.
-
-To add a new secret after initial setup:
-
-```bash
-security add-generic-password -s "dentroio-factory" -a "MY_NEW_KEY" -w "the-value"
-```
-
-To read a stored secret:
-
-```bash
-security find-generic-password -s "dentroio-factory" -a "MY_NEW_KEY" -w
-```
-
-Docker Compose reads secrets via the `factory-env.sh` script, which exports them as environment variables before `docker compose up`. You do not need a `.env` file.
+2. Commit and push. The runner picks up the change on
