@@ -131,10 +131,27 @@ async def list_active_runs() -> list[dict]:
 
 
 async def list_merged_prs(days: int = 56) -> list[dict]:
+    """A single page sorted by 'updated' silently drops PRs merged within the
+    window but with no post-merge activity (comments, label changes) — they
+    get pushed off the top-100 by newer, unrelated PR activity even though
+    they're well inside `days`. Sort by 'created' instead (a much better
+    proxy for merge recency — not perturbed by post-merge noise) and
+    paginate across several pages rather than trusting a single page of 100
+    to contain everything in the window."""
     try:
         from datetime import UTC, datetime, timedelta
         since = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        data = await _get(f"/repos/{GITHUB_REPO}/pulls", {"state": "closed", "per_page": 100, "sort": "updated", "direction": "desc"})
-        return [p for p in data if p.get("merged_at") and p["merged_at"] >= since]
+        results: list[dict] = []
+        for page in range(1, 6):  # up to 500 PRs — generous for a 56-day window
+            data = await _get(
+                f"/repos/{GITHUB_REPO}/pulls",
+                {"state": "closed", "per_page": 100, "page": page, "sort": "created", "direction": "desc"},
+            )
+            if not data:
+                break
+            results.extend(p for p in data if p.get("merged_at") and p["merged_at"] >= since)
+            if len(data) < 100:
+                break  # last page
+        return results
     except Exception:
         return []

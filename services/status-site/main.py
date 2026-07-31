@@ -19,7 +19,7 @@ from wo_parser import (
     extract_wo_number_from_branch,
     extract_wo_number_from_pr_title,
     parse_wo_file,
-    resolve_wo_for_pr,
+    resolve_all_wos_for_pr,
 )
 
 app = FastAPI(title="AI Factory Status")
@@ -333,11 +333,14 @@ def _apply_live_status(
             pr_wo_map[pr["wo_number"]] = pr
 
     # Build set of WO numbers with merged PRs — authoritative "done" signal.
+    # Use resolve_all_wos_for_pr, not resolve_wo_for_pr: conflict-resolution/
+    # follow-up PRs routinely mention two WOs in one title (e.g. "WO-1035:
+    # Resolve conflict: PR #455 — WO-417: ..."), and both are genuinely done
+    # by that merge — crediting only the first left the second stuck looking
+    # unfinished indefinitely.
     merged_wo_nums: set[int] = set()
     for p in (merged_prs or []):
-        n = resolve_wo_for_pr(p)
-        if n is not None:
-            merged_wo_nums.add(n)
+        merged_wo_nums.update(resolve_all_wos_for_pr(p))
 
     # Build a map from WO number → dispatch entry so we can mark active WOs
     # even when the branch hasn't been pushed to GitHub yet (which is the normal
@@ -463,6 +466,16 @@ async def dashboard(request: Request):
     wos, wos_available = wos_result
 
     _apply_live_status(wos, branches, prs, dispatch, merged_prs=merged_prs_board)
+    # "Active Agents" lists whatever branches still exist on GitHub matching
+    # wo/NNN-* — but a branch not auto-deleted after merge (or a lingering
+    # remote-tracking ref) then shows the WO as "active" forever, with no
+    # agent_status, since there's obviously no live agent working on
+    # already-merged code. Drop anything _apply_live_status has since
+    # determined is actually done.
+    branches = [
+        b for b in branches
+        if not (b.get("wo_number") in wos and wos[b["wo_number"]].board_column == "done")
+    ]
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
     validations = _load_validations()

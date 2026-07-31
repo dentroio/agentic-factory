@@ -137,3 +137,20 @@ def resolve_wo_for_pr(pr: dict) -> int | None:
     if n is not None:
         return n
     return extract_wo_number_from_pr_title(pr.get("title", "") or "")
+
+
+def resolve_all_wos_for_pr(pr: dict) -> list[int]:
+    """Like resolve_wo_for_pr, but returns every WO number the PR resolves,
+    not just the first. Conflict-resolution / follow-up PRs routinely
+    reference two WOs in one title (e.g. "WO-1035: Resolve conflict: PR #455
+    — WO-417: Coverage Consolidation") — both are genuinely done by that
+    merge, but resolve_wo_for_pr's single-number contract only ever credits
+    whichever one the regex matches first, silently leaving the other stuck
+    looking unfinished forever."""
+    head_ref = pr.get("head", {}).get("ref", "") or ""
+    title = pr.get("title", "") or ""
+    nums = {int(m) for m in re.findall(r"\bWO-(\d+)\b", title, re.IGNORECASE)}
+    branch_n = extract_wo_number_from_branch(head_ref)
+    if branch_n is not None:
+        nums.add(branch_n)
+    return sorted(nums)
