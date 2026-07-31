@@ -51,6 +51,7 @@ STUCK_WO_HOURS       = float(os.getenv("STUCK_WO_HOURS",       "2"))
 REJECTED_RETRY_MIN   = int(os.getenv("REJECTED_RETRY_MIN",      "45"))
 VALIDATION_STALE_MIN = int(os.getenv("VALIDATION_STALE_MIN",    "60"))
 MAX_REJECTIONS       = int(os.getenv("MAX_REJECTIONS",           "4"))
+MAX_RETRY_ATTEMPTS   = int(os.getenv("MAX_RETRY_ATTEMPTS",       "3"))
 
 # Launchd service labels → preferred backend name
 RUNNER_SERVICES: dict[str, str] = {
@@ -332,6 +333,40 @@ def _worktree_last_commit_age(wo_id: str, repo_path: str) -> float | None:
         return None
 
 
+def _worktree_uncommitted_activity_age(wo_id: str, repo_path: str) -> float | None:
+    """Return hours since the most recently modified uncommitted file in the WO
+    worktree, or None if the worktree is clean/not found. An agent mid-implementation
+    with real uncommitted changes is not "stuck" just because it hasn't committed yet —
+    only commit age used to be checked here, which meant genuinely-in-progress work
+    (large diffs that take longer than STUCK_WO_HOURS to finish before the first
+    commit) got its backend reassigned out from under it, over and over, burning
+    through attempt_count for no real reason."""
+    num = re.sub(r"[^0-9]", "", wo_id)
+    worktree_base = Path(repo_path) / ".worktrees"
+    candidates = list(worktree_base.glob(f"wo-{num}-*")) if worktree_base.exists() else []
+    if not candidates:
+        return None
+    wt = candidates[0]
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(wt), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=10,
+        )
+        files = [line[3:] for line in r.stdout.splitlines() if line.strip()]
+        if not files:
+            return None
+        newest_mtime = 0.0
+        for f in files:
+            fp = wt / f
+            if fp.exists():
+                newest_mtime = max(newest_mtime, fp.stat().st_mtime)
+        if newest_mtime == 0.0:
+            return None
+        return (datetime.now().timestamp() - newest_mtime) / 3600
+    except Exception:
+        return None
+
+
 BACKEND_ROTATION: dict[str, str] = {
     "claude":  "cursor",
     "cursor":  "claude",
@@ -367,11 +402,31 @@ async def check_stuck_wos() -> None:
         if commit_age_h is not None and commit_age_h < STUCK_WO_HOURS:
             continue  # has recent commits — not stuck
 
+        # Also check uncommitted working-tree activity — see docstring on
+        # _worktree_uncommitted_activity_age for why this matters.
+        uncommitted_age_h = _worktree_uncommitted_activity_age(wo_id, repo_path) if repo_path else None
+        if uncommitted_age_h is not None and uncommitted_age_h < STUCK_WO_HOURS:
+            continue  # actively being edited — not stuck
+
         act_key = f"stuck:{wo_id}:{claimed_at_s}"
         if act_key in _acted:
             continue
 
         backend = entry.get("backend", "")
+
+        # Reassigning a claim that's already at the retry ceiling is pointless — the
+        # very next claim() call 429s regardless of which backend tries, so this would
+        # just loop forever without ever surfacing that a human needs to intervene.
+        if entry.get("attempt_count", 0) >= MAX_RETRY_ATTEMPTS:
+            _acted.add(act_key)
+            _log(f"{wo_id} stuck {hours_claimed:.1f}h and already at max retry attempts "
+                 f"({entry.get('attempt_count')}) — needs manual reset, not reassignment", "warn")
+            await _notify(f"{wo_id} needs manual reset",
+                          f"Stuck {hours_claimed:.1f}h and at max retry attempts "
+                          f"({MAX_RETRY_ATTEMPTS}) — reassigning won't help. "
+                          f"POST /api/dispatch/{wo_id}/reset to clear and retry.", "urgent")
+            continue
+
         new_backend = BACKEND_ROTATION.get(backend, "claude")
         _log(f"{wo_id} stuck {hours_claimed:.1f}h on {backend} → reassigning to {new_backend}", "warn")
 

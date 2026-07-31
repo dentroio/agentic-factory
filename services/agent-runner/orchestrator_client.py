@@ -35,6 +35,15 @@ async def claim(wo_id: str, slug: str = "", backend: str = "") -> bool:
                 "workstation": HOSTNAME,
                 "slug": slug,
             })
+            if resp.status_code == 429:
+                # Distinct from a routine 409 (someone else has it) — this WO is
+                # permanently blocked until a human resets it. Say so plainly instead
+                # of letting it look like ordinary contention on every poll forever.
+                try:
+                    detail = resp.json().get("detail", "")
+                except Exception:
+                    detail = ""
+                print(f"[runner] {wo_id} claim blocked — {detail or 'exceeded max retry attempts, needs manual reset'}")
             return resp.status_code == 200
     except Exception as e:
         print(f"[runner] claim {wo_id} failed: {e}")
