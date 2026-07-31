@@ -162,3 +162,40 @@ def test_at_retry_ceiling_notifies_instead_of_reassigning(tmp_path, monkeypatch)
     assert len(notified) == 1
     assert "WO-427" in notified[0][0]
     assert "reset" in notified[0][1].lower()
+
+
+# ── check_local_runners: missing-plist dedup ────────────────────────────────
+
+
+def test_missing_plist_notifies_once_not_every_cycle(monkeypatch):
+    """Found live: gemini's plist was never installed on this workstation, and
+    check_local_runners() re-sent 'Runner gemini won't start' every 5-minute
+    cycle forever, because the dedup guard only ever got set on a *successful*
+    reload — a plist that doesn't exist can never succeed, so it never got
+    deduped. Must notify once (distinctly) and then stay silent, not retry a
+    launchctl load that can't possibly work."""
+    import asyncio
+
+    notified = []
+
+    async def fake_notify(title, body, level="default"):
+        notified.append((title, body, level))
+
+    monkeypatch.setattr(health_agent, "_launchd_status", lambda: {})
+    monkeypatch.setattr(health_agent, "_notify", fake_notify)
+    monkeypatch.setattr(health_agent, "DRY_RUN", False)
+    monkeypatch.setattr(
+        health_agent,
+        "RUNNER_SERVICES",
+        {"com.dentroio.factory-agent-gemini": "gemini"},
+    )
+    monkeypatch.setattr(Path, "exists", lambda self: False)
+    health_agent._acted.clear()
+
+    asyncio.run(health_agent.check_local_runners())
+    asyncio.run(health_agent.check_local_runners())
+    asyncio.run(health_agent.check_local_runners())
+
+    assert len(notified) == 1
+    assert "gemini" in notified[0][0].lower()
+    assert "not installed" in notified[0][0].lower()

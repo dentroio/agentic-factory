@@ -221,6 +221,28 @@ async def check_local_runners() -> None:
             act_key = f"runner-missing:{label}"
             if act_key in _acted:
                 continue
+
+            plist = Path(f"~/Library/LaunchAgents/{label}.plist").expanduser()
+            if not plist.exists():
+                # Never installed on this workstation, not a transient failure —
+                # retrying every cycle forever just re-sends the same alert with
+                # no chance of a different outcome (found live: gemini isn't set
+                # up on this machine and this fired every 5 minutes indefinitely).
+                # Notify once and stop, distinctly from an actual load failure.
+                _acted.add(act_key)
+                _log(
+                    f"runner {backend} plist not installed on this workstation — skipping",
+                    "warn",
+                )
+                await _notify(
+                    f"Runner {backend} not installed here",
+                    f"{label}.plist does not exist on this workstation — "
+                    "run agent-install.sh to add it, or ignore if this backend "
+                    "is intentionally unused here.",
+                    "default",
+                )
+                continue
+
             _log(f"runner {backend} not loaded in launchd", "warn")
             if DRY_RUN:
                 _dry(f"would reload {label}")
