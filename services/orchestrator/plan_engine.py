@@ -21,6 +21,19 @@ _PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 _EFFORT_ORDER = {"S": 0, "M": 1, "L": 2, "XL": 3}
 
 
+def _dep_id(dep) -> str:
+    """Normalize a depends_on entry to canonical 'WO-{n}' form.
+
+    depends_on lists sometimes hold bare WO numbers (ints, e.g. 415) and
+    sometimes 'WO-415' strings depending on the caller. done_ids below is
+    always built as 'WO-{n}' strings, so comparing a bare int against it
+    never matches — every WO with a declared dependency would look
+    permanently unmet even once the dependency is actually done.
+    """
+    s = str(dep)
+    return s if s.startswith("WO-") else f"WO-{s}"
+
+
 def _phase_sort_key(wo: dict, phase_index: dict[str, int]) -> int:
     """
     Return the effective sort key for phase ordering.
@@ -75,7 +88,7 @@ def next_wo(plan: dict, wo_statuses: dict[str, str]) -> dict | None:
         if status in _EXCLUDE_STATUSES:
             continue
         deps = wo.get("depends_on", [])
-        if any(dep not in done_ids for dep in deps):
+        if any(_dep_id(dep) not in done_ids for dep in deps):
             continue
         candidates.append(wo)
 
@@ -139,7 +152,7 @@ def sorted_queue(plan: dict, wo_statuses: dict[str, str]) -> list[dict]:
         if status in _EXCLUDE_STATUSES:
             continue
         deps = wo.get("depends_on", [])
-        if any(dep not in done_ids for dep in deps):
+        if any(_dep_id(dep) not in done_ids for dep in deps):
             continue
         candidates.append(wo)
 
