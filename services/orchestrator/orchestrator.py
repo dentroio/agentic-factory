@@ -494,7 +494,12 @@ def _init_db() -> None:
               last_seen TEXT,
               completed_at TEXT,
               pr_url TEXT DEFAULT '',
-              pr_number INTEGER
+              pr_number INTEGER,
+              attempt_count INTEGER DEFAULT 0,
+              first_claimed_at TEXT,
+              retried_at TEXT,
+              stuck INTEGER DEFAULT 0,
+              stuck_since TEXT
             )
         """)
         conn.execute("""
@@ -558,6 +563,20 @@ def _init_db() -> None:
             conn.execute("ALTER TABLE queue ADD COLUMN files_likely_changed TEXT DEFAULT '[]'")
         except sqlite3.OperationalError:
             pass  # column already exists
+        # runs table predates attempt_count/first_claimed_at/retried_at/stuck/stuck_since —
+        # without these, every restart silently drops them (_db_sync_dispatch only wrote the
+        # original columns), resetting the max-retry counter and stuck-detection state.
+        for _col, _ddl in (
+            ("attempt_count", "ALTER TABLE runs ADD COLUMN attempt_count INTEGER DEFAULT 0"),
+            ("first_claimed_at", "ALTER TABLE runs ADD COLUMN first_claimed_at TEXT"),
+            ("retried_at", "ALTER TABLE runs ADD COLUMN retried_at TEXT"),
+            ("stuck", "ALTER TABLE runs ADD COLUMN stuck INTEGER DEFAULT 0"),
+            ("stuck_since", "ALTER TABLE runs ADD COLUMN stuck_since TEXT"),
+        ):
+            try:
+                conn.execute(_ddl)
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
 
 def _db_load_all_runs() -> dict[str, dict]:
@@ -581,16 +600,20 @@ def _db_sync_dispatch() -> None:
                 conn.execute("""
                     INSERT INTO runs
                       (wo, slug, agent, backend, workstation, claimed_at, status,
-                       step, last_seen, completed_at, pr_url, pr_number)
+                       step, last_seen, completed_at, pr_url, pr_number,
+                       attempt_count, first_claimed_at, retried_at, stuck, stuck_since)
                     VALUES
                       (:wo, :slug, :agent, :backend, :workstation, :claimed_at, :status,
-                       :step, :last_seen, :completed_at, :pr_url, :pr_number)
+                       :step, :last_seen, :completed_at, :pr_url, :pr_number,
+                       :attempt_count, :first_claimed_at, :retried_at, :stuck, :stuck_since)
                     ON CONFLICT(wo) DO UPDATE SET
                       slug=excluded.slug, agent=excluded.agent, backend=excluded.backend,
                       workstation=excluded.workstation, claimed_at=excluded.claimed_at,
                       status=excluded.status, step=excluded.step,
                       last_seen=excluded.last_seen, completed_at=excluded.completed_at,
-                      pr_url=excluded.pr_url, pr_number=excluded.pr_number
+                      pr_url=excluded.pr_url, pr_number=excluded.pr_number,
+                      attempt_count=excluded.attempt_count, first_claimed_at=excluded.first_claimed_at,
+                      retried_at=excluded.retried_at, stuck=excluded.stuck, stuck_since=excluded.stuck_since
                 """, {
                     "wo": wo_id,
                     "slug": record.get("slug", ""),
@@ -604,6 +627,11 @@ def _db_sync_dispatch() -> None:
                     "completed_at": record.get("completed_at"),
                     "pr_url": record.get("pr_url", ""),
                     "pr_number": record.get("pr_number"),
+                    "attempt_count": record.get("attempt_count", 0),
+                    "first_claimed_at": record.get("first_claimed_at"),
+                    "retried_at": record.get("retried_at"),
+                    "stuck": int(bool(record.get("stuck", False))),
+                    "stuck_since": record.get("stuck_since"),
                 })
     except Exception as e:
         print(f"[db] sync_dispatch failed: {e}")
@@ -1316,6 +1344,14 @@ async def get_next(domain: str = ""):
             continue
         claim = _dispatch_state.get(wo_id, {})
         if claim.get("status") in active_statuses:
+            continue
+        # A WO that already exceeded MAX_RETRY_ATTEMPTS will always 429 on
+        # claim (see /api/claim below) — without this check it stays the
+        # top recommendation forever, and since /api/next has no way to say
+        # "give me the next one instead," every runner poll gets the same
+        # unclaimable WO back and nothing lower in the queue ever gets a
+        # chance. Skip it here the same way held/active WOs are skipped.
+        if claim.get("attempt_count", 0) >= MAX_RETRY_ATTEMPTS:
             continue
         # Dependency enforcement — skip WOs whose depends_on aren't complete yet.
         # depends_on holds bare WO numbers (ints); _dispatch_state is keyed by
