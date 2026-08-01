@@ -2004,7 +2004,7 @@ async def auto_mark_done_wo(wo_id: str, pr_number: int | None = None,
         # ── 1. Update spec file ──────────────────────────────────────────────
         try:
             files = await _cached_get(client, f"/repos/{GITHUB_REPO}/contents/{WO_PATH}",
-                                       ttl=60)
+                                       {}, ttl=60)
             spec_file = next(
                 (f for f in files if re.match(rf"WO-{wo_num}-", f["name"])),
                 None,
