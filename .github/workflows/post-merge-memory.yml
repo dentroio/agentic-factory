@@ -57,7 +57,7 @@ jobs:
           pip install anthropic --quiet
           python3 scripts/memory_agent.py \
             --diff /tmp/merged_diff.txt \
-            --pr-title "${{ github.event.head_commit.message }}" \
+            --pr-title "$PR_TITLE" \
             --pr-body "" \
             --memory-dir memory \
             --output /tmp/memory_path.txt
