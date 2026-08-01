@@ -1317,9 +1317,12 @@ async def get_next(domain: str = ""):
         claim = _dispatch_state.get(wo_id, {})
         if claim.get("status") in active_statuses:
             continue
-        # Dependency enforcement — skip WOs whose depends_on aren't complete yet
+        # Dependency enforcement — skip WOs whose depends_on aren't complete yet.
+        # depends_on holds bare WO numbers (ints); _dispatch_state is keyed by
+        # "WO-{n}" strings — without the f-string below every lookup misses and
+        # every WO with a declared dependency is held forever, complete or not.
         deps = wo.get("depends_on") or []
-        unmet = [d for d in deps if _dispatch_state.get(d, {}).get("status") != "complete"]
+        unmet = [d for d in deps if _dispatch_state.get(f"WO-{d}", {}).get("status") != "complete"]
         if unmet:
             continue
         # File-overlap guard — skip WOs whose declared scope collides with a
@@ -1928,8 +1931,17 @@ async def retry_dispatch(wo_id: str):
         "retried_at": _utcnow(),
     }
     _save_dispatch()
-    print(f"[orchestrator] {wo_id} queued for retry (attempt {attempt_count}, dispatch reset)")
-    return {"ok": True, "retrying": wo_id, "attempt_count": attempt_count}
+    # A WO can have been auto-held (stuck-timeout watchdog, or 3 cumulative
+    # rejections) before landing here. Without this, /api/next's held-check
+    # (line ~1313) silently blocks it forever — the status says "retry_queued"
+    # but nothing ever actually retries it, and there's no error to notice.
+    was_held = wo_id in _held_wos
+    _held_wos.discard(wo_id)
+    if was_held:
+        _save_held()
+    print(f"[orchestrator] {wo_id} queued for retry (attempt {attempt_count}, dispatch reset"
+          + (", un-held" if was_held else "") + ")")
+    return {"ok": True, "retrying": wo_id, "attempt_count": attempt_count, "was_held": was_held}
 
 
 @app.post("/api/dispatch/{wo_id}/reset")
