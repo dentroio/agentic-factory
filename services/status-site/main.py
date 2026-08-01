@@ -486,6 +486,38 @@ async def dashboard(request: Request):
     dispatch_running = len([w for w in active_dispatch if w.get("status") == "in_progress"])
     dispatch_queue = len([w for w in dispatch.values() if w.get("status") in ("queued", "pending", "waiting")])
 
+    # A WO can be claimed and actively worked before any branch reaches
+    # GitHub — wo_start.sh creates the branch locally only; it's pushed
+    # later on the agent's first commit. Without this, "Active Agents" can
+    # show empty while the RUNNING stat above is nonzero. Synthesize a
+    # branch-like entry from dispatch state for any WO that's genuinely
+    # active but not yet represented by a real branch.
+    branch_wo_numbers = {b["wo_number"] for b in branches if b.get("wo_number")}
+    for wo_id, entry in dispatch.items():
+        if entry.get("status") not in ("claimed", "in_progress", "awaiting_human", "awaiting_commit"):
+            continue
+        m = re.match(r"WO-(\d+)", wo_id)
+        if not m:
+            continue
+        wo_num = int(m.group(1))
+        if wo_num in branch_wo_numbers:
+            continue
+        claimed_at = entry.get("claimed_at") or entry.get("last_seen") or ""
+        branches.append(
+            {
+                "branch": entry.get("slug", wo_id),
+                "wo_number": wo_num,
+                "last_commit_sha": "",
+                "last_commit_date": claimed_at,
+                "last_commit_ago": format_duration(claimed_at) if claimed_at else "just now",
+                "agent_status": {
+                    "agent": entry.get("backend") or entry.get("agent", ""),
+                    "step": entry.get("step") or entry.get("status", "working"),
+                },
+            }
+        )
+    branches.sort(key=lambda x: x.get("last_commit_date", ""), reverse=True)
+
     # Merged PR stats for factory impact panel
     now_utc = datetime.now(UTC)
     week_start = (now_utc - timedelta(days=7)).isoformat()
