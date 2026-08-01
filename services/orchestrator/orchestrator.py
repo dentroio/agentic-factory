@@ -5053,9 +5053,12 @@ async def pm_chat(req: PMChatRequest):
             req = PMChatRequest(message=req.message, history=req.history, backend="cursor")
 
     if not text:
-        # CLI backend via draft server
+        # CLI backend via draft server — a full CLI subprocess invocation (cursor/claude/etc.),
+        # not a direct API call, so it's meaningfully slower than the Anthropic path above.
+        # A simple status question can finish in a few seconds; a request that makes the model
+        # reason about a dispatch/action decision can legitimately take a couple minutes.
         try:
-            async with httpx.AsyncClient(timeout=60) as _c:
+            async with httpx.AsyncClient(timeout=180) as _c:
                 _r = await _c.post(
                     f"{AGENT_RUNNER_URL}/api/chat",
                     json={"system": system, "message": user_message, "history": req.history,
@@ -5068,6 +5071,15 @@ async def pm_chat(req: PMChatRequest):
             raise HTTPException(
                 status_code=503,
                 detail="No AI backend available. Set an Anthropic API key in Settings → Authentication.",
+            )
+        except httpx.TimeoutException:
+            # Previously uncaught — httpx.ReadTimeout (a TimeoutException subclass) propagated
+            # past this except block entirely since only ConnectError was handled, crashing the
+            # request as a raw 500 instead of a message the Slack bot could show the user.
+            raise HTTPException(
+                status_code=504,
+                detail="The AI backend took too long to respond (over 3 minutes) — try a simpler "
+                       "request, or ask again in a moment.",
             )
 
     # Detect WO draft JSON response
