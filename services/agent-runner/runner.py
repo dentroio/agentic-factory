@@ -1,5 +1,6 @@
 """Agent runner — polls the orchestrator, claims WOs, and runs the configured agent backend."""
 import asyncio
+import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -380,10 +381,34 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
         _log(f"{wo_id} PR created: {pr_url}")
         await monitor.post(f"✅ Committed, pushed, and PR opened: {pr_url}")
         return pr_url
-    else:
-        _log(f"{wo_id} gh pr create failed: {pr_url[:200]}")
-        await monitor.post(f"✅ Changes pushed to `{branch}` — PR creation failed, will submit validate without pr_url")
-        return ""
+
+    # `gh pr create` can exit non-zero even after successfully creating the
+    # PR server-side (e.g. a slow/dropped connection on the client's final
+    # read) — this bit WO-429 directly: the PR existed and was fully green,
+    # but this branch treated it as a hard failure, never called /api/validate,
+    # and left the WO silently waiting on a stale claim with no human
+    # notification until the orchestrator's 10-minute stale-sweep recovered
+    # it by accident. Check for an already-existing PR before giving up.
+    _log(f"{wo_id} gh pr create returned non-zero: {pr_url[:200]} — checking if it actually landed")
+    check_proc = await asyncio.create_subprocess_exec(
+        "gh", "pr", "list", "--head", branch, "--state", "open", "--json", "url",
+        cwd=worktree,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    check_out, _ = await check_proc.communicate()
+    try:
+        existing = json.loads(check_out.decode(errors="replace").strip() or "[]")
+    except Exception:
+        existing = []
+    if existing:
+        recovered_url = existing[0].get("url", "")
+        _log(f"{wo_id} PR actually exists despite non-zero exit: {recovered_url}")
+        await monitor.post(f"✅ Committed, pushed, and PR opened: {recovered_url} (gh CLI reported an error, but the PR landed)")
+        return recovered_url
+
+    _log(f"{wo_id} gh pr create failed: {pr_url[:200]}")
+    await monitor.post(f"✅ Changes pushed to `{branch}` — PR creation failed, will submit validate without pr_url")
+    return ""
 
 
 async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
