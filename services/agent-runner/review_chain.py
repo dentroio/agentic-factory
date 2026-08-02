@@ -422,25 +422,43 @@ def _format_review(
 
 
 async def get_worktree_diff(worktree: str) -> str:
-    """Return a git diff of all committed changes in the worktree."""
-    try:
+    """Return a git diff of everything this branch contributes relative to main.
+
+    Was `git diff HEAD~1 HEAD` — the single last commit only. That's wrong
+    for reviewing "what does this whole branch add over main": if the agent
+    made zero commits of its own (branch sits at whatever main's tip was
+    when the worktree was created), HEAD~1..HEAD shows whichever unrelated
+    commit happened to land on main last — reviewers then correctly but
+    misleadingly flag it as "contains someone else's WO", when the real
+    problem is the agent produced no diff at all. Diffing against main's
+    actual merge-base reflects the branch's true contribution regardless of
+    commit count, including the zero-commits case (empty diff, which is the
+    honest answer).
+    """
+    async def _git(*args: str) -> str:
         proc = await asyncio.create_subprocess_exec(
-            "git", "diff", "HEAD~1", "HEAD", "--",
-            cwd=worktree,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            "git", *args, cwd=worktree,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )
         out, _ = await proc.communicate()
-        diff = out.decode("utf-8", errors="replace")
+        return out.decode("utf-8", errors="replace")
+
+    try:
+        await asyncio.create_subprocess_exec(
+            "git", "fetch", "origin", "main", cwd=worktree,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        base = (await _git("merge-base", "HEAD", "origin/main")).strip()
+        if base:
+            diff = await _git("diff", base, "HEAD", "--")
+            if diff.strip():
+                return diff
+            return "[no diff — this branch has no committed changes beyond main]"
+        # No origin/main reachable (offline, detached remote, etc.) — fall
+        # back to the old single-commit diff rather than failing outright.
+        diff = await _git("diff", "HEAD~1", "HEAD", "--")
         if not diff.strip():
-            proc2 = await asyncio.create_subprocess_exec(
-                "git", "diff",
-                cwd=worktree,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            out2, _ = await proc2.communicate()
-            diff = out2.decode("utf-8", errors="replace")
+            diff = await _git("diff")
         return diff or "[no diff available]"
     except Exception as e:
         return f"[diff error: {e}]"

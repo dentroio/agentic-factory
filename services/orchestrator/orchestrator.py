@@ -1584,6 +1584,18 @@ async def claim_wo(req: ClaimRequest):
         requires = _parse_requires_from_spec(wo_spec)
         if requires:
             pf_failures = await preflight_check(requires)
+            # preflight_check is the only await between the active_statuses
+            # check above and the final claim write below — two requests for
+            # the same wo_id can both pass that check before either finishes
+            # awaiting here. Re-check with a fresh read: if the other request
+            # already claimed it while we were awaiting, back off instead of
+            # both believing they won.
+            existing = _dispatch_state.get(wo_id, {})
+            if existing.get("status") in active_statuses:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{wo_id} already claimed by {existing.get('agent')} on {existing.get('workstation', '?')} (lost the race during preflight check)",
+                )
             if pf_failures:
                 reason_str = "; ".join(pf_failures)
                 _dispatch_state[wo_id] = {
@@ -2003,9 +2015,21 @@ async def retry_dispatch(wo_id: str, force: bool = False):
 
 
 @app.post("/api/dispatch/{wo_id}/reset")
-async def reset_dispatch(wo_id: str):
+async def reset_dispatch(wo_id: str, force: bool = False):
     """Force-clear dispatch state including attempt counter — use when max retries exceeded."""
     wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
+    existing = _dispatch_state.get(wo_id, {})
+    # Same protection as /retry — this is more destructive (deletes the entry
+    # outright), so a WO sitting on a real PR awaiting human review must not
+    # be silently wiped by a reset call either.
+    if existing.get("status") == "awaiting_human" and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{wo_id} is awaiting human review — reset would discard it. "
+                f"Merge or close that PR first, or call again with force=true to override."
+            ),
+        )
     if wo_id in _dispatch_state:
         del _dispatch_state[wo_id]
         _save_dispatch()
@@ -4696,6 +4720,23 @@ _PM_TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "name": "get_wo_status",
+        "description": (
+            "Get the live dispatch status of a specific WO — its current state, attempt count, "
+            "last activity, and its recent thread history (claim events, review findings, errors, "
+            "PR links). Use this whenever the user asks why a WO is stuck, failing, stale, or what's "
+            "actually wrong with it — query_queue only shows the static plan, not live run state or "
+            "failure reasons."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "wo": {"type": "string", "description": "WO id, e.g. 'WO-420' or '420'"},
+            },
+            "required": ["wo"],
+        },
+    },
 ]
 
 
@@ -4806,6 +4847,23 @@ def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
             "overlay_count": len(_plan_overlay),
         }, indent=2)
 
+    if tool_name == "get_wo_status":
+        raw = str(tool_input.get("wo", "")).strip().upper()
+        wo_id = raw if raw.startswith("WO-") else f"WO-{raw}"
+        entry = _dispatch_state.get(wo_id)
+        if not entry:
+            return f"{wo_id} has no dispatch history — never claimed, or fully cleared."
+        result = {"dispatch": entry}
+        try:
+            messages = thread_store.load_thread(wo_id)[-12:]
+            result["recent_thread"] = [
+                {"type": m.get("type"), "author": m.get("author"), "content": (m.get("content") or "")[:500]}
+                for m in messages
+            ]
+        except Exception as exc:
+            result["recent_thread"] = f"(could not load thread: {exc})"
+        return json.dumps(result, indent=2, default=str)
+
     return f"Unknown tool: {tool_name}"
 
 
@@ -4868,6 +4926,20 @@ DISPATCH ACTION — emit at the END of your response when the user confirms they
   Example: [DISPATCH:WO-185:cursor]
   Only emit this when the user says "yes", "start it", "do it", "go ahead", or similar confirmation.
   Always tell the user which WO and backend you're dispatching before emitting the tag.
+  IMPORTANT: before offering to dispatch/redispatch a WO the user says is stuck or failing, call
+  get_wo_status first. If its status is "awaiting_human" with a PR already open, do NOT offer to
+  dispatch/reset it — tell the user the PR is ready and needs their review/merge instead. Dispatching
+  it again would discard that finished work (this is enforced server-side too, but don't offer
+  something that will just get rejected).
+
+RESET ACTION — clears a WO's retry-attempt counter so it can be claimed again after hitting the
+retry cap (3 attempts). Use ONLY when the user explicitly asks to reset/unstick/retry a WO that
+get_wo_status shows is exhausted (attempt_count >= 3) — never as a first response to "it's stuck",
+always look first and explain what actually happened, then offer this if resetting is the right call:
+  [RESET:WO-NNN]
+  Example: [RESET:WO-420]
+  Do NOT emit this for a WO that get_wo_status shows is "awaiting_human" with an open PR — that
+  WO isn't broken, it's done and waiting on a human. Resetting it would be wrong; say so instead.
 
 WO PR MERGE ACTION — use for WO PRs (non-Dependabot) when CI is green and user asks to merge:
   [PR:merge:NNN] — squash-merge PR #NNN directly (no approval step — avoids GitHub self-review 422)
@@ -5312,6 +5384,28 @@ async def pm_chat(req: PMChatRequest):
 
     if dispatch_results:
         clean_text = clean_text + "\n\n" + "\n".join(dispatch_results)
+
+    # Parse and execute RESET action tags, e.g. [RESET:WO-420]
+    reset_pattern = re.compile(r"\[RESET:(WO-\d+|\d+)\]")
+    reset_results: list[str] = []
+    for match in reset_pattern.finditer(clean_text):
+        raw_wo = match.group(1)
+        wo_id = raw_wo if raw_wo.startswith("WO-") else f"WO-{raw_wo}"
+        clean_text = clean_text.replace(match.group(0), "").strip()
+        try:
+            async with httpx.AsyncClient(timeout=10) as _rc:
+                resp = await _rc.post(f"http://localhost:{API_PORT}/api/dispatch/{wo_id}/reset")
+                if resp.status_code == 200:
+                    reset_results.append(f"✅ {wo_id} reset — attempt counter cleared, claimable again.")
+                elif resp.status_code == 409:
+                    reset_results.append(f"⚠️ {wo_id} not reset: {resp.json().get('detail', 'blocked')}")
+                else:
+                    reset_results.append(f"⚠️ Reset of {wo_id} failed ({resp.status_code}): {resp.text[:200]}")
+        except Exception as exc:
+            reset_results.append(f"⚠️ Reset of {wo_id} failed: {exc}")
+
+    if reset_results:
+        clean_text = clean_text + "\n\n" + "\n".join(reset_results)
 
     # Parse and execute plan management actions: CREATE/DELETE for programs, phases, milestones
     plan_action_pattern = re.compile(
