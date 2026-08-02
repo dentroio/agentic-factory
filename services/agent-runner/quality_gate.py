@@ -111,6 +111,23 @@ async def run_ci(worktree: str) -> tuple[bool, str]:
             os.close(fd)
             break  # lock acquired
         except FileExistsError:
+            # The lock only ever gets released by the finally: block below —
+            # a process killed mid-run (daemon restart, crash, kill -9) skips
+            # that cleanup and leaves the lock orphaned forever, blocking
+            # every future CI run until a human notices and deletes it by
+            # hand. This bit for real: a stale lock from a killed daemon sat
+            # for ~14 hours, silently failing CI on every WO that touched it.
+            # Before waiting, check whether the PID that holds it is even
+            # alive — if not, the lock is abandoned and safe to reclaim now.
+            try:
+                holder_pid = int(_CI_LOCK_PATH.read_text().strip())
+                os.kill(holder_pid, 0)  # raises if the process doesn't exist
+            except (ValueError, OSError, ProcessLookupError):
+                try:
+                    _CI_LOCK_PATH.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                continue  # retry acquisition immediately
             if waited >= _CI_LOCK_TIMEOUT:
                 return False, "CI lock wait timed out — another CI run held the lock too long"
             await asyncio.sleep(5)
