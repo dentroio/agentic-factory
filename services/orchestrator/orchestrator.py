@@ -494,7 +494,12 @@ def _init_db() -> None:
               last_seen TEXT,
               completed_at TEXT,
               pr_url TEXT DEFAULT '',
-              pr_number INTEGER
+              pr_number INTEGER,
+              attempt_count INTEGER DEFAULT 0,
+              first_claimed_at TEXT,
+              retried_at TEXT,
+              stuck INTEGER DEFAULT 0,
+              stuck_since TEXT
             )
         """)
         conn.execute("""
@@ -558,6 +563,20 @@ def _init_db() -> None:
             conn.execute("ALTER TABLE queue ADD COLUMN files_likely_changed TEXT DEFAULT '[]'")
         except sqlite3.OperationalError:
             pass  # column already exists
+        # runs table predates attempt_count/first_claimed_at/retried_at/stuck/stuck_since —
+        # without these, every restart silently drops them (_db_sync_dispatch only wrote the
+        # original columns), resetting the max-retry counter and stuck-detection state.
+        for _col, _ddl in (
+            ("attempt_count", "ALTER TABLE runs ADD COLUMN attempt_count INTEGER DEFAULT 0"),
+            ("first_claimed_at", "ALTER TABLE runs ADD COLUMN first_claimed_at TEXT"),
+            ("retried_at", "ALTER TABLE runs ADD COLUMN retried_at TEXT"),
+            ("stuck", "ALTER TABLE runs ADD COLUMN stuck INTEGER DEFAULT 0"),
+            ("stuck_since", "ALTER TABLE runs ADD COLUMN stuck_since TEXT"),
+        ):
+            try:
+                conn.execute(_ddl)
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
 
 def _db_load_all_runs() -> dict[str, dict]:
@@ -581,16 +600,20 @@ def _db_sync_dispatch() -> None:
                 conn.execute("""
                     INSERT INTO runs
                       (wo, slug, agent, backend, workstation, claimed_at, status,
-                       step, last_seen, completed_at, pr_url, pr_number)
+                       step, last_seen, completed_at, pr_url, pr_number,
+                       attempt_count, first_claimed_at, retried_at, stuck, stuck_since)
                     VALUES
                       (:wo, :slug, :agent, :backend, :workstation, :claimed_at, :status,
-                       :step, :last_seen, :completed_at, :pr_url, :pr_number)
+                       :step, :last_seen, :completed_at, :pr_url, :pr_number,
+                       :attempt_count, :first_claimed_at, :retried_at, :stuck, :stuck_since)
                     ON CONFLICT(wo) DO UPDATE SET
                       slug=excluded.slug, agent=excluded.agent, backend=excluded.backend,
                       workstation=excluded.workstation, claimed_at=excluded.claimed_at,
                       status=excluded.status, step=excluded.step,
                       last_seen=excluded.last_seen, completed_at=excluded.completed_at,
-                      pr_url=excluded.pr_url, pr_number=excluded.pr_number
+                      pr_url=excluded.pr_url, pr_number=excluded.pr_number,
+                      attempt_count=excluded.attempt_count, first_claimed_at=excluded.first_claimed_at,
+                      retried_at=excluded.retried_at, stuck=excluded.stuck, stuck_since=excluded.stuck_since
                 """, {
                     "wo": wo_id,
                     "slug": record.get("slug", ""),
@@ -604,6 +627,11 @@ def _db_sync_dispatch() -> None:
                     "completed_at": record.get("completed_at"),
                     "pr_url": record.get("pr_url", ""),
                     "pr_number": record.get("pr_number"),
+                    "attempt_count": record.get("attempt_count", 0),
+                    "first_claimed_at": record.get("first_claimed_at"),
+                    "retried_at": record.get("retried_at"),
+                    "stuck": int(bool(record.get("stuck", False))),
+                    "stuck_since": record.get("stuck_since"),
                 })
     except Exception as e:
         print(f"[db] sync_dispatch failed: {e}")
@@ -1317,6 +1345,14 @@ async def get_next(domain: str = ""):
         claim = _dispatch_state.get(wo_id, {})
         if claim.get("status") in active_statuses:
             continue
+        # A WO that already exceeded MAX_RETRY_ATTEMPTS will always 429 on
+        # claim (see /api/claim below) — without this check it stays the
+        # top recommendation forever, and since /api/next has no way to say
+        # "give me the next one instead," every runner poll gets the same
+        # unclaimable WO back and nothing lower in the queue ever gets a
+        # chance. Skip it here the same way held/active WOs are skipped.
+        if claim.get("attempt_count", 0) >= MAX_RETRY_ATTEMPTS:
+            continue
         # Dependency enforcement — skip WOs whose depends_on aren't complete yet.
         # depends_on holds bare WO numbers (ints); _dispatch_state is keyed by
         # "WO-{n}" strings — without the f-string below every lookup misses and
@@ -1916,10 +1952,32 @@ async def release_dispatch(wo_id: str):
 
 
 @app.post("/api/dispatch/{wo_id}/retry")
-async def retry_dispatch(wo_id: str):
+async def retry_dispatch(wo_id: str, force: bool = False):
     """Reset a failed/stuck WO back to open so the runner picks it up again."""
     wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
     prev = _dispatch_state.get(wo_id, {})
+    # This used to unconditionally overwrite whatever was here — including a
+    # WO that already finished and is sitting on a real, good PR waiting for
+    # a human. A stale retry request (e.g. queued from Slack before the WO
+    # actually completed) would silently discard that state and put a fresh
+    # agent to work redoing already-done work. Refuse unless the caller
+    # explicitly overrides — mirrors the pattern used elsewhere for
+    # destructive resets.
+    #
+    # Deliberately checks status alone, not pr_url presence: /api/validate
+    # only ever sets status to "awaiting_human" on the dispatch entry — the
+    # actual PR link lives in the separate _validations queue, not here. A
+    # first version of this guard required pr_url too and never fired.
+    if prev.get("status") == "awaiting_human" and not force:
+        pending = next((v for v in reversed(_validations) if v.get("wo") == wo_id and v.get("status") == "pending"), None)
+        pr_hint = f" ({pending['pr_url']})" if pending and pending.get("pr_url") else ""
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{wo_id} is awaiting human review{pr_hint} — retry would discard it. "
+                f"Merge or close that PR first, or call again with force=true to override."
+            ),
+        )
     attempt_count = prev.get("attempt_count", 0)
     # Preserve attempt_count so the max-retries gate still applies on the next claim.
     # Use a minimal stub rather than deleting so history is kept.
@@ -3316,7 +3374,16 @@ async def poll() -> None:
         return
 
     # Stale claim sweep: release WOs whose agent stopped checking in.
-    stale_released = []
+    #
+    # A claim can look dead purely on timing even when the agent actually
+    # finished — the review chain + CI + commit/push/PR sequence has real
+    # gaps between heartbeats, and a slow-but-successful run can outlast
+    # CLAIM_TIMEOUT_SECONDS. Before discarding a "stale" claim, check whether
+    # a PR already exists for it on GitHub; if so, the agent didn't die, it
+    # finished and just never got to report back. Recover it into the human
+    # validation queue instead of silently losing completed work and burning
+    # a retry attempt on a WO that isn't actually broken.
+    stale_candidates = []
     for wo_id, entry in list(_dispatch_state.items()):
         if entry.get("status") not in ("in_progress", "claimed"):
             continue
@@ -3328,14 +3395,59 @@ async def poll() -> None:
         except Exception:
             continue
         if age > CLAIM_TIMEOUT_SECONDS:
-            agent_name = entry.get("agent", "unknown")
-            age_min = int(age / 60)
-            print(f"[orchestrator] {wo_id} stale claim ({age_min}m, agent={agent_name}) — releasing")
-            _dispatch_state[wo_id]["status"] = "stale"
-            _dispatch_state[wo_id]["stale_at"] = _utcnow()
-            stale_released.append((wo_id, agent_name, age_min))
+            stale_candidates.append((wo_id, entry, int(age / 60)))
+
+    pr_by_wo: dict[int, dict] = {}
+    if stale_candidates:
+        try:
+            async with httpx.AsyncClient(timeout=15) as _pc:
+                open_prs = await _cached_get(_pc, f"/repos/{GITHUB_REPO}/pulls", {"state": "open", "per_page": 100})
+            for p in open_prs:
+                n = resolve_wo_for_pr(p)
+                if n is not None:
+                    pr_by_wo[n] = p
+        except Exception as e:
+            print(f"[orchestrator] stale-sweep PR lookup failed: {e}")
+
+    stale_released = []
+    recovered = []
+    for wo_id, entry, age_min in stale_candidates:
+        agent_name = entry.get("agent", "unknown")
+        try:
+            wo_num = int(wo_id.replace("WO-", ""))
+        except ValueError:
+            wo_num = None
+        pr = pr_by_wo.get(wo_num) if wo_num is not None else None
+
+        if pr:
+            pr_url = pr.get("html_url", "")
+            print(f"[orchestrator] {wo_id} claim looked stale ({age_min}m) but PR #{pr.get('number')} already exists — recovering instead of discarding")
+            _dispatch_state[wo_id]["status"] = "awaiting_human"
+            _dispatch_state[wo_id]["pr_url"] = pr_url
+            _dispatch_state[wo_id]["pr_number"] = pr.get("number")
+            recovered.append((wo_id, agent_name, age_min, pr_url))
             thread_store.append_message(wo_id, thread_store.system_message(
-                f"⚠️ Claim expired after {age_min} minutes — agent `{agent_name}` appears dead. Re-queuing."
+                f"⚠️ Claim went quiet for {age_min} minutes, but PR already exists — "
+                f"the agent finished, it just didn't check back in. Recovered to awaiting human review: {pr_url}"
+            ))
+            continue
+
+        print(f"[orchestrator] {wo_id} stale claim ({age_min}m, agent={agent_name}) — releasing")
+        _dispatch_state[wo_id]["status"] = "stale"
+        _dispatch_state[wo_id]["stale_at"] = _utcnow()
+        stale_released.append((wo_id, agent_name, age_min))
+        thread_store.append_message(wo_id, thread_store.system_message(
+            f"⚠️ Claim expired after {age_min} minutes — agent `{agent_name}` appears dead. Re-queuing."
+        ))
+    if recovered:
+        _save_dispatch()
+        for wo_id, agent_name, age_min, pr_url in recovered:
+            asyncio.create_task(notify_factory_alert(
+                title=f"{wo_id} recovered — PR ready for review",
+                body=f"Agent `{agent_name}` went quiet for {age_min}m but had already opened {pr_url}. No work lost.",
+                level="info",
+                source="stale-claim-sweep",
+                secrets=_load_secrets(),
             ))
     if stale_released:
         _save_dispatch()
@@ -5017,9 +5129,12 @@ async def pm_chat(req: PMChatRequest):
             req = PMChatRequest(message=req.message, history=req.history, backend="cursor")
 
     if not text:
-        # CLI backend via draft server
+        # CLI backend via draft server — a full CLI subprocess invocation (cursor/claude/etc.),
+        # not a direct API call, so it's meaningfully slower than the Anthropic path above.
+        # A simple status question can finish in a few seconds; a request that makes the model
+        # reason about a dispatch/action decision can legitimately take a couple minutes.
         try:
-            async with httpx.AsyncClient(timeout=60) as _c:
+            async with httpx.AsyncClient(timeout=180) as _c:
                 _r = await _c.post(
                     f"{AGENT_RUNNER_URL}/api/chat",
                     json={"system": system, "message": user_message, "history": req.history,
@@ -5032,6 +5147,15 @@ async def pm_chat(req: PMChatRequest):
             raise HTTPException(
                 status_code=503,
                 detail="No AI backend available. Set an Anthropic API key in Settings → Authentication.",
+            )
+        except httpx.TimeoutException:
+            # Previously uncaught — httpx.ReadTimeout (a TimeoutException subclass) propagated
+            # past this except block entirely since only ConnectError was handled, crashing the
+            # request as a raw 500 instead of a message the Slack bot could show the user.
+            raise HTTPException(
+                status_code=504,
+                detail="The AI backend took too long to respond (over 3 minutes) — try a simpler "
+                       "request, or ask again in a moment.",
             )
 
     # Detect WO draft JSON response
