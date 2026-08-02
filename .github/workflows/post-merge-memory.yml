@@ -70,6 +70,12 @@ jobs:
         if: steps.memory.outputs.has_memory == 'true'
         uses: actions/github-script@v7
         with:
+          # Default GITHUB_TOKEN can push the branch (contents:write above) but
+          # gets a 403 from pulls.create — GitHub blocks Actions-issued tokens
+          # from opening PRs regardless of declared permissions. GH_PAT is a
+          # real-user PAT (already used the same way in doc-writer.yml) and
+          # isn't subject to that restriction.
+          github-token: ${{ secrets.GH_PAT }}
           script: |
             const { execSync } = require('child_process');
             const memoryPath = '${{ steps.memory.outputs.memory_path }}';
