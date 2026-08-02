@@ -76,6 +76,43 @@ async def _changed_files(worktree: str, extensions: tuple[str, ...]) -> list[str
 
 _CI_LOCK_PATH = Path("/tmp/factory-ci-local.lock")
 _CI_LOCK_TIMEOUT = 900  # seconds to wait for the lock
+_COMPOSE_LOCK_TIMEOUT = 600  # seconds to wait for a per-service compose lock
+
+
+async def _with_compose_lock(svc: str, timeout: int = _COMPOSE_LOCK_TIMEOUT):
+    """Acquire a per-service lock before touching that service's shared container.
+
+    All worktrees share COMPOSE_PROJECT_NAME=clarion (see run_container_rebuild)
+    so containers aren't duplicated across runners — but that means two WOs
+    quality-gating the same service concurrently race on `docker compose build`
+    + `up -d --no-deps`. One run's `up` can recreate/remove the container out
+    from under another run's already-resolved container ID mid-attach, failing
+    with "No such container" even though the build itself succeeded. Bit
+    WO-433 and WO-444 for real. Same stale-PID self-heal as the CI lock below —
+    a lock left by a killed process shouldn't block forever.
+    """
+    lock_path = Path(f"/tmp/factory-compose-{svc}.lock")
+    waited = 0
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return lock_path
+        except FileExistsError:
+            try:
+                holder_pid = int(lock_path.read_text().strip())
+                os.kill(holder_pid, 0)
+            except (ValueError, OSError, ProcessLookupError):
+                try:
+                    lock_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                continue
+            if waited >= timeout:
+                return None  # give up waiting — caller proceeds unlocked rather than hanging forever
+            await asyncio.sleep(5)
+            waited += 5
 
 
 async def run_ci(worktree: str) -> tuple[bool, str]:
@@ -417,39 +454,50 @@ async def run_container_rebuild(worktree: str) -> dict:
 
     compose_cmd = ["docker", "compose", "-f", "docker-compose.yml"]
     for svc in services:
-        # Build the image — use cached base images (--pull=false) to avoid Docker Hub
-        # rate-limit timeouts when multiple runners are building simultaneously.
-        # Retry up to 3 times: BuildKit metadata resolver intermittently fails with
-        # DeadlineExceeded even with --pull=false when Docker Hub is slow.
-        build_rc, build_out = 1, ""
-        for attempt in range(1, 4):
-            build_rc, build_out = await _run(
-                [*compose_cmd, "build", "--pull=false", "--build-arg", f"CACHE_BUST={int(__import__('time').time())}", svc],
-                worktree, timeout=1200, env=env,
+        # All worktrees share the same container per service (see COMPOSE_PROJECT_NAME
+        # above) — serialize build+up for this specific service so a concurrent WO
+        # rebuilding the same service can't recreate the container out from under us.
+        lock_path = await _with_compose_lock(svc)
+        try:
+            # Build the image — use cached base images (--pull=false) to avoid Docker Hub
+            # rate-limit timeouts when multiple runners are building simultaneously.
+            # Retry up to 3 times: BuildKit metadata resolver intermittently fails with
+            # DeadlineExceeded even with --pull=false when Docker Hub is slow.
+            build_rc, build_out = 1, ""
+            for attempt in range(1, 4):
+                build_rc, build_out = await _run(
+                    [*compose_cmd, "build", "--pull=false", "--build-arg", f"CACHE_BUST={int(__import__('time').time())}", svc],
+                    worktree, timeout=1200, env=env,
+                )
+                if build_rc == 0:
+                    break
+                if "DeadlineExceeded" not in build_out or attempt == 3:
+                    break
+                await asyncio.sleep(10 * attempt)  # 10s, 20s back-off before retry
+            rc, out = build_rc, build_out
+            output_lines.append(f"\n--- {svc} build ---\n{out[-1500:]}")
+            if rc != 0:
+                return {
+                    "services": services, "rebuilt": False, "smoke_passed": False,
+                    "output": "\n".join(output_lines),
+                }
+            # Restart only this service — --no-deps prevents cascading dependency recreation
+            rc, out = await _run(
+                [*compose_cmd, "up", "-d", "--no-deps", svc],
+                worktree, timeout=60, env=env,
             )
-            if build_rc == 0:
-                break
-            if "DeadlineExceeded" not in build_out or attempt == 3:
-                break
-            await asyncio.sleep(10 * attempt)  # 10s, 20s back-off before retry
-        rc, out = build_rc, build_out
-        output_lines.append(f"\n--- {svc} build ---\n{out[-1500:]}")
-        if rc != 0:
-            return {
-                "services": services, "rebuilt": False, "smoke_passed": False,
-                "output": "\n".join(output_lines),
-            }
-        # Restart only this service — --no-deps prevents cascading dependency recreation
-        rc, out = await _run(
-            [*compose_cmd, "up", "-d", "--no-deps", svc],
-            worktree, timeout=60, env=env,
-        )
-        output_lines.append(f"\n--- {svc} up ---\n{out[-500:]}")
-        if rc != 0:
-            return {
-                "services": services, "rebuilt": False, "smoke_passed": False,
-                "output": "\n".join(output_lines),
-            }
+            output_lines.append(f"\n--- {svc} up ---\n{out[-500:]}")
+            if rc != 0:
+                return {
+                    "services": services, "rebuilt": False, "smoke_passed": False,
+                    "output": "\n".join(output_lines),
+                }
+        finally:
+            if lock_path is not None:
+                try:
+                    lock_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     # Wait for containers to be healthy
     rc, out = await _run(["make", "wait-healthy"], worktree, timeout=120, env=env)
