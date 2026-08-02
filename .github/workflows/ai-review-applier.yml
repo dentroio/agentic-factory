@@ -215,16 +215,18 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: parseInt('${{ steps.check.outputs.pr_number }}'),
-              body: `## 🤖 AI Review Suggestions Applied
-
-I applied the suggestions from the AI code review. The review is re-running on the updated code.
-
-**Changes:** ${{ steps.write_files.outputs.summary }}
-
-If the new review verdict is LGTM, auto-merge will fire. If there are remaining issues, they will appear in the next review comment.
-
----
-*Applied by \`ai-review-applier.yml\` — powered by Claude*`,
+              body: [
+                '## 🤖 AI Review Suggestions Applied',
+                '',
+                'I applied the suggestions from the AI code review. The review is re-running on the updated code.',
+                '',
+                `**Changes:** ${{ steps.write_files.outputs.summary }}`,
+                '',
+                'If the new review verdict is LGTM, auto-merge will fire. If there are remaining issues, they will appear in the next review comment.',
+                '',
+                '---',
+                '*Applied by `ai-review-applier.yml` — powered by Claude*',
+              ].join('\n'),
             });
 
       - name: Post skip comment if suggestions could not be applied
@@ -237,14 +239,16 @@ If the new review verdict is LGTM, auto-merge will fire. If there are remaining 
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: parseInt('${{ steps.check.outputs.pr_number }}'),
-              body: `## 🤖 AI Review Suggestions — Manual Review Needed
-
-The AI code review posted suggestions but I could not apply them automatically.
-
-**Why:** ${reason}
-
-Please review the AI code review comment above and address the suggestions manually, or approve the PR if the suggestions are non-critical.
-
----
-*Assessed by \`ai-review-applier.yml\`*`,
+              body: [
+                '## 🤖 AI Review Suggestions — Manual Review Needed',
+                '',
+                'The AI code review posted suggestions but I could not apply them automatically.',
+                '',
+                `**Why:** ${reason}`,
+                '',
+                'Please review the AI code review comment above and address the suggestions manually, or approve the PR if the suggestions are non-critical.',
+                '',
+                '---',
+                '*Assessed by `ai-review-applier.yml`*',
+              ].join('\n'),
             });

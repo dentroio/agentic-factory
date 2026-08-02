@@ -56,13 +56,32 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const report = fs.readFileSync('/tmp/anomaly.md', 'utf8');
             const now = new Date().toISOString();
+
+            // "outcome == failure" means the script exited non-zero — that's
+            // true both when it found a real anomaly and wrote the report,
+            // AND when it crashed before ever writing one (missing config,
+            // network error, a bug in the script itself). Reading the file
+            // unconditionally crashed this step outright on the second case
+            // (ENOENT), which is worse than a wrong report: it drops the
+            // failure entirely instead of surfacing it.
+            let report;
+            let anomalyFileExists = fs.existsSync('/tmp/anomaly.md');
+            if (anomalyFileExists) {
+              report = fs.readFileSync('/tmp/anomaly.md', 'utf8');
+            } else {
+              report = 'The observability agent exited with a failure but did not produce ' +
+                       'an anomaly report — it likely crashed before writing one (missing ' +
+                       'config, network error, or a bug in observability_agent.py). Check the ' +
+                       'workflow run logs for the actual error.';
+            }
 
             const issue = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `[Incident] Anomaly detected at ${now}`,
+              title: anomalyFileExists
+                ? `[Incident] Anomaly detected at ${now}`
+                : `[Incident] Observability agent failed to run at ${now}`,
               body: `${report}\n\n---\n*Detected by observability agent. Label this issue \`new-wo\` to have the planning agent draft a WO spec.*`,
               labels: ['incident', 'needs-triage'],
             });
