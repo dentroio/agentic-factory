@@ -35,6 +35,33 @@
 </div>
 {% endif %}
 
+{# ── Tab bar ───────────────────────────────────────────────────────────────── #}
+<div class="flex items-center gap-1 border-b border-slate-800 mb-6" role="tablist">
+  <button type="button" id="tab-btn-llm" onclick="switchAgentsTab('llm')"
+    class="agents-tab-btn px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors">
+    LLM
+  </button>
+  <button type="button" id="tab-btn-models" onclick="switchAgentsTab('models')"
+    class="agents-tab-btn px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors">
+    Model Assignments
+  </button>
+  <button type="button" id="tab-btn-execution" onclick="switchAgentsTab('execution')"
+    class="agents-tab-btn px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors">
+    WO Execution &amp; Review
+  </button>
+</div>
+
+<style>
+  .agents-tab-btn { color: #64748b; border-color: transparent; }
+  .agents-tab-btn:hover { color: #cbd5e1; }
+  .agents-tab-btn.active { color: #a78bfa; border-color: #8b5cf6; }
+</style>
+
+{# ══════════════════════════════════════════════════════════════════════════
+   TAB: LLM — providers, agent daemons (subscription/API auth), API keys
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div id="agents-tab-llm" class="agents-tab-panel">
+
 {# ── LLM Providers ──────────────────────────────────────────────────────────── #}
 <div class="glass-panel overflow-hidden mb-6">
   <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
@@ -52,175 +79,6 @@
     <div class="px-5 py-8 text-center text-xs text-slate-600 font-mono">Loading providers…</div>
   </div>
 </div>
-
-{# ── Automation Model ───────────────────────────────────────────────────────── #}
-<div class="glass-panel overflow-hidden mb-6">
-  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
-    <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Automation Model</span>
-    <p class="text-xs text-slate-500 mt-0.5">The Claude model used by WO drafting, PM chat, and the GitHub Actions scripts (ai-review, planning-agent, doc-writer, etc.) — separate from the Execution Backend below, which is the CLI tool that builds WOs.</p>
-  </div>
-  <div class="px-5 py-5">
-    <div class="max-w-md">
-      <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Model</label>
-      <input type="text" id="am-model" list="am-model-options" placeholder="claude-sonnet-5"
-        class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
-               focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
-      <datalist id="am-model-options">
-        <option value="claude-sonnet-5">
-        <option value="claude-opus-4-8">
-        <option value="claude-haiku-4-5-20251001">
-        <option value="claude-fable-5">
-      </datalist>
-      <p class="text-xs text-slate-600 mt-1" id="am-status">Loading current model…</p>
-      <button type="button" onclick="saveAutomationModel()" id="am-save-btn"
-        class="mt-3 px-4 py-2 text-xs font-bold bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-lg transition-colors border border-violet-500/50">
-        Save
-      </button>
-    </div>
-  </div>
-</div>
-
-<script>
-(function() {
-  async function loadAutomationModel() {
-    const input = document.getElementById('am-model');
-    const status = document.getElementById('am-status');
-    try {
-      const r = await fetch('/api/factory/automation-model');
-      const d = await r.json();
-      input.placeholder = d.model || d.default || 'claude-sonnet-5';
-      input.dataset.current = d.model || '';
-      status.textContent = d.repo
-        ? `Currently ${d.model} (applies to ${d.repo}'s GitHub Actions scripts and this dashboard's local automation)`
-        : `Currently ${d.model}`;
-    } catch (e) {
-      status.textContent = `Could not load current model: ${e.message}`;
-    }
-  }
-
-  window.saveAutomationModel = async function() {
-    const input = document.getElementById('am-model');
-    const status = document.getElementById('am-status');
-    const btn = document.getElementById('am-save-btn');
-    const model = input.value.trim() || input.placeholder;
-    btn.disabled = true;
-    status.textContent = 'Saving…';
-    try {
-      const r = await fetch('/api/factory/automation-model', {
-        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model }),
-      });
-      const d = await r.json();
-      if (r.ok) {
-        input.value = '';
-        input.placeholder = d.model;
-        status.textContent = `Saved — now ${d.model}. GitHub Actions scripts pick this up on their next run; local calls use it immediately.`;
-      } else {
-        status.textContent = `⚠ ${d.detail || 'Save failed'}`;
-      }
-    } catch (e) {
-      status.textContent = `⚠ Network error: ${e.message}`;
-    } finally {
-      btn.disabled = false;
-    }
-  };
-
-  loadAutomationModel();
-})();
-</script>
-
-{# ── Review Model (optional override) ───────────────────────────────────────── #}
-<div class="glass-panel overflow-hidden mb-6">
-  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
-    <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Review Model <span class="text-slate-600 font-normal normal-case">(optional)</span></span>
-    <p class="text-xs text-slate-500 mt-0.5">Overrides the Automation Model above specifically for code/merge review (ai_review.py, merge_advisor.py). Leave blank to let those scripts use the Automation Model, or their own built-in default if that's blank too.</p>
-  </div>
-  <div class="px-5 py-5">
-    <div class="max-w-md">
-      <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Model</label>
-      <input type="text" id="rm-model" list="am-model-options" placeholder="(inherits Automation Model)"
-        class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
-               focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
-      <p class="text-xs text-slate-600 mt-1" id="rm-status">Loading…</p>
-      <div class="flex items-center gap-2 mt-3">
-        <button type="button" onclick="saveReviewModel()" id="rm-save-btn"
-          class="px-4 py-2 text-xs font-bold bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-lg transition-colors border border-violet-500/50">
-          Save
-        </button>
-        <button type="button" onclick="clearReviewModel()" id="rm-clear-btn"
-          class="px-4 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors border border-slate-700">
-          Clear override
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>
-(function() {
-  async function loadReviewModel() {
-    const input = document.getElementById('rm-model');
-    const status = document.getElementById('rm-status');
-    try {
-      const r = await fetch('/api/factory/review-model');
-      const d = await r.json();
-      input.value = d.model || '';
-      status.textContent = d.model
-        ? `Currently overridden to ${d.model} for review scripts on ${d.repo}.`
-        : `No override set — review scripts inherit the Automation Model (or their own built-in default).`;
-    } catch (e) {
-      status.textContent = `Could not load: ${e.message}`;
-    }
-  }
-
-  window.saveReviewModel = async function() {
-    const input = document.getElementById('rm-model');
-    const status = document.getElementById('rm-status');
-    const btn = document.getElementById('rm-save-btn');
-    const model = input.value.trim();
-    if (!model) { status.textContent = 'Enter a model name, or use "Clear override" to remove it.'; return; }
-    btn.disabled = true;
-    status.textContent = 'Saving…';
-    try {
-      const r = await fetch('/api/factory/review-model', {
-        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model }),
-      });
-      const d = await r.json();
-      if (r.ok) status.textContent = `Saved — review scripts now use ${d.model}.`;
-      else status.textContent = `⚠ ${d.detail || 'Save failed'}`;
-    } catch (e) {
-      status.textContent = `⚠ Network error: ${e.message}`;
-    } finally {
-      btn.disabled = false;
-    }
-  };
-
-  window.clearReviewModel = async function() {
-    const input = document.getElementById('rm-model');
-    const status = document.getElementById('rm-status');
-    const btn = document.getElementById('rm-clear-btn');
-    btn.disabled = true;
-    status.textContent = 'Clearing…';
-    try {
-      const r = await fetch('/api/factory/review-model', {
-        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model: '' }),
-      });
-      if (r.ok) {
-        input.value = '';
-        status.textContent = 'Override cleared — review scripts inherit the Automation Model.';
-      } else {
-        const d = await r.json();
-        status.textContent = `⚠ ${d.detail || 'Clear failed'}`;
-      }
-    } catch (e) {
-      status.textContent = `⚠ Network error: ${e.message}`;
-    } finally {
-      btn.disabled = false;
-    }
-  };
-
-  loadReviewModel();
-})();
-</script>
 
 {# ── Add/Edit Provider Modal ────────────────────────────────────────────────── #}
 <div id="provider-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" style="display:none!important">
@@ -287,7 +145,7 @@
                    focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
           <p class="text-xs text-slate-600 mt-1">
             Documentation only — the env var name this provider expects. To actually set a key,
-            use the Anthropic API Key field under "API Keys" below.
+            use the API Keys section below.
           </p>
         </div>
       </div>
@@ -593,7 +451,11 @@
     subscription: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-sky-500/15 text-sky-400">Subscription</span>',
     api: '<span class="text-xs px-1.5 py-0.5 rounded font-mono bg-amber-500/15 text-amber-400">API Key</span>',
   };
-  const AGENT_ORDER = ['claude', 'cursor'];
+  // Preferred display order for the known backends; anything else the API
+  // returns (a future backend, a custom one) is appended after these rather
+  // than silently dropped — this list used to be the *only* thing rendered,
+  // which hid codex/gemini even though the API always returned them.
+  const KNOWN_AGENT_ORDER = ['claude', 'cursor', 'codex', 'gemini'];
 
   async function refreshRoster() {
     const roster = document.getElementById('agent-roster');
@@ -605,8 +467,12 @@
         roster.innerHTML = '<div class="px-5 py-8 text-center text-xs text-slate-600 font-mono">Runner offline — the agent runner daemon must be running on this machine to manage agents</div>';
         return;
       }
+      const agentNames = [
+        ...KNOWN_AGENT_ORDER.filter(n => agents[n]),
+        ...Object.keys(agents).filter(n => !KNOWN_AGENT_ORDER.includes(n)),
+      ];
       const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      roster.innerHTML = AGENT_ORDER.map(name => {
+      roster.innerHTML = agentNames.map(name => {
         const a = agents[name];
         if (!a) return '';
         const isRunning = a.daemon_loaded && a.daemon_pid != null;
@@ -632,7 +498,7 @@
               placeholder="${a.api_key_in_plist ? 'Enter new key to replace' : `Paste ${esc(a.api_key_env)}…`}"
               class="w-full bg-slate-950/80 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
                      focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
-            <p class="text-xs text-slate-700 mt-1">Leave blank to keep current key</p>
+            <p class="text-xs text-slate-700 mt-1">Leave blank to keep current key${a.api_key_env === 'ANTHROPIC_API_KEY' ? ' — also used by PM chat and WO drafting' : ''}</p>
           </div>` : '';
         const domainField = `
           <div>
@@ -757,6 +623,258 @@
 })();
 </script>
 
+{# ── API Keys ──────────────────────────────────────────────────────────────── #}
+<div class="glass-panel overflow-hidden mb-6">
+  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
+    <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">API Keys</span>
+    <p class="text-xs text-slate-500 mt-0.5">Credentials for API-based LLM access. Subscription-based agents (Agent Roster above) authenticate via CLI login instead — they don't need a key here.</p>
+  </div>
+  <div class="px-5 py-5">
+    <div class="max-w-md">
+      <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+        Anthropic API Key
+        <span id="ak-status-badge" class="ml-2"></span>
+      </label>
+      <input type="password" id="ak-anthropic-key" autocomplete="off"
+        class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+               focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+      <p class="text-xs text-slate-600 mt-1" id="ak-status">
+        {% if anthropic_key_set %}Currently set.{% else %}Not set — get one at console.anthropic.com/settings/keys{% endif %}
+      </p>
+      <button type="button" onclick="saveAnthropicKey()" id="ak-save-btn"
+        class="mt-3 px-4 py-2 text-xs font-bold bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-lg transition-colors border border-violet-500/50">
+        Save
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const initialSet = {{ 'true' if anthropic_key_set else 'false' }};
+
+  function updateBadge(isSet) {
+    const badge = document.getElementById('ak-status-badge');
+    badge.innerHTML = isSet
+      ? '<span class="text-xs font-mono text-emerald-400 bg-emerald-900/20 border border-emerald-500/20 rounded px-1.5 py-0.5">● set</span>'
+      : '<span class="text-xs font-mono text-slate-500 bg-slate-800/50 border border-slate-700/30 rounded px-1.5 py-0.5">not set</span>';
+  }
+  updateBadge(initialSet);
+  document.getElementById('ak-anthropic-key').placeholder = initialSet ? 'Enter new key to replace current' : 'sk-ant-api03-...';
+
+  window.saveAnthropicKey = async function() {
+    const input = document.getElementById('ak-anthropic-key');
+    const status = document.getElementById('ak-status');
+    const btn = document.getElementById('ak-save-btn');
+    const key = input.value.trim();
+    if (!key) { status.textContent = 'Enter a key to save.'; return; }
+    btn.disabled = true;
+    status.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/factory/anthropic-key', {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ key }),
+      });
+      if (r.ok) {
+        input.value = '';
+        input.placeholder = 'Enter new key to replace current';
+        updateBadge(true);
+        status.textContent = 'Saved.';
+      } else {
+        const d = await r.json();
+        status.textContent = `⚠ ${d.detail || 'Save failed'}`;
+      }
+    } catch (e) {
+      status.textContent = `⚠ Network error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+})();
+</script>
+
+</div>{# /agents-tab-llm #}
+
+{# ══════════════════════════════════════════════════════════════════════════
+   TAB: Model Assignments — which model handles which automation task
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div id="agents-tab-models" class="agents-tab-panel hidden">
+
+{# ── Automation Model ───────────────────────────────────────────────────────── #}
+<div class="glass-panel overflow-hidden mb-6">
+  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
+    <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Automation Model</span>
+    <p class="text-xs text-slate-500 mt-0.5">The Claude model used by WO drafting, PM chat, and the GitHub Actions scripts (ai-review, planning-agent, doc-writer, etc.) — separate from the Execution Backend, which is the CLI tool that builds WOs.</p>
+  </div>
+  <div class="px-5 py-5">
+    <div class="max-w-md">
+      <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Model</label>
+      <input type="text" id="am-model" list="am-model-options" placeholder="claude-sonnet-5"
+        class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+               focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+      <datalist id="am-model-options">
+        <option value="claude-sonnet-5">
+        <option value="claude-opus-4-8">
+        <option value="claude-haiku-4-5-20251001">
+        <option value="claude-fable-5">
+      </datalist>
+      <p class="text-xs text-slate-600 mt-1" id="am-status">Loading current model…</p>
+      <button type="button" onclick="saveAutomationModel()" id="am-save-btn"
+        class="mt-3 px-4 py-2 text-xs font-bold bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-lg transition-colors border border-violet-500/50">
+        Save
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  async function loadAutomationModel() {
+    const input = document.getElementById('am-model');
+    const status = document.getElementById('am-status');
+    try {
+      const r = await fetch('/api/factory/automation-model');
+      const d = await r.json();
+      input.placeholder = d.model || d.default || 'claude-sonnet-5';
+      input.dataset.current = d.model || '';
+      status.textContent = d.repo
+        ? `Currently ${d.model} (applies to ${d.repo}'s GitHub Actions scripts and this dashboard's local automation)`
+        : `Currently ${d.model}`;
+    } catch (e) {
+      status.textContent = `Could not load current model: ${e.message}`;
+    }
+  }
+
+  window.saveAutomationModel = async function() {
+    const input = document.getElementById('am-model');
+    const status = document.getElementById('am-status');
+    const btn = document.getElementById('am-save-btn');
+    const model = input.value.trim() || input.placeholder;
+    btn.disabled = true;
+    status.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/factory/automation-model', {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        input.value = '';
+        input.placeholder = d.model;
+        status.textContent = `Saved — now ${d.model}. GitHub Actions scripts pick this up on their next run; local calls use it immediately.`;
+      } else {
+        status.textContent = `⚠ ${d.detail || 'Save failed'}`;
+      }
+    } catch (e) {
+      status.textContent = `⚠ Network error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  loadAutomationModel();
+})();
+</script>
+
+{# ── Review Model (optional override) ───────────────────────────────────────── #}
+<div class="glass-panel overflow-hidden mb-6">
+  <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
+    <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Review Model <span class="text-slate-600 font-normal normal-case">(optional)</span></span>
+    <p class="text-xs text-slate-500 mt-0.5">Overrides the Automation Model above specifically for code/merge review (ai_review.py, merge_advisor.py). Leave blank to let those scripts use the Automation Model, or their own built-in default if that's blank too.</p>
+  </div>
+  <div class="px-5 py-5">
+    <div class="max-w-md">
+      <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Model</label>
+      <input type="text" id="rm-model" list="am-model-options" placeholder="(inherits Automation Model)"
+        class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
+               focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
+      <p class="text-xs text-slate-600 mt-1" id="rm-status">Loading…</p>
+      <div class="flex items-center gap-2 mt-3">
+        <button type="button" onclick="saveReviewModel()" id="rm-save-btn"
+          class="px-4 py-2 text-xs font-bold bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white rounded-lg transition-colors border border-violet-500/50">
+          Save
+        </button>
+        <button type="button" onclick="clearReviewModel()" id="rm-clear-btn"
+          class="px-4 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors border border-slate-700">
+          Clear override
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  async function loadReviewModel() {
+    const input = document.getElementById('rm-model');
+    const status = document.getElementById('rm-status');
+    try {
+      const r = await fetch('/api/factory/review-model');
+      const d = await r.json();
+      input.value = d.model || '';
+      status.textContent = d.model
+        ? `Currently overridden to ${d.model} for review scripts on ${d.repo}.`
+        : `No override set — review scripts inherit the Automation Model (or their own built-in default).`;
+    } catch (e) {
+      status.textContent = `Could not load: ${e.message}`;
+    }
+  }
+
+  window.saveReviewModel = async function() {
+    const input = document.getElementById('rm-model');
+    const status = document.getElementById('rm-status');
+    const btn = document.getElementById('rm-save-btn');
+    const model = input.value.trim();
+    if (!model) { status.textContent = 'Enter a model name, or use "Clear override" to remove it.'; return; }
+    btn.disabled = true;
+    status.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/factory/review-model', {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model }),
+      });
+      const d = await r.json();
+      if (r.ok) status.textContent = `Saved — review scripts now use ${d.model}.`;
+      else status.textContent = `⚠ ${d.detail || 'Save failed'}`;
+    } catch (e) {
+      status.textContent = `⚠ Network error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  window.clearReviewModel = async function() {
+    const input = document.getElementById('rm-model');
+    const status = document.getElementById('rm-status');
+    const btn = document.getElementById('rm-clear-btn');
+    btn.disabled = true;
+    status.textContent = 'Clearing…';
+    try {
+      const r = await fetch('/api/factory/review-model', {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model: '' }),
+      });
+      if (r.ok) {
+        input.value = '';
+        status.textContent = 'Override cleared — review scripts inherit the Automation Model.';
+      } else {
+        const d = await r.json();
+        status.textContent = `⚠ ${d.detail || 'Clear failed'}`;
+      }
+    } catch (e) {
+      status.textContent = `⚠ Network error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  loadReviewModel();
+})();
+</script>
+
+</div>{# /agents-tab-models #}
+
+{# ══════════════════════════════════════════════════════════════════════════
+   TAB: WO Execution & Review — which backend writes code, which reviews it
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div id="agents-tab-execution" class="agents-tab-panel hidden">
+
 <form method="post" action="/settings/agents">
 
   {# Execution Backend #}
@@ -871,35 +989,6 @@
     </div>
   </div>
 
-  {# API Keys #}
-  <div class="glass-panel overflow-hidden mb-4">
-    <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80">
-      <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">API Keys</span>
-    </div>
-    <div class="px-5 py-5">
-      <div class="max-w-md">
-        <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-          Anthropic API Key
-          {% if anthropic_key_set %}
-          <span class="ml-2 text-xs font-mono text-emerald-400 bg-emerald-900/20 border border-emerald-500/20 rounded px-1.5 py-0.5">● set</span>
-          {% else %}
-          <span class="ml-2 text-xs font-mono text-slate-500 bg-slate-800/50 border border-slate-700/30 rounded px-1.5 py-0.5">not set</span>
-          {% endif %}
-        </label>
-        <input type="password" name="anthropic_key" autocomplete="off"
-               placeholder="{% if anthropic_key_set %}Enter new key to replace current{% else %}sk-ant-api03-...{% endif %}"
-               class="w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 font-mono
-                      focus:outline-none focus:border-violet-500/60 focus:ring-1 focus:ring-violet-500/30 transition-all">
-        <p class="text-xs text-slate-600 mt-1">
-          Used when Claude (API key) is selected for WO spec generation. Leave blank to keep the current key.
-          {% if not anthropic_key_set %}
-          Get one at <span class="text-slate-500">console.anthropic.com/settings/keys</span>
-          {% endif %}
-        </p>
-      </div>
-    </div>
-  </div>
-
   {# Save #}
   <div class="flex items-center gap-4">
     <button type="submit" {% if orchestrator_offline %}disabled{% endif %}
@@ -912,5 +1001,23 @@
   </div>
 
 </form>
+
+</div>{# /agents-tab-execution #}
+
+<script>
+  function switchAgentsTab(name) {
+    document.querySelectorAll('.agents-tab-panel').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('.agents-tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById('agents-tab-' + name).classList.remove('hidden');
+    document.getElementById('tab-btn-' + name).classList.add('active');
+    try { localStorage.setItem('agentsSettingsTab', name); } catch (e) {}
+  }
+  (function() {
+    let initial = 'llm';
+    try { initial = localStorage.getItem('agentsSettingsTab') || 'llm'; } catch (e) {}
+    if (!document.getElementById('agents-tab-' + initial)) initial = 'llm';
+    switchAgentsTab(initial);
+  })();
+</script>
 
 {% endblock %}

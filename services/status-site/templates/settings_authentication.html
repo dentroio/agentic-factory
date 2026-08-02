@@ -80,11 +80,9 @@
           <span class="ml-2 normal-case font-sans text-slate-600">not set</span>
           {% endif %}
         </label>
-        <input type="password" name="anthropic_key" autocomplete="off"
-          placeholder="sk-ant-…  (leave blank to keep current)"
-          class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
         <p class="text-[10px] text-slate-600 mt-1">
-          Optional — only required for the <strong class="text-slate-500">claude-api</strong> draft backend.
+          Managed in <a href="/settings/agents" class="text-sky-400 hover:text-sky-300 transition-colors">Settings → Agents → LLM</a> —
+          only required for the <strong class="text-slate-500">claude-api</strong> draft backend.
           Agent-runner backends (Claude, Cursor, Codex, Gemini) use your CLI subscriptions instead.
         </p>
       </div>

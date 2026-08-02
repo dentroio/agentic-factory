@@ -1261,14 +1261,11 @@ async def settings_agents_save(request: Request):
             "documentation": str(form.get("reviewer_documentation", "claude")).strip(),
         },
     }
-    anthropic_key = str(form.get("anthropic_key", "")).strip()
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.put(f"{ORCHESTRATOR_URL}/api/config", json=payload, headers=_orch_headers())
             if r.status_code != 200:
                 return RedirectResponse(url=f"/settings/agents?error=Save+failed+({r.status_code})", status_code=303)
-            if anthropic_key:
-                await client.put(f"{ORCHESTRATOR_URL}/api/secrets", json={"ANTHROPIC_API_KEY": anthropic_key}, headers=_orch_headers())
     except Exception:
         return RedirectResponse(url="/settings/agents?error=Orchestrator+unreachable", status_code=303)
     return RedirectResponse(url="/settings/agents?saved=1", status_code=303)
@@ -1380,7 +1377,6 @@ async def settings_authentication_save(request: Request):
     form = await request.form()
     github_token = str(form.get("github_token", "")).strip()
     github_repo = str(form.get("github_repo", "")).strip()
-    anthropic_key = str(form.get("anthropic_key", "")).strip()
     slack_webhook = str(form.get("slack_webhook", "")).strip()
     slack_bot_token = str(form.get("slack_bot_token", "")).strip()
     slack_app_token = str(form.get("slack_app_token", "")).strip()
@@ -1391,8 +1387,6 @@ async def settings_authentication_save(request: Request):
     secrets_payload: dict = {}
     if github_token:
         secrets_payload["GITHUB_TOKEN"] = github_token
-    if anthropic_key:
-        secrets_payload["ANTHROPIC_API_KEY"] = anthropic_key
     if slack_webhook:
         secrets_payload["SLACK_WEBHOOK_URL"] = slack_webhook
     if slack_bot_token:
@@ -2339,6 +2333,30 @@ async def api_put_review_model(request: Request):
             )
         if r.status_code == 200:
             return JSONResponse(content=r.json())
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Orchestrator unreachable: {e}")
+
+
+# ── Anthropic API key (self-contained widget in Settings → Agents → LLM tab) ──
+
+@app.put("/api/factory/anthropic-key")
+async def api_put_anthropic_key(request: Request):
+    body = await request.json()
+    key = (body.get("key") or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="key is required")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.put(
+                f"{ORCHESTRATOR_URL}/api/secrets",
+                json={"ANTHROPIC_API_KEY": key},
+                headers=_orch_headers(),
+            )
+        if r.status_code == 200:
+            return JSONResponse(content={"set": True})
         raise HTTPException(status_code=r.status_code, detail=r.text)
     except HTTPException:
         raise
