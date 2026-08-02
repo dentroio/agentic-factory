@@ -52,6 +52,28 @@ def _orch_headers() -> dict:
 _wos_cache: tuple[float, dict] | None = None
 _WOS_CACHE_TTL = int(os.getenv("WO_CACHE_TTL", "300"))  # 5 minutes
 
+# Canonical dispatch-status buckets — shared by every page that counts "how many
+# WOs are active." Before this, each page defined its own filter independently
+# (Overview: status == "in_progress" only; Factory: status != "complete", which
+# also swept in awaiting_human/awaiting_commit/stale/rejected) — same underlying
+# dispatch data, three different numbers on three pages that all claimed to mean
+# "active."
+_IN_PROGRESS_STATUSES = {"claimed", "in_progress"}
+_AWAITING_REVIEW_STATUSES = {"awaiting_human", "awaiting_commit"}
+_NEEDS_ATTENTION_STATUSES = {"stale", "rejected", "retry_queued"}
+
+
+def _dispatch_status_counts(dispatch: dict) -> dict:
+    in_progress = sum(1 for w in dispatch.values() if w.get("status") in _IN_PROGRESS_STATUSES)
+    awaiting_review = sum(1 for w in dispatch.values() if w.get("status") in _AWAITING_REVIEW_STATUSES)
+    needs_attention = sum(1 for w in dispatch.values() if w.get("status") in _NEEDS_ATTENTION_STATUSES)
+    return {
+        "in_progress": in_progress,
+        "awaiting_review": awaiting_review,
+        "needs_attention": needs_attention,
+        "total_active": in_progress + awaiting_review + needs_attention,
+    }
+
 
 def _load_watchdog() -> dict | None:
     if not WATCHDOG_PATH.exists():
@@ -251,10 +273,20 @@ async def _load_active_branches() -> list[dict]:
     return sorted(results, key=lambda x: x["last_commit_date"], reverse=True)
 
 
+_last_open_prs_error: str | None = None
+
+
 async def _load_open_prs() -> list[dict]:
+    global _last_open_prs_error
     try:
         prs = await gh.list_open_prs()
-    except Exception:
+        _last_open_prs_error = None
+    except Exception as e:
+        # An empty list here is indistinguishable in the UI from "genuinely no
+        # open PRs" — any transient GitHub API failure (rate limit, auth,
+        # network) looks identical to a healthy quiet repo. Remember the last
+        # failure so the dashboard can show it was a failure, not a fact.
+        _last_open_prs_error = str(e)
         return []
     results = []
     for pr in prs:
@@ -481,9 +513,11 @@ async def dashboard(request: Request):
     validations = _load_validations()
     pending_validations = [v for v in validations if v.get("status") == "pending"]
 
-    # Dispatch-based active/queue counts — same source Factory page uses
-    active_dispatch = [w for w in dispatch.values() if w.get("status") not in ("complete",)]
-    dispatch_running = len([w for w in active_dispatch if w.get("status") == "in_progress"])
+    # Dispatch-based active/queue counts — shared definition, see _dispatch_status_counts
+    dispatch_counts = _dispatch_status_counts(dispatch)
+    dispatch_running = dispatch_counts["in_progress"]
+    dispatch_awaiting_review = dispatch_counts["awaiting_review"]
+    dispatch_needs_attention = dispatch_counts["needs_attention"]
     dispatch_queue = len([w for w in dispatch.values() if w.get("status") in ("queued", "pending", "waiting")])
 
     # A WO can be claimed and actively worked before any branch reaches
@@ -559,10 +593,13 @@ async def dashboard(request: Request):
             },
             "branches": branches,
             "prs": prs,
+            "prs_error": _last_open_prs_error,
             "ci": ci,
             "total_wos": len(wos),
             "done_count": len(columns.get("done", [])),
             "dispatch_running": dispatch_running,
+            "dispatch_awaiting_review": dispatch_awaiting_review,
+            "dispatch_needs_attention": dispatch_needs_attention,
             "dispatch_queue": dispatch_queue,
             "merged_this_week": merged_this_week,
             "merged_this_month": merged_this_month,
@@ -675,7 +712,7 @@ async def pm_dashboard(request: Request):
     _apply_live_status(wos, branches, prs, dispatch, merged_prs=merged_prs)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
-    dispatch_running = len([w for w in dispatch.values() if w.get("status") == "in_progress"])
+    dispatch_running = _dispatch_status_counts(dispatch)["in_progress"]
 
     # Program roll-ups — deferred WOs excluded from total/progress (tracked separately)
     programs: dict[str, dict] = defaultdict(lambda: {"total": 0, "done": 0, "in_progress": 0, "blocked": 0, "in_review": 0, "planned": 0, "open": 0, "deferred": 0})
@@ -2415,6 +2452,13 @@ async def factory_floor(request: Request):
         key=lambda w: w.get("claimed_at") or "",
         reverse=True,
     )
+    # Overview's "Running Now" only counts claimed/in_progress — this list is
+    # broader (also awaiting_human/awaiting_commit/stale/rejected/retry_queued),
+    # which is why the two pages show different numbers for what looks like the
+    # same thing. Surface the breakdown so it's clear why, instead of relabeling
+    # this list down to match (it's a genuinely useful "everything not done yet"
+    # view for this page).
+    active_breakdown = _dispatch_status_counts(dispatch)
 
     # Map which backend names are actively working WOs so agent cards can show status.
     # Use the `backend` field (set by runner when claiming) for exact matching.
@@ -2441,6 +2485,7 @@ async def factory_floor(request: Request):
         "github_repo": GITHUB_REPO,
         "backends": backends,
         "active_wos": active_wos,
+        "active_breakdown": active_breakdown,
         "backend_wos": backend_wos,
         "refresh_seconds": 9999,
         "pending_validations": pending_validations,

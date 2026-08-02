@@ -125,7 +125,19 @@ async def list_active_runs() -> list[dict]:
         queued = await _get(f"/repos/{GITHUB_REPO}/actions/runs", {"status": "queued", "per_page": 20}, ttl=LIVE_CACHE_TTL)
         in_prog = await _get(f"/repos/{GITHUB_REPO}/actions/runs", {"status": "in_progress", "per_page": 20}, ttl=LIVE_CACHE_TTL)
         runs = queued.get("workflow_runs", []) + in_prog.get("workflow_runs", [])
-        return sorted(runs, key=lambda r: r.get("created_at", ""))
+        if runs:
+            return sorted(runs, key=lambda r: r.get("created_at", ""))
+
+        # This repo's CI usually finishes in well under a minute, so the
+        # queued/in_progress window is rarely non-empty when someone actually
+        # loads the page — the panel looks perpetually dead even when the
+        # factory is working fine. Fall back to the last few completed runs,
+        # tagged so the template can show them distinctly from a live queue.
+        recent = await _get(f"/repos/{GITHUB_REPO}/actions/runs", {"per_page": 5}, ttl=LIVE_CACHE_TTL)
+        fallback = recent.get("workflow_runs", [])
+        for r in fallback:
+            r["is_recent_fallback"] = True
+        return fallback
     except Exception:
         return []
 
