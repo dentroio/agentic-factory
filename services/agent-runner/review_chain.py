@@ -8,6 +8,7 @@ import anthropic
 import httpx
 from backends import get_backend
 from config import API_SECRET
+from orchestrator_client import checkin
 from thread_monitor import ThreadMonitor
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
@@ -457,6 +458,7 @@ async def run_review_chain(
     previous_findings: list[dict],
     coding_backend: str = "",
     docs_required: list[dict] | None = None,
+    wo_id: str = "",
 ) -> tuple[bool, list[dict]]:
     """Run the full review chain for the WO's priority level.
 
@@ -472,6 +474,12 @@ async def run_review_chain(
     docs_required — list of {item, completed} dicts from the WO spec's
     Documentation Required section. When non-empty, a documentation reviewer
     runs after the main chain (always sequential).
+    wo_id — used to send a checkin heartbeat after each reviewer completes.
+    The orchestrator's stale-claim watchdog (CLAIM_TIMEOUT_SECONDS, default
+    10 minutes) only sees liveness via /api/checkin, not thread posts — a
+    5-reviewer sequential chain (each up to 120s) plus the CI step before it
+    can legitimately exceed that window with no heartbeat in between, getting
+    a still-working, about-to-succeed agent wrongly marked dead and re-queued.
     """
     priority = wo_spec.get("priority", "P2")
     reviewer_names = REVIEW_CHAIN.get(priority, REVIEW_CHAIN["P2"])
@@ -522,6 +530,8 @@ async def run_review_chain(
                     "passed": passed,
                 },
             )
+            if wo_id:
+                await checkin(wo_id, f"review chain: {reviewer_name} done")
 
         if not chain_passed:
             await monitor.post(
@@ -585,6 +595,8 @@ async def run_review_chain(
                     "passed": passed,
                 },
             )
+            if wo_id:
+                await checkin(wo_id, f"review chain: {reviewer_name} done")
 
             if not passed:
                 chain_passed = False

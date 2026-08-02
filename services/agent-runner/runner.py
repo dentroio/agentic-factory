@@ -597,6 +597,7 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     review_passed, all_findings = await run_review_chain(
         wo_spec, diff, monitor, security_findings,
         coding_backend=preferred_agent, docs_required=docs_required or None,
+        wo_id=wo_id,
     )
 
     # Collect ask_calls from review chain findings

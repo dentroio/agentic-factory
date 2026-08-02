@@ -1952,10 +1952,32 @@ async def release_dispatch(wo_id: str):
 
 
 @app.post("/api/dispatch/{wo_id}/retry")
-async def retry_dispatch(wo_id: str):
+async def retry_dispatch(wo_id: str, force: bool = False):
     """Reset a failed/stuck WO back to open so the runner picks it up again."""
     wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
     prev = _dispatch_state.get(wo_id, {})
+    # This used to unconditionally overwrite whatever was here — including a
+    # WO that already finished and is sitting on a real, good PR waiting for
+    # a human. A stale retry request (e.g. queued from Slack before the WO
+    # actually completed) would silently discard that state and put a fresh
+    # agent to work redoing already-done work. Refuse unless the caller
+    # explicitly overrides — mirrors the pattern used elsewhere for
+    # destructive resets.
+    #
+    # Deliberately checks status alone, not pr_url presence: /api/validate
+    # only ever sets status to "awaiting_human" on the dispatch entry — the
+    # actual PR link lives in the separate _validations queue, not here. A
+    # first version of this guard required pr_url too and never fired.
+    if prev.get("status") == "awaiting_human" and not force:
+        pending = next((v for v in reversed(_validations) if v.get("wo") == wo_id and v.get("status") == "pending"), None)
+        pr_hint = f" ({pending['pr_url']})" if pending and pending.get("pr_url") else ""
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{wo_id} is awaiting human review{pr_hint} — retry would discard it. "
+                f"Merge or close that PR first, or call again with force=true to override."
+            ),
+        )
     attempt_count = prev.get("attempt_count", 0)
     # Preserve attempt_count so the max-retries gate still applies on the next claim.
     # Use a minimal stub rather than deleting so history is kept.
@@ -3352,7 +3374,16 @@ async def poll() -> None:
         return
 
     # Stale claim sweep: release WOs whose agent stopped checking in.
-    stale_released = []
+    #
+    # A claim can look dead purely on timing even when the agent actually
+    # finished — the review chain + CI + commit/push/PR sequence has real
+    # gaps between heartbeats, and a slow-but-successful run can outlast
+    # CLAIM_TIMEOUT_SECONDS. Before discarding a "stale" claim, check whether
+    # a PR already exists for it on GitHub; if so, the agent didn't die, it
+    # finished and just never got to report back. Recover it into the human
+    # validation queue instead of silently losing completed work and burning
+    # a retry attempt on a WO that isn't actually broken.
+    stale_candidates = []
     for wo_id, entry in list(_dispatch_state.items()):
         if entry.get("status") not in ("in_progress", "claimed"):
             continue
@@ -3364,14 +3395,59 @@ async def poll() -> None:
         except Exception:
             continue
         if age > CLAIM_TIMEOUT_SECONDS:
-            agent_name = entry.get("agent", "unknown")
-            age_min = int(age / 60)
-            print(f"[orchestrator] {wo_id} stale claim ({age_min}m, agent={agent_name}) — releasing")
-            _dispatch_state[wo_id]["status"] = "stale"
-            _dispatch_state[wo_id]["stale_at"] = _utcnow()
-            stale_released.append((wo_id, agent_name, age_min))
+            stale_candidates.append((wo_id, entry, int(age / 60)))
+
+    pr_by_wo: dict[int, dict] = {}
+    if stale_candidates:
+        try:
+            async with httpx.AsyncClient(timeout=15) as _pc:
+                open_prs = await _cached_get(_pc, f"/repos/{GITHUB_REPO}/pulls", {"state": "open", "per_page": 100})
+            for p in open_prs:
+                n = resolve_wo_for_pr(p)
+                if n is not None:
+                    pr_by_wo[n] = p
+        except Exception as e:
+            print(f"[orchestrator] stale-sweep PR lookup failed: {e}")
+
+    stale_released = []
+    recovered = []
+    for wo_id, entry, age_min in stale_candidates:
+        agent_name = entry.get("agent", "unknown")
+        try:
+            wo_num = int(wo_id.replace("WO-", ""))
+        except ValueError:
+            wo_num = None
+        pr = pr_by_wo.get(wo_num) if wo_num is not None else None
+
+        if pr:
+            pr_url = pr.get("html_url", "")
+            print(f"[orchestrator] {wo_id} claim looked stale ({age_min}m) but PR #{pr.get('number')} already exists — recovering instead of discarding")
+            _dispatch_state[wo_id]["status"] = "awaiting_human"
+            _dispatch_state[wo_id]["pr_url"] = pr_url
+            _dispatch_state[wo_id]["pr_number"] = pr.get("number")
+            recovered.append((wo_id, agent_name, age_min, pr_url))
             thread_store.append_message(wo_id, thread_store.system_message(
-                f"⚠️ Claim expired after {age_min} minutes — agent `{agent_name}` appears dead. Re-queuing."
+                f"⚠️ Claim went quiet for {age_min} minutes, but PR already exists — "
+                f"the agent finished, it just didn't check back in. Recovered to awaiting human review: {pr_url}"
+            ))
+            continue
+
+        print(f"[orchestrator] {wo_id} stale claim ({age_min}m, agent={agent_name}) — releasing")
+        _dispatch_state[wo_id]["status"] = "stale"
+        _dispatch_state[wo_id]["stale_at"] = _utcnow()
+        stale_released.append((wo_id, agent_name, age_min))
+        thread_store.append_message(wo_id, thread_store.system_message(
+            f"⚠️ Claim expired after {age_min} minutes — agent `{agent_name}` appears dead. Re-queuing."
+        ))
+    if recovered:
+        _save_dispatch()
+        for wo_id, agent_name, age_min, pr_url in recovered:
+            asyncio.create_task(notify_factory_alert(
+                title=f"{wo_id} recovered — PR ready for review",
+                body=f"Agent `{agent_name}` went quiet for {age_min}m but had already opened {pr_url}. No work lost.",
+                level="info",
+                source="stale-claim-sweep",
+                secrets=_load_secrets(),
             ))
     if stale_released:
         _save_dispatch()
