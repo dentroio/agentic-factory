@@ -152,6 +152,34 @@ def _ssh(cmd: str, timeout: int = 30) -> tuple[int, str]:
         return 1, str(e)
 
 
+def _find_existing_pr(wo_id: str) -> str | None:
+    """Return the URL of an open PR for this WO's branch, if one exists.
+
+    Matches by branch prefix (wo/{num}-) the same way the orchestrator's
+    stale-claim sweep does — not an exact slug match, since we don't always
+    know the exact title-derived slug here.
+    """
+    if not GITHUB_REPO:
+        return None
+    num = wo_id.replace("WO-", "").lstrip("0") or "0"
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "list", "--repo", GITHUB_REPO, "--state", "open",
+             "--json", "url,headRefName", "--limit", "100"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode != 0:
+            return None
+        prs = json.loads(r.stdout or "[]")
+        prefix = f"wo/{num}-"
+        for pr in prs:
+            if pr.get("headRefName", "").startswith(prefix):
+                return pr.get("url")
+    except Exception:
+        pass
+    return None
+
+
 # ── Orchestrator helpers ───────────────────────────────────────────────────────
 async def _get(path: str) -> dict | list | None:
     try:
@@ -441,12 +469,26 @@ async def check_stuck_wos() -> None:
         # just loop forever without ever surfacing that a human needs to intervene.
         if entry.get("attempt_count", 0) >= MAX_RETRY_ATTEMPTS:
             _acted.add(act_key)
-            _log(f"{wo_id} stuck {hours_claimed:.1f}h and already at max retry attempts "
-                 f"({entry.get('attempt_count')}) — needs manual reset, not reassignment", "warn")
-            await _notify(f"{wo_id} needs manual reset",
-                          f"Stuck {hours_claimed:.1f}h and at max retry attempts "
-                          f"({MAX_RETRY_ATTEMPTS}) — reassigning won't help. "
-                          f"POST /api/dispatch/{wo_id}/reset to clear and retry.", "urgent")
+            # A WO can hit the retry ceiling on its dispatch bookkeeping while the
+            # actual agent run succeeded — it finished, opened a PR, and just never
+            # got to report back (this happened for real, 2026-08-02, WO-447: PR
+            # was fully green and mergeable while dispatch state said "stale").
+            # Check GitHub before crying "needs manual reset" — a maxed-out WO
+            # that's actually done needs "go merge this", not a reset.
+            pr_url = _find_existing_pr(wo_id)
+            if pr_url:
+                _log(f"{wo_id} at max retries but a PR already exists — likely done, not stuck", "fix")
+                await _notify(f"{wo_id} looks done, not stuck",
+                              f"Dispatch shows max retry attempts, but {pr_url} already exists. "
+                              f"The agent probably finished and just didn't report back — "
+                              f"go review/merge the PR rather than resetting.", "default")
+            else:
+                _log(f"{wo_id} stuck {hours_claimed:.1f}h and already at max retry attempts "
+                     f"({entry.get('attempt_count')}) — needs manual reset, not reassignment", "warn")
+                await _notify(f"{wo_id} needs manual reset",
+                              f"Stuck {hours_claimed:.1f}h and at max retry attempts "
+                              f"({MAX_RETRY_ATTEMPTS}) — reassigning won't help. "
+                              f"POST /api/dispatch/{wo_id}/reset to clear and retry.", "urgent")
             continue
 
         new_backend = BACKEND_ROTATION.get(backend, "claude")
@@ -580,7 +622,49 @@ async def check_stale_validations() -> None:
                       f"run-reviewer.sh not found.", "high")
 
 
-# ── Check 6: Backend exhaustion ───────────────────────────────────────────────
+# ── Check 6: Stale CI lock ─────────────────────────────────────────────────────
+# quality_gate.py's run_ci() now self-heals this on its own next acquisition
+# attempt (see agentic-factory#92), but that only fires when some WO actually
+# tries to run CI again. This is the proactive backstop: a lock left by a
+# killed process (daemon restart, crash, kill -9) sat for ~14 hours undetected
+# on 2026-08-02 before anyone traced a WO's generic "CI lock wait timed out"
+# failure back to the actual file — silently failing every WO's quality gate
+# that whole time, not just the one that happened to hit it first.
+_CI_LOCK_PATH = Path("/tmp/factory-ci-local.lock")
+
+
+async def check_ci_lock() -> None:
+    if not _CI_LOCK_PATH.exists():
+        return
+    try:
+        holder_pid = int(_CI_LOCK_PATH.read_text().strip())
+        os.kill(holder_pid, 0)
+        return  # holder is alive — genuinely in use, leave it
+    except (ValueError, OSError, ProcessLookupError):
+        pass  # unreadable, or holder is dead — treat as abandoned
+
+    act_key = f"stale-ci-lock:{_CI_LOCK_PATH.stat().st_mtime}"
+    if act_key in _acted:
+        return
+    age_h = (datetime.now(UTC).timestamp() - _CI_LOCK_PATH.stat().st_mtime) / 3600
+    _log(f"CI lock held by dead process — clearing (age {age_h:.1f}h)", "warn")
+    if DRY_RUN:
+        _dry("would clear stale CI lock")
+        return
+    try:
+        _CI_LOCK_PATH.unlink(missing_ok=True)
+        _acted.add(act_key)
+        _log("CI lock cleared", "fix")
+        await _notify("Cleared a stale CI lock",
+                      f"/tmp/factory-ci-local.lock was held by a dead process for "
+                      f"~{age_h:.1f}h, silently failing every WO's quality gate. "
+                      f"Cleared automatically.", "default")
+    except Exception as e:
+        await _notify("Stale CI lock — couldn't clear it",
+                      f"Found a lock held by a dead process but failed to remove it: {e}", "high")
+
+
+# ── Check 7: Backend exhaustion ───────────────────────────────────────────────
 async def check_backends() -> None:
     backends = await _get("/api/backends")
     if not isinstance(backends, dict):
@@ -626,6 +710,7 @@ async def main() -> None:
             await check_stuck_wos()
             await check_rejected_wos()
             await check_stale_validations()
+            await check_ci_lock()
             await check_backends()
         except Exception as e:
             _log(f"health check cycle error: {e}", "warn")
