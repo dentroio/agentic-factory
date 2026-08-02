@@ -101,18 +101,24 @@
     <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">Running Now</div>
     <div class="flex items-end justify-between mt-1">
       <div id="stat-running" class="text-2xl font-display font-bold text-indigo-400 text-glow-blue">{{ dispatch_running }}</div>
-      <a href="/factory" class="text-xs text-slate-500 font-mono hover:text-indigo-400 transition-colors">factory →</a>
+      <a href="/factory" class="text-xs text-slate-500 font-mono hover:text-indigo-400 transition-colors">
+        {% if dispatch_needs_attention %}<span class="text-red-400">{{ dispatch_needs_attention }} need attention</span> ·{% endif %}
+        factory →
+      </a>
     </div>
   </div>
   <div class="glass-panel px-4 py-3 flex flex-col justify-between border-l-2 border-l-amber-500/50">
     <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">In Review</div>
     <div class="flex items-end justify-between mt-1">
-      <div class="text-2xl font-display font-bold text-amber-400 text-glow-amber">{{ prs | length }}</div>
+      {# Same source as the WO Lifecycle "In Review" column below (columns.review) —
+         this used to count open PRs instead, which drifts from the WO count any
+         time a WO is awaiting review without a PR pushed yet. #}
+      <div class="text-2xl font-display font-bold text-amber-400 text-glow-amber">{{ columns.review | length }}</div>
       <div class="text-xs text-slate-500 font-mono">
         {% set failing_prs = prs | selectattr('ci_state', 'eq', 'failing') | list %}
         {% if failing_prs %}
         <span class="text-red-400">{{ failing_prs | length }} failing</span>
-        {% else %}open PRs{% endif %}
+        {% else %}WOs{% endif %}
       </div>
     </div>
   </div>
@@ -228,7 +234,13 @@
           <span class="text-xs text-indigo-300 font-medium truncate">{{ b.agent_status.agent }} · {{ b.agent_status.step }}</span>
         </div>
         {% else %}
-        <div class="text-xs text-slate-600 font-mono truncate">{{ b.branch }}</div>
+        {# No run-status file on disk for this branch — genuinely unknown, not
+           "nothing happening." Say so explicitly instead of just showing the
+           bare branch name, which looks identical to a labeled, healthy row. #}
+        <div class="flex items-center gap-2 bg-slate-800/30 border border-slate-700/30 rounded px-2 py-1">
+          <span class="w-1.5 h-1.5 rounded-full bg-slate-600 flex-shrink-0"></span>
+          <span class="text-xs text-slate-500 font-mono truncate" title="{{ b.branch }}">no live status — {{ b.branch }}</span>
+        </div>
         {% endif %}
       </div>
       {% endfor %}
@@ -270,6 +282,8 @@
       </div>
       {% endfor %}
     </div>
+    {% elif prs_error %}
+    <p class="text-xs text-rose-400 text-center py-6">Could not load open PRs — {{ prs_error }}</p>
     {% else %}
     <p class="text-xs text-slate-500 text-center py-6">No open pull requests.</p>
     {% endif %}
