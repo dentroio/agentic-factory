@@ -277,16 +277,20 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              body: `## 🤖 CI Auto-Fix Applied
-
-CI failed and I applied an automatic fix. CI is now re-running on the updated branch.
-
-**Fix:** ${{ steps.apply.outputs.fix_summary }}
-
-${isSecond ? '⚠️ This was the second and final auto-fix attempt. If CI fails again, manual intervention is required.' : 'If CI fails again, I will attempt one more auto-fix. After that, the failure details will be posted for manual review.'}
-
----
-*Applied by \`ci-auto-fix.yml\` — powered by Claude*`,
+              body: [
+                '## 🤖 CI Auto-Fix Applied',
+                '',
+                'CI failed and I applied an automatic fix. CI is now re-running on the updated branch.',
+                '',
+                `**Fix:** ${{ steps.apply.outputs.fix_summary }}`,
+                '',
+                isSecond
+                  ? '⚠️ This was the second and final auto-fix attempt. If CI fails again, manual intervention is required.'
+                  : 'If CI fails again, I will attempt one more auto-fix. After that, the failure details will be posted for manual review.',
+                '',
+                '---',
+                '*Applied by `ci-auto-fix.yml` — powered by Claude*',
+              ].join('\n'),
             });
 
       - name: Post comment when attempt limit is reached
@@ -301,16 +305,18 @@ ${isSecond ? '⚠️ This was the second and final auto-fix attempt. If CI fails
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              body: `## ❌ CI Auto-Fix Limit Reached — Manual Fix Required
-
-I applied 2 automatic fixes on this PR but CI is still failing. Stopping to avoid runaway costs.
-
-1. Check the [failing CI run](${runUrl}) for the specific error
-2. Fix the code on branch \`${{ github.event.workflow_run.head_branch }}\` and push
-3. CI will re-run automatically
-
----
-*To re-enable auto-fix, remove the \`ci-autofix-failed\` label.*`,
+              body: [
+                '## ❌ CI Auto-Fix Limit Reached — Manual Fix Required',
+                '',
+                'I applied 2 automatic fixes on this PR but CI is still failing. Stopping to avoid runaway costs.',
+                '',
+                `1. Check the [failing CI run](${runUrl}) for the specific error`,
+                `2. Fix the code on branch \`${{ github.event.workflow_run.head_branch }}\` and push`,
+                '3. CI will re-run automatically',
+                '',
+                '---',
+                '*To re-enable auto-fix, remove the `ci-autofix-failed` label.*',
+              ].join('\n'),
             });
 
       - name: Post fallback comment if auto-fix could not be applied
@@ -344,18 +350,20 @@ I applied 2 automatic fixes on this PR but CI is still failing. Stopping to avoi
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              body: `## ⚠️ CI Failure — Manual Fix Required
-
-CI failed and I could not apply an automatic fix.
-
-**Why auto-fix was skipped:** ${reason}
-
-### Failure details
-
-${logExcerpt || '_See the full run for details._'}
-
-**Full run:** ${runUrl}
-
----
-*Fix the code on branch \`${{ github.event.workflow_run.head_branch }}\` and push. Do not open a new PR.*`,
+              body: [
+                '## ⚠️ CI Failure — Manual Fix Required',
+                '',
+                'CI failed and I could not apply an automatic fix.',
+                '',
+                `**Why auto-fix was skipped:** ${reason}`,
+                '',
+                '### Failure details',
+                '',
+                logExcerpt || '_See the full run for details._',
+                '',
+                `**Full run:** ${runUrl}`,
+                '',
+                '---',
+                `*Fix the code on branch \`${{ github.event.workflow_run.head_branch }}\` and push. Do not open a new PR.*`,
+              ].join('\n'),
             });

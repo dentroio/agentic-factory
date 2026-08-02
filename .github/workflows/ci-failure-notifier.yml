@@ -166,19 +166,21 @@ jobs:
             const summary = `${{ steps.failures.outputs.summary }}`;
             const logExcerpt = `${{ steps.logs.outputs.log_excerpt }}`;
 
-            const body = `## ⚠️ CI Failure — Action Required
-
-CI failed on this PR. Fix the issues below and push to this branch — CI will re-run automatically.
-
-${summary}
-### Failure details
-
-${logExcerpt || '_See the full run logs for details._'}
-
-**Full run:** ${runUrl}
-
----
-*To fix: read the errors above, update the code on branch \`${{ github.event.workflow_run.head_branch }}\`, and push. Do not open a new PR.*`;
+            const body = [
+              '## ⚠️ CI Failure — Action Required',
+              '',
+              'CI failed on this PR. Fix the issues below and push to this branch — CI will re-run automatically.',
+              '',
+              summary,
+              '### Failure details',
+              '',
+              logExcerpt || '_See the full run logs for details._',
+              '',
+              `**Full run:** ${runUrl}`,
+              '',
+              '---',
+              `*To fix: read the errors above, update the code on branch \`${{ github.event.workflow_run.head_branch }}\`, and push. Do not open a new PR.*`,
+            ].join('\n');
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,

@@ -242,7 +242,24 @@ Write the merge advisory."""
         messages=[{"role": "user", "content": user_content}],
     )
 
-    advisory = next(b.text for b in message.content if b.type == "text")
+    text_blocks = [b.text for b in message.content if b.type == "text"]
+    if text_blocks:
+        advisory = "".join(text_blocks)
+    else:
+        # No text block — e.g. max_tokens was hit while still in a thinking
+        # block, or the model returned only non-text content. Don't crash
+        # the whole workflow over an advisory comment; write a placeholder
+        # and log the raw stop reason for debugging.
+        print(
+            f"No text block in response (stop_reason={message.stop_reason!r}) — "
+            f"writing placeholder advisory.",
+            file=sys.stderr,
+        )
+        advisory = (
+            "### Merge Advisory\n\n"
+            f"*Could not generate an advisory — the model returned no text "
+            f"(stop_reason: {message.stop_reason}).*\n"
+        )
 
     with open(args.output, "w") as f:
         f.write(advisory)

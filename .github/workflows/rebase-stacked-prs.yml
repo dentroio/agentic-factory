@@ -59,16 +59,18 @@ jobs:
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: pr.number,
-                  body: `🔁 **Base branch updated automatically**
-
-PR #${mergedPR} merged and deleted \`${mergedBranch}\`. This PR's base has been retargeted from \`${mergedBranch}\` to \`main\` to keep it open.
-
-You may need to rebase your branch to resolve any conflicts:
-\`\`\`
-git fetch origin
-git rebase origin/main
-git push --force-with-lease
-\`\`\``,
+                  body: [
+                    '🔁 **Base branch updated automatically**',
+                    '',
+                    `PR #${mergedPR} merged and deleted \`${mergedBranch}\`. This PR's base has been retargeted from \`${mergedBranch}\` to \`main\` to keep it open.`,
+                    '',
+                    'You may need to rebase your branch to resolve any conflicts:',
+                    '```',
+                    'git fetch origin',
+                    'git rebase origin/main',
+                    'git push --force-with-lease',
+                    '```',
+                  ].join('\n'),
                 });
 
               } catch (err) {
