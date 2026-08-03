@@ -2009,6 +2009,28 @@ async def retry_dispatch(wo_id: str, force: bool = False):
     _held_wos.discard(wo_id)
     if was_held:
         _save_held()
+    # This is the reachable place to detect exhaustion, not the notify block
+    # in /api/claim below — /api/next skips any WO at attempt_count >=
+    # MAX_RETRY_ATTEMPTS (see the comment there), so nothing ever calls
+    # /api/claim for an exhausted WO again and that notify path never fires.
+    # Four WOs sat dead for up to a day before anyone noticed, purely because
+    # of this gap. This retry call is what the runner makes on every failure
+    # (see release_dispatch()), so it's the one place guaranteed to run
+    # exactly when a WO's last attempt just failed.
+    if attempt_count >= MAX_RETRY_ATTEMPTS and wo_id not in _max_retry_notified:
+        _max_retry_notified.add(wo_id)
+        thread_store.append_message(wo_id, thread_store.system_message(
+            f"🛑 {wo_id} exhausted all {MAX_RETRY_ATTEMPTS} attempts — "
+            f"blocked from further claims until manually reset."
+        ))
+        asyncio.create_task(notify_factory_alert(
+            title=f"{wo_id} needs manual reset",
+            body=f"Failed all {MAX_RETRY_ATTEMPTS} attempts and will not be retried automatically. "
+                 f"POST /api/dispatch/{wo_id}/reset to clear and let the factory retry it.",
+            level="urgent",
+            source="max-retry-gate",
+            secrets=_load_secrets(),
+        ))
     print(f"[orchestrator] {wo_id} queued for retry (attempt {attempt_count}, dispatch reset"
           + (", un-held" if was_held else "") + ")")
     return {"ok": True, "retrying": wo_id, "attempt_count": attempt_count, "was_held": was_held}
@@ -3463,6 +3485,27 @@ async def poll() -> None:
         thread_store.append_message(wo_id, thread_store.system_message(
             f"⚠️ Claim expired after {age_min} minutes — agent `{agent_name}` appears dead. Re-queuing."
         ))
+        # This sweep doesn't touch attempt_count — it's only ever incremented
+        # in /api/claim — but if the claim that just went stale was already
+        # the last allowed attempt, /api/next will now permanently skip this
+        # WO (see the comment there) and nothing will ever call /api/claim or
+        # /api/dispatch/{wo}/retry for it again. Same exhaustion gap as
+        # /retry, different trigger (timeout instead of an explicit failure).
+        stale_attempt_count = _dispatch_state[wo_id].get("attempt_count", 0)
+        if stale_attempt_count >= MAX_RETRY_ATTEMPTS and wo_id not in _max_retry_notified:
+            _max_retry_notified.add(wo_id)
+            thread_store.append_message(wo_id, thread_store.system_message(
+                f"🛑 {wo_id} exhausted all {MAX_RETRY_ATTEMPTS} attempts (last one timed out) — "
+                f"blocked from further claims until manually reset."
+            ))
+            asyncio.create_task(notify_factory_alert(
+                title=f"{wo_id} needs manual reset",
+                body=f"Its last attempt timed out (agent went quiet) and it has now failed all "
+                     f"{MAX_RETRY_ATTEMPTS} attempts. POST /api/dispatch/{wo_id}/reset to clear and retry.",
+                level="urgent",
+                source="max-retry-gate",
+                secrets=_load_secrets(),
+            ))
     if recovered:
         _save_dispatch()
         for wo_id, agent_name, age_min, pr_url in recovered:

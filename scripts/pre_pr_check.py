@@ -100,6 +100,49 @@ class CheckResult:
 
 # ── Universal checks (apply to every project) ─────────────────────────────────
 
+def check_branch_not_stacked() -> CheckResult:
+    """Warn when a branch looks like it was cut from another unmerged branch
+    instead of origin/main.
+
+    `git checkout -b new-branch` while sitting on a different feature branch
+    silently produces a PR whose base metadata still says "main" — GitHub has
+    no way to tell — but whose actual diff includes every commit from the
+    branch it was really cut from. This bit for real: six agentic-factory PRs
+    in a row were stacked on each other this way, and the AI reviewer on the
+    later ones returned confusing, overbroad verdicts because it was seeing
+    several unrelated PRs' worth of changes at once.
+
+    A single WO on this repo is normally a handful of commits. A branch far
+    outside that range, this early, is the same signature every one of those
+    six PRs had — cheap enough to check locally with no API call, so check it
+    here rather than relying on someone noticing a strange review verdict
+    three PRs later.
+    """
+    result = CheckResult("Branch not stacked on another unmerged branch")
+    try:
+        count_out = subprocess.run(
+            ["git", "rev-list", "--count", "origin/main..HEAD"],
+            capture_output=True, text=True,
+        )
+        if count_out.returncode != 0:
+            return result  # can't tell (e.g. no origin/main locally) — don't guess
+        commit_count = int(count_out.stdout.strip())
+    except (ValueError, FileNotFoundError):
+        return result
+
+    threshold = 12
+    if commit_count > threshold:
+        result.issues.append(Issue(
+            "Branch not stacked on another unmerged branch", "(branch history)", 0,
+            f"{commit_count} commits ahead of origin/main — well above what a single WO "
+            f"usually needs. If this branch was cut from another feature branch instead of "
+            f"origin/main, its diff (and the AI review of it) includes that branch's changes "
+            f"too. Check with: git log --oneline origin/main..HEAD",
+            severity="warning",
+        ))
+    return result
+
+
 def check_hardcoded_secrets(diff: str) -> CheckResult:
     """No obvious hardcoded secrets in added lines."""
     result = CheckResult("No hardcoded secrets")
@@ -246,6 +289,7 @@ def main() -> int:
         return 0
 
     checks: list[CheckResult] = [
+        check_branch_not_stacked(),
         check_hardcoded_secrets(diff),
         check_sql_injection(diff),
         check_bare_except(diff),
