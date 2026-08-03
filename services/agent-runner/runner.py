@@ -443,9 +443,6 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     backend = get_backend(preferred_agent)
 
     attempt_label = f"retry #{len(prior_rejections)}" if prior_rejections else "first attempt"
-    _log(f"Starting {preferred_agent} backend for {wo_id} ({attempt_label})")
-    await checkin(wo_id, f"starting agent ({attempt_label})")
-    await post_thread_message(wo_id, f"Starting implementation of **{wo_id}**: {title} ({attempt_label})")
 
     monitor = ThreadMonitor(wo_id)
 
@@ -506,149 +503,201 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
             checkin_task.cancel()
             monitor_task.cancel()
 
-    await _run_with_fallback(backend, preferred_agent)
+    # Bounded run → rebuild → quality gate → review chain loop. A review-chain
+    # failure used to call backend.inject() and just return — but inject() only
+    # appends to a queue the *current* backend object's run() reads on its next
+    # invocation, and every backend's run() is a one-shot CLI call that has
+    # already exited by the time the review chain runs. Nothing was left to
+    # receive the injected message, and the next claim (10 minutes later, via
+    # stale-claim timeout) hands out a brand-new backend object anyway. The
+    # agent never saw review feedback, on any backend — it just sat abandoned
+    # until timeout, then started over from scratch with no memory of what was
+    # wrong. WO-420 and WO-440 both died this exact way tonight.
+    #
+    # Fix: on a review-chain failure, feed the blocking findings into a new
+    # prompt and call run() again directly, in the same worktree, in the same
+    # claim — bounded so a genuinely stuck WO still gives up instead of
+    # looping forever.
+    MAX_REVIEW_FIX_ROUNDS = 2
+    fix_round = 0
+    review_passed = False
+    all_findings: list = []
+    gate: dict = {}
 
-    _log(f"{wo_id} agent run complete — rebuilding changed containers")
-    await checkin(wo_id, "rebuilding changed containers")
-    await post_thread_message(wo_id, "Agent run complete. Detecting changed services and rebuilding containers...")
+    while True:
+        round_label = attempt_label if fix_round == 0 else f"fix round {fix_round}"
+        _log(f"Starting {preferred_agent} backend for {wo_id} ({round_label})")
+        await checkin(wo_id, f"starting agent ({round_label})")
+        if fix_round == 0:
+            await post_thread_message(wo_id, f"Starting implementation of **{wo_id}**: {title} ({round_label})")
+        else:
+            await post_thread_message(wo_id, f"Fixing review findings — {round_label} of {MAX_REVIEW_FIX_ROUNDS}...")
 
-    rebuild = await run_container_rebuild(worktree_path)
-    _log(f"{wo_id} rebuild: services={rebuild['services']} rebuilt={rebuild['rebuilt']} smoke={rebuild['smoke_passed']}")
+        await _run_with_fallback(backend, preferred_agent)
 
-    if rebuild["services"]:
-        rebuild_status = "✅ rebuilt" if rebuild["rebuilt"] else "❌ build failed"
-        smoke_status = "✅ smoke passed" if rebuild["smoke_passed"] else "⚠️ smoke failed"
-        await post_thread_message(
-            wo_id,
-            f"Container rebuild: {', '.join(rebuild['services'])} — {rebuild_status}, {smoke_status}\n"
-            f"```\n{rebuild['output'][-800:]}\n```",
-        )
-        if not rebuild["rebuilt"]:
-            await checkin(wo_id, "container build failed — stopping")
-            build_analysis = await _analyze_failure(
-                wo_id,
-                f"Docker container build failed for {wo_id}.\n\nBuild output:\n{rebuild['output'][-3000:]}"
-            )
-            if build_analysis:
-                await post_thread_message(wo_id, f"🔍 **Build failure analysis:**\n\n{build_analysis}", msg_type="ci_analysis")
-            await release_dispatch(wo_id)
-            return
-    else:
-        await post_thread_message(wo_id, "No container changes detected (docs/scripts only) — skipping rebuild.")
+        _log(f"{wo_id} agent run complete — rebuilding changed containers")
+        await checkin(wo_id, "rebuilding changed containers")
+        await post_thread_message(wo_id, "Agent run complete. Detecting changed services and rebuilding containers...")
 
-    _log(f"{wo_id} running quality gate")
-    await checkin(wo_id, "quality gate: running CI + security scan")
-    await post_thread_message(wo_id, "Running quality gate (CI + security scan)...")
+        rebuild = await run_container_rebuild(worktree_path)
+        _log(f"{wo_id} rebuild: services={rebuild['services']} rebuilt={rebuild['rebuilt']} smoke={rebuild['smoke_passed']}")
 
-    gate = await run_quality_gate(worktree_path)
-    _log(f"{wo_id} gate: ci={'✅' if gate['ci_passed'] else '❌'} "
-         f"security={'✅' if gate['security_passed'] else '❌'} "
-         f"findings={gate['finding_count']}")
-
-    if not gate["ci_passed"] or not gate["security_passed"]:
-        failures = []
-        if not gate["ci_passed"]:
-            failures.append("CI tests failed")
-        if not gate["security_passed"]:
-            count = gate.get("finding_count", 0)
-            failures.append(f"{count} CRITICAL/HIGH security issue{'s' if count != 1 else ''} found")
-        failure_str = ", ".join(failures)
-        _log(f"{wo_id} quality gate FAILED: {failure_str} — not submitting for validation")
-        await checkin(wo_id, f"quality gate failed: {failure_str}")
-
-        # Extract only the most meaningful error lines — don't dump 1000 chars of raw output
-        raw_output = gate.get("ci_output", "")
-        error_lines = [
-            l.rstrip() for l in raw_output.splitlines()
-            if l.strip() and any(w in l.lower() for w in
-               ("error", "failed", "assert", "exception", "traceback", "import", "syntax"))
-        ]
-        error_excerpt = "\n".join(error_lines[:8]) if error_lines else raw_output[-400:].strip()
-
-        await post_thread_message(
-            wo_id,
-            f"❌ **Quality gate failed — the agent will fix this automatically**\n\n"
-            f"**What failed:** {failure_str}\n\n"
-            + (f"**Key errors:**\n```\n{error_excerpt}\n```\n\n" if not gate["ci_passed"] and error_excerpt else "")
-            + "Analyzing root cause...",
-            msg_type="ci_result",
-            metadata={"ci_passed": gate["ci_passed"], "security_passed": gate["security_passed"],
-                      "findings": gate["bandit_findings"][:5]},
-        )
-        failure_detail = raw_output if not gate["ci_passed"] else str(gate.get("bandit_findings", ""))
-        ci_analysis = await _analyze_failure(
-            wo_id,
-            f"CI/security gate failed for {wo_id}.\n\nFailure: {failure_str}\n\nOutput:\n{failure_detail[-3000:]}"
-        )
-        if ci_analysis:
+        if rebuild["services"]:
+            rebuild_status = "✅ rebuilt" if rebuild["rebuilt"] else "❌ build failed"
+            smoke_status = "✅ smoke passed" if rebuild["smoke_passed"] else "⚠️ smoke failed"
             await post_thread_message(
                 wo_id,
-                f"🔍 **Root cause & fix:**\n\n{ci_analysis}",
-                msg_type="ci_analysis"
+                f"Container rebuild: {', '.join(rebuild['services'])} — {rebuild_status}, {smoke_status}\n"
+                f"```\n{rebuild['output'][-800:]}\n```",
             )
-        update_memory_after_failure(wo_id, failure_str, services=wo_spec.get("services", ""))
-        await release_dispatch(wo_id)
-        return
+            if not rebuild["rebuilt"]:
+                await checkin(wo_id, "container build failed — stopping")
+                build_analysis = await _analyze_failure(
+                    wo_id,
+                    f"Docker container build failed for {wo_id}.\n\nBuild output:\n{rebuild['output'][-3000:]}"
+                )
+                if build_analysis:
+                    await post_thread_message(wo_id, f"🔍 **Build failure analysis:**\n\n{build_analysis}", msg_type="ci_analysis")
+                await release_dispatch(wo_id)
+                return
+        else:
+            await post_thread_message(wo_id, "No container changes detected (docs/scripts only) — skipping rebuild.")
 
-    await post_thread_message(
-        wo_id,
-        "✅ Quality gate passed — CI and security checks clear. Running peer review chain...",
-        msg_type="ci_result",
-        metadata={"ci_passed": True, "security_passed": True},
-    )
+        _log(f"{wo_id} running quality gate")
+        await checkin(wo_id, "quality gate: running CI + security scan")
+        await post_thread_message(wo_id, "Running quality gate (CI + security scan)...")
 
-    # Run multi-agent peer review chain
-    await checkin(wo_id, "peer review chain: running")
-    diff = await get_worktree_diff(worktree_path)
-    security_findings = [
-        {"severity": "HIGH", "file": "bandit", "line": 0,
-         "issue": f["issue_text"], "fix": ""}
-        for f in gate.get("bandit_findings", [])
-    ]
+        gate = await run_quality_gate(worktree_path)
+        _log(f"{wo_id} gate: ci={'✅' if gate['ci_passed'] else '❌'} "
+             f"security={'✅' if gate['security_passed'] else '❌'} "
+             f"findings={gate['finding_count']}")
 
-    # Fetch docs_required from the orchestrator queue DB
-    docs_required: list[dict] = []
-    try:
-        import json as _json
-        async with _httpx.AsyncClient(timeout=5) as _qc:
-            _qr = await _qc.get(f"{ORCHESTRATOR_URL}/api/queue/{wo_id}")
-            if _qr.status_code == 200:
-                _entry = _qr.json()
-                raw = _entry.get("docs_required", "[]")
-                docs_required = _json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
-        pass
+        if not gate["ci_passed"] or not gate["security_passed"]:
+            failures = []
+            if not gate["ci_passed"]:
+                failures.append("CI tests failed")
+            if not gate["security_passed"]:
+                count = gate.get("finding_count", 0)
+                failures.append(f"{count} CRITICAL/HIGH security issue{'s' if count != 1 else ''} found")
+            failure_str = ", ".join(failures)
+            _log(f"{wo_id} quality gate FAILED: {failure_str} — not submitting for validation")
+            await checkin(wo_id, f"quality gate failed: {failure_str}")
 
-    review_passed, all_findings = await run_review_chain(
-        wo_spec, diff, monitor, security_findings,
-        coding_backend=preferred_agent, docs_required=docs_required or None,
-        wo_id=wo_id,
-    )
+            # Extract only the most meaningful error lines — don't dump 1000 chars of raw output
+            raw_output = gate.get("ci_output", "")
+            error_lines = [
+                l.rstrip() for l in raw_output.splitlines()
+                if l.strip() and any(w in l.lower() for w in
+                   ("error", "failed", "assert", "exception", "traceback", "import", "syntax"))
+            ]
+            error_excerpt = "\n".join(error_lines[:8]) if error_lines else raw_output[-400:].strip()
+
+            await post_thread_message(
+                wo_id,
+                f"❌ **Quality gate failed — the agent will fix this automatically**\n\n"
+                f"**What failed:** {failure_str}\n\n"
+                + (f"**Key errors:**\n```\n{error_excerpt}\n```\n\n" if not gate["ci_passed"] and error_excerpt else "")
+                + "Analyzing root cause...",
+                msg_type="ci_result",
+                metadata={"ci_passed": gate["ci_passed"], "security_passed": gate["security_passed"],
+                          "findings": gate["bandit_findings"][:5]},
+            )
+            failure_detail = raw_output if not gate["ci_passed"] else str(gate.get("bandit_findings", ""))
+            ci_analysis = await _analyze_failure(
+                wo_id,
+                f"CI/security gate failed for {wo_id}.\n\nFailure: {failure_str}\n\nOutput:\n{failure_detail[-3000:]}"
+            )
+            if ci_analysis:
+                await post_thread_message(
+                    wo_id,
+                    f"🔍 **Root cause & fix:**\n\n{ci_analysis}",
+                    msg_type="ci_analysis"
+                )
+            update_memory_after_failure(wo_id, failure_str, services=wo_spec.get("services", ""))
+            await release_dispatch(wo_id)
+            return
+
+        await post_thread_message(
+            wo_id,
+            "✅ Quality gate passed — CI and security checks clear. Running peer review chain...",
+            msg_type="ci_result",
+            metadata={"ci_passed": True, "security_passed": True},
+        )
+
+        # Run multi-agent peer review chain
+        await checkin(wo_id, "peer review chain: running")
+        diff = await get_worktree_diff(worktree_path)
+        security_findings = [
+            {"severity": "HIGH", "file": "bandit", "line": 0,
+             "issue": f["issue_text"], "fix": ""}
+            for f in gate.get("bandit_findings", [])
+        ]
+
+        # Fetch docs_required from the orchestrator queue DB
+        docs_required: list[dict] = []
+        try:
+            import json as _json
+            async with _httpx.AsyncClient(timeout=5) as _qc:
+                _qr = await _qc.get(f"{ORCHESTRATOR_URL}/api/queue/{wo_id}")
+                if _qr.status_code == 200:
+                    _entry = _qr.json()
+                    raw = _entry.get("docs_required", "[]")
+                    docs_required = _json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            pass
+
+        review_passed, all_findings = await run_review_chain(
+            wo_spec, diff, monitor, security_findings,
+            coding_backend=preferred_agent, docs_required=docs_required or None,
+            wo_id=wo_id,
+        )
+
+        if review_passed:
+            break
+
+        blocking = [
+            f for f in all_findings
+            if f.get("severity") in ("CRITICAL", "HIGH")
+        ]
+        findings_text = "\n".join(
+            f"- [{f.get('severity')}] {f.get('file', '?')}:{f.get('line', '?')}: "
+            f"{f.get('issue', '?')}"
+            + (f"\n  Fix: {f['fix']}" if f.get("fix") else "")
+            for f in blocking
+        )
+
+        if fix_round >= MAX_REVIEW_FIX_ROUNDS:
+            _log(f"{wo_id} review chain still failing after {fix_round} fix round(s) — releasing for a fresh attempt")
+            await checkin(wo_id, f"review chain failed after {fix_round} fix rounds")
+            await post_thread_message(
+                wo_id,
+                f"🔴 Peer review chain still finding blocking issues after {fix_round} fix round(s) — "
+                f"releasing for a fresh attempt rather than looping further.\n\n{findings_text}",
+            )
+            update_memory_after_failure(wo_id, f"review chain: {findings_text}", services=wo_spec.get("services", ""))
+            await release_dispatch(wo_id)
+            return
+
+        _log(f"{wo_id} review chain FAILED — {len(blocking)} blocking issues — fixing in-session (round {fix_round + 1})")
+        await checkin(wo_id, f"review chain failed: {len(blocking)} blocking issues — fixing")
+        await post_thread_message(
+            wo_id,
+            f"🔴 Peer review chain found {len(blocking)} blocking issue(s) — fixing and re-running "
+            f"(fix round {fix_round + 1} of {MAX_REVIEW_FIX_ROUNDS})...\n\n{findings_text}",
+        )
+        prompt = (
+            f"Your previous changes for {wo_id} were just reviewed and found {len(blocking)} blocking "
+            f"issue(s) that must be fixed:\n\n{findings_text}\n\n"
+            f"Fix all of the above in the existing worktree — build on what's already there, do not "
+            f"start over. The quality gate and review chain will run again automatically after."
+        )
+        fix_round += 1
 
     # Collect ask_calls from review chain findings
     ask_calls = [
         {"reviewer": f.get("reviewer", "unknown"), "backend": f.get("backend", "unknown")}
         for f in all_findings if "reviewer" in f
     ]
-
-    if not review_passed:
-        blocking = [
-            f for f in all_findings
-            if f.get("severity") in ("CRITICAL", "HIGH")
-        ]
-        _log(f"{wo_id} review chain FAILED — {len(blocking)} blocking issues — injecting into agent")
-        await checkin(wo_id, f"review chain failed: {len(blocking)} blocking issues")
-        await backend.inject(
-            f"Peer review chain found {len(blocking)} blocking issue(s) that must be fixed:\n\n"
-            + "\n".join(
-                f"- [{f.get('severity')}] {f.get('file', '?')}:{f.get('line', '?')}: "
-                f"{f.get('issue', '?')}"
-                + (f"\n  Fix: {f['fix']}" if f.get("fix") else "")
-                for f in blocking
-            )
-            + "\n\nFix all blocking issues and re-run CI. The review chain will run again."
-        )
-        return
 
     reviewer_count = len(set(f.get("reviewer") for f in all_findings if "reviewer" in f) or {"peers"})
     await monitor.post(
