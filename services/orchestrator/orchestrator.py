@@ -4783,7 +4783,7 @@ _PM_TOOLS: list[dict] = [
 ]
 
 
-def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
+async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
     """Execute a PM tool call. Returns a string result (always safe to include in messages)."""
     repo_root = Path(LOCAL_REPO_MOUNT).resolve() if LOCAL_REPO_MOUNT else None
 
@@ -4907,7 +4907,343 @@ def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
             result["recent_thread"] = f"(could not load thread: {exc})"
         return json.dumps(result, indent=2, default=str)
 
+    # ── Action tools — audit F-06: these mirror the [DISPATCH:...]/[RESET:...]/etc.
+    # regex tags parsed at the end of pm_chat() exactly, so the two mechanisms never
+    # disagree about what an action actually does. The tag parser stays in place —
+    # it's the only action mechanism available when PM chat falls back to a CLI
+    # backend (ask() there is plain text, no tool support) — but for the Anthropic
+    # API path these tools are the primary, structured way to trigger an action
+    # instead of the model emitting bracketed text the server then regexes out.
+    if tool_name == "dispatch_wo":
+        raw_wo = str(tool_input.get("wo", "")).strip()
+        backend = str(tool_input.get("backend", "")).strip()
+        wo_id = raw_wo if raw_wo.startswith("WO-") else f"WO-{raw_wo}"
+        try:
+            async with httpx.AsyncClient(timeout=10) as _dc:
+                await _dc.post(
+                    f"http://localhost:{API_PORT}/api/pm/dispatch",
+                    params={"wo": wo_id, "backend": backend},
+                )
+                runner_woke = False
+                try:
+                    await _dc.post(
+                        f"{AGENT_RUNNER_URL}/dispatch",
+                        json={"wo": wo_id, "backend": backend},
+                        timeout=3,
+                    )
+                    runner_woke = True
+                except Exception:
+                    pass
+                from datetime import UTC as _UTC, datetime as _dt
+                _pm_memory.setdefault("dispatched", []).append({
+                    "wo": wo_id, "backend": backend,
+                    "date": _dt.now(_UTC).date().isoformat(),
+                })
+                _pm_memory["dispatched"] = _pm_memory["dispatched"][-50:]
+                _save_pm_memory()
+                return f"✅ {wo_id} dispatched to {backend} — {'runner woke up' if runner_woke else 'runner picks it up on next poll'}"
+        except Exception as exc:
+            return f"⚠️ Dispatch of {wo_id} failed: {exc}"
+
+    if tool_name == "reset_wo":
+        raw_wo = str(tool_input.get("wo", "")).strip()
+        wo_id = raw_wo if raw_wo.startswith("WO-") else f"WO-{raw_wo}"
+        try:
+            async with httpx.AsyncClient(timeout=10) as _rc:
+                resp = await _rc.post(f"http://localhost:{API_PORT}/api/dispatch/{wo_id}/reset")
+                if resp.status_code == 200:
+                    return f"✅ {wo_id} reset — attempt counter cleared, claimable again."
+                elif resp.status_code == 409:
+                    return f"⚠️ {wo_id} not reset: {resp.json().get('detail', 'blocked')}"
+                else:
+                    return f"⚠️ Reset of {wo_id} failed ({resp.status_code}): {resp.text[:200]}"
+        except Exception as exc:
+            return f"⚠️ Reset of {wo_id} failed: {exc}"
+
+    if tool_name == "merge_pr":
+        pr_num = int(tool_input.get("pr_number"))
+        try:
+            async with httpx.AsyncClient(timeout=15) as _ac:
+                mr = await _ac.put(
+                    f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/merge",
+                    headers=_headers(), json={"merge_method": "squash"},
+                )
+                if mr.status_code in (200, 201):
+                    result_msg = f"✅ Merged PR #{pr_num} (squash)"
+                    try:
+                        async with httpx.AsyncClient(timeout=10) as _pc:
+                            pr_resp = await _pc.get(
+                                f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}",
+                                headers=_headers(),
+                            )
+                            if pr_resp.status_code == 200:
+                                pr_data = pr_resp.json()
+                                pr_html = pr_data.get("html_url", "")
+                                wo_num, wo_src = resolve_wo_for_pr_with_source(pr_data)
+                                if wo_num is not None and wo_src == "title":
+                                    print(f"[orchestrator] auto-complete WO-{wo_num} skipped — title-only match, needs branch corroboration (PR #{pr_num})")
+                                elif wo_num is not None and wo_src == "branch":
+                                    wo_match = f"WO-{wo_num}"
+                                    if _is_overridden(wo_match, "no-auto-complete"):
+                                        print(f"[orchestrator] auto-complete {wo_match} skipped — override tombstone active")
+                                    elif wo_match in _dispatch_state and _dispatch_state[wo_match].get("status") not in ("complete", "rejected"):
+                                        _dispatch_state[wo_match]["status"] = "complete"
+                                        _dispatch_state[wo_match]["completed_at"] = _utcnow()
+                                        _dispatch_state[wo_match]["step"] = f"PR #{pr_num} merged via PM · 🤖 reconciler"
+                                        _dispatch_state[wo_match]["pr_url"] = pr_html
+                                        _dispatch_state[wo_match]["pr_number"] = pr_num
+                                        _save_dispatch()
+                                        _db_append_step(wo_match, "complete", step=f"PR #{pr_num} merged via PM")
+                                        print(f"[orchestrator] auto-completed {wo_match} after PM merged PR #{pr_num}")
+                    except Exception as ex:
+                        print(f"[orchestrator] auto-complete after merge PR #{pr_num} failed: {ex}")
+                    return result_msg
+                elif mr.status_code == 405:
+                    return f"⚠️ PR #{pr_num} not mergeable yet — CI may still be running"
+                else:
+                    return f"⚠️ Merge PR #{pr_num} failed ({mr.status_code}: {mr.text[:120]})"
+        except Exception as exc:
+            return f"⚠️ Merge PR #{pr_num} errored: {exc}"
+
+    if tool_name == "dependabot_action":
+        action = tool_input.get("action")
+        pr_num = int(tool_input.get("pr_number"))
+        try:
+            async with httpx.AsyncClient(timeout=15) as _ac:
+                if action == "rebase":
+                    resp = await _ac.post(
+                        f"https://api.github.com/repos/{GITHUB_REPO}/issues/{pr_num}/comments",
+                        headers=_headers(), json={"body": "@dependabot rebase"},
+                    )
+                    return (f"✅ Triggered rebase on PR #{pr_num}" if resp.status_code in (200, 201)
+                            else f"⚠️ Rebase on PR #{pr_num} failed ({resp.status_code})")
+                elif action == "recreate":
+                    resp = await _ac.post(
+                        f"https://api.github.com/repos/{GITHUB_REPO}/issues/{pr_num}/comments",
+                        headers=_headers(), json={"body": "@dependabot recreate"},
+                    )
+                    return (f"✅ Triggered recreate on PR #{pr_num} — Dependabot will open a fresh PR against main" if resp.status_code in (200, 201)
+                            else f"⚠️ Recreate on PR #{pr_num} failed ({resp.status_code})")
+                elif action == "approve-merge":
+                    ar = await _ac.post(
+                        f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/reviews",
+                        headers=_headers(),
+                        json={"event": "APPROVE", "body": "✅ Approved by factory PM."},
+                    )
+                    if ar.status_code in (200, 201):
+                        mr = await _ac.put(
+                            f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/merge",
+                            headers=_headers(), json={"merge_method": "squash"},
+                        )
+                        return (f"✅ Approved and merged PR #{pr_num}" if mr.status_code in (200, 201)
+                                else f"⚠️ PR #{pr_num} approved but merge failed ({mr.status_code}: {mr.text[:100]})")
+                    else:
+                        return f"⚠️ Approve on PR #{pr_num} failed ({ar.status_code})"
+                return f"Unknown dependabot action: {action}"
+        except Exception as exc:
+            return f"⚠️ Action {action} on PR #{pr_num} errored: {exc}"
+
+    if tool_name == "create_program":
+        try:
+            id_ = str(tool_input.get("id", "")).strip()
+            label = str(tool_input.get("label", "")).strip() or id_
+            desc = str(tool_input.get("description", "")).strip()
+            _db_upsert_program(id_, label, desc)
+            return f"✅ Program created: **{label}**"
+        except Exception as exc:
+            return f"⚠️ create_program failed: {exc}"
+
+    if tool_name == "delete_program":
+        try:
+            id_ = str(tool_input.get("id", "")).strip()
+            ok = _db_delete_program(id_)
+            return f"✅ Program deleted: {id_}" if ok else f"⚠️ Program '{id_}' not found"
+        except Exception as exc:
+            return f"⚠️ delete_program failed: {exc}"
+
+    if tool_name == "create_phase":
+        try:
+            id_ = str(tool_input.get("id", "")).strip()
+            label = str(tool_input.get("label", "")).strip() or id_
+            target_date = str(tool_input.get("target_date", "")).strip()
+            _db_upsert_phase({"id": id_, "label": label, "target_date": target_date})
+            return f"✅ Phase created: **{label}**"
+        except Exception as exc:
+            return f"⚠️ create_phase failed: {exc}"
+
+    if tool_name == "delete_phase":
+        try:
+            id_ = str(tool_input.get("id", "")).strip()
+            with _db_connect() as conn:
+                cur = conn.execute("DELETE FROM phases WHERE id = ?", (id_,))
+                conn.commit()
+            return f"✅ Phase deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Phase '{id_}' not found"
+        except Exception as exc:
+            return f"⚠️ delete_phase failed: {exc}"
+
+    if tool_name == "create_milestone":
+        try:
+            id_ = str(tool_input.get("id", "")).strip()
+            label = str(tool_input.get("label", "")).strip() or id_
+            target_date = str(tool_input.get("target_date", "")).strip()
+            desc = str(tool_input.get("description", "")).strip()
+            _db_upsert_milestone({"id": id_, "label": label, "target_date": target_date, "description": desc})
+            return f"✅ Milestone created: **{label}**"
+        except Exception as exc:
+            return f"⚠️ create_milestone failed: {exc}"
+
+    if tool_name == "delete_milestone":
+        try:
+            id_ = str(tool_input.get("id", "")).strip()
+            with _db_connect() as conn:
+                cur = conn.execute("DELETE FROM milestones WHERE id = ?", (id_,))
+                conn.commit()
+            return f"✅ Milestone deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Milestone '{id_}' not found"
+        except Exception as exc:
+            return f"⚠️ delete_milestone failed: {exc}"
+
     return f"Unknown tool: {tool_name}"
+
+
+_PM_ACTION_TOOLS: list[dict] = [
+    {
+        "name": "dispatch_wo",
+        "description": (
+            "Claim a WO and dispatch it to an agent backend for implementation. Only call this "
+            "when the user has explicitly confirmed they want to start the WO (said \"yes\", "
+            "\"start it\", \"do it\", \"go ahead\", or similar) — never on a first mention of a WO. "
+            "Before offering to dispatch or redispatch a WO the user says is stuck or failing, call "
+            "get_wo_status first. If its status is 'awaiting_human' with a PR already open, do NOT "
+            "call this — tell the user the PR is ready and needs their review/merge instead; "
+            "dispatching again would discard that finished work (also enforced server-side)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "wo": {"type": "string", "description": "WO id, e.g. 'WO-185' or '185'"},
+                "backend": {"type": "string", "description": "Agent backend: claude, cursor, codex, or gemini"},
+            },
+            "required": ["wo", "backend"],
+        },
+    },
+    {
+        "name": "reset_wo",
+        "description": (
+            "Clear a WO's retry-attempt counter so it can be claimed again after hitting the retry "
+            "cap (3 attempts). Use ONLY when the user explicitly asks to reset/unstick/retry a WO "
+            "that get_wo_status shows is exhausted (attempt_count >= 3) — never as a first response "
+            "to 'it's stuck'; always call get_wo_status first, explain what actually happened, then "
+            "offer this if resetting is the right call. Do NOT call this for a WO that get_wo_status "
+            "shows is 'awaiting_human' with an open PR — that WO isn't broken, it's done and waiting "
+            "on a human; say so instead."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "wo": {"type": "string", "description": "WO id, e.g. 'WO-420' or '420'"},
+            },
+            "required": ["wo"],
+        },
+    },
+    {
+        "name": "merge_pr",
+        "description": (
+            "Squash-merge a WO pull request directly (no separate GitHub review step — that would "
+            "422 as a self-review). Use for WO PRs (non-Dependabot) when CI is green and the user "
+            "asks to merge. Never use dependabot_action for a WO PR — it will 422."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pr_number": {"type": "integer", "description": "The PR number to merge"},
+            },
+            "required": ["pr_number"],
+        },
+    },
+    {
+        "name": "dependabot_action",
+        "description": (
+            "Act on a Dependabot PR: rebase (when CONFLICTING and rebase_blocked=false — never "
+            "rebase when rebase_blocked=true, use recreate instead), recreate (opens a fresh PR "
+            "from scratch), or approve-merge (when CI is green and mergeable)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["rebase", "recreate", "approve-merge"]},
+                "pr_number": {"type": "integer"},
+            },
+            "required": ["action", "pr_number"],
+        },
+    },
+    {
+        "name": "create_program",
+        "description": "Create a Program — a label WOs are assigned to, e.g. 'Launch Program'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "lowercase, hyphens only, no spaces, e.g. 'launch-program'"},
+                "label": {"type": "string"},
+                "description": {"type": "string"},
+            },
+            "required": ["id", "label"],
+        },
+    },
+    {
+        "name": "delete_program",
+        "description": "Delete a Program by id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "create_phase",
+        "description": "Create a Phase — when a WO gets dispatched. The 'now' phase runs first, then 'backlog'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "lowercase, hyphens only, no spaces"},
+                "label": {"type": "string"},
+                "target_date": {"type": "string", "description": "YYYY-MM-DD or empty string"},
+            },
+            "required": ["id", "label"],
+        },
+    },
+    {
+        "name": "delete_phase",
+        "description": "Delete a Phase by id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "create_milestone",
+        "description": "Create a Milestone — a delivery gate. WOs that block a milestone must all complete before it's declared done.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "lowercase, hyphens only, no spaces"},
+                "label": {"type": "string"},
+                "target_date": {"type": "string", "description": "YYYY-MM-DD or empty string"},
+                "description": {"type": "string"},
+            },
+            "required": ["id", "label"],
+        },
+    },
+    {
+        "name": "delete_milestone",
+        "description": "Delete a Milestone by id.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+            "required": ["id"],
+        },
+    },
+]
 
 
 _PM_SYSTEM = """\
@@ -4949,51 +5285,18 @@ PLANNING STRUCTURE — these three concepts organize work:
   Phase    — when a WO gets dispatched. "now" phase runs first, then "backlog". Controls dispatch order.
   Milestone — a delivery gate. WOs that block a milestone must all complete before it's declared done.
 
-PLAN MANAGEMENT ACTIONS — emit at the END of your response after telling the user what you're creating/deleting:
-  [CREATE_PROGRAM:id|label|description]
-  [CREATE_PHASE:id|label|target_date]
-  [CREATE_MILESTONE:id|label|target_date|description]
-  [DELETE_PROGRAM:id]
-  [DELETE_PHASE:id]
-  [DELETE_MILESTONE:id]
-
-  Rules for IDs: lowercase, hyphens only, no spaces (e.g. "launch-program", "q3-2026", "v1-beta")
-  target_date format: YYYY-MM-DD or empty string
-  description: plain text, no pipes allowed
-  Example: User says "Create a program for security work"
-    → Reply: "Creating a Security Hardening program for compliance-focused work."
-    → Tag: [CREATE_PROGRAM:security-hardening|Security Hardening|Compliance and security posture improvements]
-
-DISPATCH ACTION — emit at the END of your response when the user confirms they want to start a WO:
-  [DISPATCH:WO-NNN:backend]  — claim WO-NNN and dispatch to backend (claude, cursor, codex, gemini)
-  Example: [DISPATCH:WO-185:cursor]
-  Only emit this when the user says "yes", "start it", "do it", "go ahead", or similar confirmation.
-  Always tell the user which WO and backend you're dispatching before emitting the tag.
-  IMPORTANT: before offering to dispatch/redispatch a WO the user says is stuck or failing, call
-  get_wo_status first. If its status is "awaiting_human" with a PR already open, do NOT offer to
-  dispatch/reset it — tell the user the PR is ready and needs their review/merge instead. Dispatching
-  it again would discard that finished work (this is enforced server-side too, but don't offer
-  something that will just get rejected).
-
-RESET ACTION — clears a WO's retry-attempt counter so it can be claimed again after hitting the
-retry cap (3 attempts). Use ONLY when the user explicitly asks to reset/unstick/retry a WO that
-get_wo_status shows is exhausted (attempt_count >= 3) — never as a first response to "it's stuck",
-always look first and explain what actually happened, then offer this if resetting is the right call:
-  [RESET:WO-NNN]
-  Example: [RESET:WO-420]
-  Do NOT emit this for a WO that get_wo_status shows is "awaiting_human" with an open PR — that
-  WO isn't broken, it's done and waiting on a human. Resetting it would be wrong; say so instead.
-
-WO PR MERGE ACTION — use for WO PRs (non-Dependabot) when CI is green and user asks to merge:
-  [PR:merge:NNN] — squash-merge PR #NNN directly (no approval step — avoids GitHub self-review 422)
-  Example: [PR:merge:308]
-  Use this for all WO PRs. NEVER use DEPENDABOT:approve-merge for WO PRs — it will 422.
-
-DEPENDABOT PR ACTIONS — include action tags at the END of your response when needed:
-  [DEPENDABOT:rebase:NNN]        — rebase PR #NNN (use when CONFLICTING and rebase_blocked=false)
-  [DEPENDABOT:recreate:NNN]      — recreate PR #NNN from scratch (use when rebase_blocked=true)
-  [DEPENDABOT:approve-merge:NNN] — approve + merge PR #NNN (use when CI green and MERGEABLE)
-IMPORTANT: if rebase_blocked=true, NEVER use rebase — use recreate instead.
+ACTIONS — dispatch_wo, reset_wo, merge_pr, dependabot_action, create_program, delete_program,
+create_phase, delete_phase, create_milestone, delete_milestone are real tools (see the tool list) —
+call them directly, don't describe the action in prose instead of calling it. Each tool's own
+description covers when it's appropriate; the two rules that matter most across all of them:
+  - dispatch_wo and reset_wo: only call after the user has explicitly confirmed ("yes", "start it",
+    "do it", "go ahead") — never on a first mention of a WO, and never for a WO that get_wo_status
+    shows is "awaiting_human" with an open PR (that WO isn't broken, it's done and waiting on a
+    human — say so instead of dispatching/resetting, which would discard the finished work).
+  - merge_pr is for WO PRs; dependabot_action is for Dependabot PRs. Using dependabot_action's
+    approve-merge on a WO PR will 422 — always use merge_pr for WO PRs instead.
+Tell the user what you're about to do before calling the tool, then report the tool's result in
+your reply — don't just silently call it.
 
 WHEN THE USER WANTS TO CREATE A WORK ORDER respond with ONLY this JSON (no other text, no fences):
 {{"type":"wo_draft","title":"short action title ≤60 chars","priority":"P1|P2|P3","effort":"XS|S|M|L|XL","services":"comma-separated service names","problem":"2-3 sentences on the pain point","what_to_build":"technical description with files/approach","acceptance_criteria":["verifiable item 1","verifiable item 2","verifiable item 3"],"notes":"constraints or empty string"}}
@@ -5196,7 +5499,7 @@ async def pm_chat(req: PMChatRequest):
                 import anthropic as _anthropic
                 _aclient = _anthropic.Anthropic(api_key=api_key)
                 _model = _get_model()
-                tools = _PM_TOOLS if LOCAL_REPO_MOUNT else []
+                tools = (_PM_TOOLS if LOCAL_REPO_MOUNT else []) + _PM_ACTION_TOOLS
                 tool_messages = list(messages)
                 tool_messages.append({"role": "user", "content": user_message if not req.images else [
                     *[{"type": "image", "source": {"type": "base64", "media_type": img.get("media_type", "image/png"), "data": img["data"]}} for img in req.images],
@@ -5219,7 +5522,7 @@ async def pm_chat(req: PMChatRequest):
                     tool_messages.append({"role": "assistant", "content": [b.model_dump() for b in _amsg.content]})
                     tool_results = []
                     for tc in tool_calls:
-                        result = _execute_pm_tool(tc.name, tc.input)
+                        result = await _execute_pm_tool(tc.name, tc.input)
                         tool_results.append({"type": "tool_result", "tool_use_id": tc.id, "content": result})
                     tool_messages.append({"role": "user", "content": tool_results})
                     _amsg = _aclient.messages.create(
