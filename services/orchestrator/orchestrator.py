@@ -5074,7 +5074,7 @@ async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
     if tool_name == "delete_phase":
         try:
             id_ = str(tool_input.get("id", "")).strip()
-            with _db_connect() as conn:
+            with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.execute("DELETE FROM phases WHERE id = ?", (id_,))
                 conn.commit()
             return f"✅ Phase deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Phase '{id_}' not found"
@@ -5095,7 +5095,7 @@ async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
     if tool_name == "delete_milestone":
         try:
             id_ = str(tool_input.get("id", "")).strip()
-            with _db_connect() as conn:
+            with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.execute("DELETE FROM milestones WHERE id = ?", (id_,))
                 conn.commit()
             return f"✅ Milestone deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Milestone '{id_}' not found"
@@ -5788,13 +5788,13 @@ async def pm_chat(req: PMChatRequest):
                 plan_action_results.append(f"✅ Program deleted: {id_}" if ok else f"⚠️ Program '{id_}' not found")
             elif action == "DELETE_PHASE":
                 id_ = args[0].strip()
-                with _db_connect() as conn:
+                with sqlite3.connect(DB_PATH) as conn:
                     cur = conn.execute("DELETE FROM phases WHERE id = ?", (id_,))
                     conn.commit()
                 plan_action_results.append(f"✅ Phase deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Phase '{id_}' not found")
             elif action == "DELETE_MILESTONE":
                 id_ = args[0].strip()
-                with _db_connect() as conn:
+                with sqlite3.connect(DB_PATH) as conn:
                     cur = conn.execute("DELETE FROM milestones WHERE id = ?", (id_,))
                     conn.commit()
                 plan_action_results.append(f"✅ Milestone deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Milestone '{id_}' not found")
