@@ -1315,9 +1315,18 @@ async def get_next(domain: str = ""):
     plan = _orchestrator_output.get("plan", {})
     queue: list[dict] = plan.get("queue", [])
 
+    # Audit F-02: this used to count every non-complete status — including
+    # awaiting_human/awaiting_commit, which are WOs sitting idle waiting on a
+    # human to review a PR, consuming zero CI/container resources. Three WOs
+    # all parked in awaiting_human at once (which genuinely happened tonight —
+    # WO-420/433/444 simultaneously) fully occupied the cap and blocked every
+    # new dispatch, even though nothing was actually contending for anything.
+    # The cap exists to protect the shared CI lock and Docker containers, so
+    # it should only count WOs that are actually touching those — claimed
+    # (about to) or in_progress (currently).
     active_count = sum(
         1 for c in _dispatch_state.values()
-        if c.get("status") in active_statuses - {"complete"}
+        if c.get("status") in ("claimed", "in_progress")
     )
     if active_count >= MAX_PARALLEL_WOS:
         return {"wo": None, "reason": f"at capacity ({active_count}/{MAX_PARALLEL_WOS} active)"}
