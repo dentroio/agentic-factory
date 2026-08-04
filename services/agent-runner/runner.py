@@ -179,11 +179,23 @@ Keep the total response under 300 words."""
     return steps
 
 
-async def _checkin_loop(wo_id: str, interval: int = 90) -> None:
-    """Background task: send heartbeats every `interval` seconds."""
+async def _checkin_loop(wo_id: str, interval: int = 90, label: str = "working") -> None:
+    """Background task: send heartbeats every `interval` seconds.
+
+    Without this, a step that runs longer than CLAIM_TIMEOUT_SECONDS (10min
+    default) with no checkin in between looks identical to a dead agent to
+    the orchestrator's stale-claim sweep — which then reaps the claim and,
+    on re-entry, hard-resets the worktree (git checkout . && git clean -fd),
+    destroying whatever the still-alive agent was mid-way through. WO-440 and
+    WO-445 both lost real work this way: their quality-gate step (make
+    ci-local) legitimately ran past 10 minutes with only a single checkin at
+    the start and none during, so the sweep reaped them while they were still
+    running. Every long blocking step must keep this loop alive for its
+    duration, not just the LLM call.
+    """
     while True:
         await asyncio.sleep(interval)
-        await checkin(wo_id, "working")
+        await checkin(wo_id, label)
 
 
 async def _handle_qa(wo_id: str, question: str, monitor: ThreadMonitor, backend) -> None:
@@ -254,22 +266,29 @@ async def _setup_worktree(wo_number: str | int, title: str) -> str:
     if LOCAL_REPO_PATH:
         worktree_dir = str(Path(LOCAL_REPO_PATH) / ".worktrees" / f"wo-{num}-{title_slug}")
         if Path(worktree_dir).exists():
-            # Worktree exists from a previous agent run. Reset uncommitted changes so
+            # Worktree exists from a previous agent run. Clear uncommitted changes so
             # this agent starts clean — stale edits from a failed/interrupted agent
             # must not bleed into a new agent's implementation.
-            # We keep commits (agent 1 may have pushed real work) but wipe dirty state.
-            _log(f"Worktree exists — resetting uncommitted state before re-entry: {worktree_dir}")
-            for cmd in (
-                ["git", "checkout", "."],           # revert tracked modifications
-                ["git", "clean", "-fd"],             # remove untracked files (not .gitignore'd — node_modules safe)
-            ):
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd, cwd=worktree_dir,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                await proc.communicate()
-            _log(f"Worktree clean — resuming at {worktree_dir}")
+            # We keep commits (agent 1 may have pushed real work) but clear dirty state.
+            #
+            # Stash rather than hard-discard (git checkout . && git clean -fd): the
+            # "previous agent" here is usually the same WO reclaimed after the
+            # stale-claim sweep reaped it, and that sweep's 10min timeout can fire
+            # while the agent is still genuinely alive and mid-implementation (e.g.
+            # a slow quality-gate step with no heartbeat — see _checkin_loop). In
+            # that case a hard discard destroys real, uncommitted work with no way
+            # to get it back. A stash is recoverable via `git stash list` /
+            # `git stash pop` and costs nothing when there's nothing to save.
+            _log(f"Worktree exists — stashing uncommitted state before re-entry: {worktree_dir}")
+            proc = await asyncio.create_subprocess_exec(
+                "git", "stash", "push", "--include-untracked",
+                "-m", f"agent-runner: pre-empted uncommitted work for WO-{num} at {datetime.now(UTC).isoformat()}",
+                cwd=worktree_dir,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.communicate()
+            _log(f"Worktree clean (stashed, not discarded) — resuming at {worktree_dir}")
             return worktree_dir
         _log(f"Creating worktree via wo_start.sh: wo-{num}-{title_slug}")
         proc = await asyncio.create_subprocess_exec(
@@ -541,7 +560,11 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         await checkin(wo_id, "rebuilding changed containers")
         await post_thread_message(wo_id, "Agent run complete. Detecting changed services and rebuilding containers...")
 
-        rebuild = await run_container_rebuild(worktree_path)
+        _rebuild_heartbeat = asyncio.create_task(_checkin_loop(wo_id, label="rebuilding changed containers"))
+        try:
+            rebuild = await run_container_rebuild(worktree_path)
+        finally:
+            _rebuild_heartbeat.cancel()
         _log(f"{wo_id} rebuild: services={rebuild['services']} rebuilt={rebuild['rebuilt']} smoke={rebuild['smoke_passed']}")
 
         if rebuild["services"]:
@@ -569,7 +592,11 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         await checkin(wo_id, "quality gate: running CI + security scan")
         await post_thread_message(wo_id, "Running quality gate (CI + security scan)...")
 
-        gate = await run_quality_gate(worktree_path)
+        _gate_heartbeat = asyncio.create_task(_checkin_loop(wo_id, label="quality gate: running CI + security scan"))
+        try:
+            gate = await run_quality_gate(worktree_path)
+        finally:
+            _gate_heartbeat.cancel()
         _log(f"{wo_id} gate: ci={'✅' if gate['ci_passed'] else '❌'} "
              f"security={'✅' if gate['security_passed'] else '❌'} "
              f"findings={gate['finding_count']}")

@@ -33,6 +33,7 @@ import intelligence as _intel
 from wo_resolver import (
     resolve_wo_for_pr,
     resolve_wo_for_pr_with_source,
+    resolve_all_wos_for_pr,
     extract_wo_from_branch,
     extract_wo_from_title,
 )
@@ -43,7 +44,14 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 INTELLIGENCE_INTERVAL = int(os.getenv("INTELLIGENCE_INTERVAL", "600"))
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
-CLAIM_TIMEOUT_SECONDS = int(os.getenv("CLAIM_TIMEOUT_SECONDS", "600"))
+# 900s (15min) with a margin above the 90s runner heartbeat interval — the
+# heartbeat fix (runner.py _checkin_loop wrapping rebuild/quality-gate) is
+# the real fix for the false-positive-stale race, this is defense in depth
+# in case a heartbeat itself is dropped (network blip, orchestrator restart
+# mid-step). Was 600s (10min); WO-440's quality gate alone hit a 900s make
+# timeout on its own, so 600s was already too tight even before counting the
+# rebuild step ahead of it.
+CLAIM_TIMEOUT_SECONDS = int(os.getenv("CLAIM_TIMEOUT_SECONDS", "1200"))
 MAX_PARALLEL_WOS = int(os.getenv("MAX_PARALLEL_WOS", "2"))
 MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
 REQUIRE_APPROVAL_FOR: set[str] = {p.strip() for p in os.getenv("REQUIRE_APPROVAL_FOR", "P1").split(",") if p.strip()}
@@ -3033,7 +3041,16 @@ async def _cached_get(client: httpx.AsyncClient, url: str, params: dict, ttl: in
 async def _fetch_open_pr_wos(client: httpx.AsyncClient, repo: str = GITHUB_REPO) -> set[int]:
     try:
         prs = await _cached_get(client, f"/repos/{repo}/pulls", {"state": "open", "per_page": 100})
-        return {n for p in prs if (n := resolve_wo_for_pr(p)) is not None}
+        # resolve_all_wos_for_pr, not resolve_wo_for_pr: this set feeds the
+        # open_wos/pr_wos skip-check in /api/next — a PR whose title names two
+        # WOs (conflict-resolution / follow-up PRs) must keep BOTH out of the
+        # dispatch queue, not just whichever one the single-result resolver
+        # matches first. Missing this let the second WO get redispatched to a
+        # fresh agent while its real PR was already open, awaiting review.
+        wos: set[int] = set()
+        for p in prs:
+            wos.update(resolve_all_wos_for_pr(p))
+        return wos
     except Exception:
         return set()
 
@@ -3458,8 +3475,13 @@ async def poll() -> None:
             async with httpx.AsyncClient(timeout=15) as _pc:
                 open_prs = await _cached_get(_pc, f"/repos/{GITHUB_REPO}/pulls", {"state": "open", "per_page": 100})
             for p in open_prs:
-                n = resolve_wo_for_pr(p)
-                if n is not None:
+                # resolve_all_wos_for_pr, not resolve_wo_for_pr: a conflict-resolution
+                # or follow-up PR can genuinely close two WOs in one title (e.g.
+                # "WO-1035: Resolve conflict — WO-417: ..."). The single-result
+                # resolver only credits whichever number its regex matches first,
+                # so a stale claim on the *other* WO named in that same PR would
+                # never find it here and get wrongly discarded instead of recovered.
+                for n in resolve_all_wos_for_pr(p):
                     pr_by_wo[n] = p
         except Exception as e:
             print(f"[orchestrator] stale-sweep PR lookup failed: {e}")
