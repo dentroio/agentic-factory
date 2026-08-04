@@ -583,17 +583,25 @@ async def run_review_chain(
                 reviewer_name, cfg["prompt_template"], wo_spec, diff, all_findings
             )
 
-            try:
-                response = await asyncio.wait_for(backend.ask(prompt), timeout=120)
-            except TimeoutError:
+            # F-04: an errored/timed-out reviewer used to be skipped on the first
+            # failure and treated exactly like a clean pass — the chain proceeded
+            # with one fewer opinion and no distinction from "this reviewer looked
+            # and found nothing." One retry filters out simple transient blips
+            # (a dropped connection, a momentary backend hiccup) before actually
+            # giving up and skipping for real.
+            response = None
+            last_error: Exception | TimeoutError | None = None
+            for _reviewer_attempt in range(2):
+                try:
+                    response = await asyncio.wait_for(backend.ask(prompt), timeout=120)
+                    last_error = None
+                    break
+                except (TimeoutError, Exception) as e:
+                    last_error = e
+            if response is None:
+                kind = "timed out" if isinstance(last_error, TimeoutError) else f"errored: {last_error}"
                 await monitor.post(
-                    f"⚠️ **{reviewer_name} reviewer** timed out — skipping.",
-                    msg_type="text",
-                )
-                continue
-            except Exception as e:
-                await monitor.post(
-                    f"⚠️ **{reviewer_name} reviewer** error: {e} — skipping.",
+                    f"⚠️ **{reviewer_name} reviewer** {kind} twice — skipping.",
                     msg_type="text",
                 )
                 continue
@@ -645,8 +653,21 @@ async def run_review_chain(
                 item_placeholder="<item>",
             )
         )
+        # F-04: same retry-once as the main chain above, for the same reason —
+        # an errored doc reviewer used to be indistinguishable from "no doc
+        # issues found."
+        doc_response = None
+        doc_last_error: Exception | TimeoutError | None = None
+        for _doc_attempt in range(2):
+            try:
+                doc_response = await asyncio.wait_for(doc_backend.ask(doc_prompt), timeout=120)
+                doc_last_error = None
+                break
+            except (TimeoutError, Exception) as e:
+                doc_last_error = e
         try:
-            doc_response = await asyncio.wait_for(doc_backend.ask(doc_prompt), timeout=120)
+            if doc_response is None:
+                raise doc_last_error or RuntimeError("documentation reviewer produced no response")
             doc_findings = parse_reviewer_response(doc_response)
             doc_blocking = [f for f in doc_findings if f.get("severity") in doc_cfg["blocking_severities"]]
             doc_passed = len(doc_blocking) == 0
@@ -670,7 +691,7 @@ async def run_review_chain(
                 )
         except Exception as e:
             await monitor.post(
-                f"⚠️ **documentation reviewer** error: {e} — skipping.",
+                f"⚠️ **documentation reviewer** errored twice: {e} — skipping.",
                 msg_type="text",
             )
 

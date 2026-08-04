@@ -160,7 +160,8 @@ Keep the total response under 300 words."""
                 env=_subscription_env(),
             )
             return result.stdout.strip()
-        except Exception:
+        except Exception as e:
+            _log(f"{wo_id} _generate_validation_steps error: {e}")
             return ""
 
     loop = asyncio.get_running_loop()
@@ -398,7 +399,8 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
     check_out, _ = await check_proc.communicate()
     try:
         existing = json.loads(check_out.decode(errors="replace").strip() or "[]")
-    except Exception:
+    except Exception as e:
+        _log(f"{wo_id} could not parse `gh pr list` output while checking for an existing PR: {e}")
         existing = []
     if existing:
         recovered_url = existing[0].get("url", "")
@@ -572,6 +574,17 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
              f"security={'✅' if gate['security_passed'] else '❌'} "
              f"findings={gate['finding_count']}")
 
+        # F-04: a scanner that crashed and produced zero findings looked identical
+        # to a scan that genuinely ran clean. Not blocking (a tooling crash isn't
+        # evidence of a real vulnerability) but must not be silent either.
+        if gate.get("scan_errors"):
+            _log(f"{wo_id} security scanner error(s): {gate['scan_errors']}")
+            await post_thread_message(
+                wo_id,
+                "⚠️ **Security scan didn't fully run** (non-blocking, but flagging so it's not "
+                "mistaken for a clean scan):\n" + "\n".join(f"- {e}" for e in gate["scan_errors"]),
+            )
+
         if not gate["ci_passed"] or not gate["security_passed"]:
             failures = []
             if not gate["ci_passed"]:
@@ -633,7 +646,11 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
             for f in gate.get("bandit_findings", [])
         ]
 
-        # Fetch docs_required from the orchestrator queue DB
+        # Fetch docs_required from the orchestrator queue DB. An empty result here
+        # (genuine "no doc requirements" or a fetch failure) skips the documentation
+        # reviewer entirely (see review_chain.py) — F-04: those two cases must not
+        # be indistinguishable, or a transient orchestrator hiccup silently drops a
+        # real quality gate with no trace.
         docs_required: list[dict] = []
         try:
             import json as _json
@@ -643,8 +660,11 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
                     _entry = _qr.json()
                     raw = _entry.get("docs_required", "[]")
                     docs_required = _json.loads(raw) if isinstance(raw, str) else raw
-        except Exception:
-            pass
+                else:
+                    _log(f"{wo_id} docs_required fetch returned {_qr.status_code} — "
+                         f"documentation reviewer will be skipped as a result")
+        except Exception as e:
+            _log(f"{wo_id} docs_required fetch failed ({e}) — documentation reviewer will be skipped as a result")
 
         review_passed, all_findings = await run_review_chain(
             wo_spec, diff, monitor, security_findings,
