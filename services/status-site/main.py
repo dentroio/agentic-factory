@@ -386,8 +386,24 @@ def _apply_live_status(
             pass
 
     for num, spec in wos.items():
-        # Merged PRs are the strongest signal — always wins over spec-file status.
-        if num in merged_wo_nums:
+        # Dispatch state (when present) is the freshest, most specific signal for
+        # a WO actively being worked right now — a live "in_progress"/"claimed"/
+        # "retry_queued"/etc entry means the orchestrator has current, authoritative
+        # knowledge that this WO is NOT finished, regardless of what a merged PR
+        # title or a leftover branch might suggest.
+        dispatch_entry = dispatch_map.get(num)
+        dispatch_says_active = dispatch_entry is not None and dispatch_entry.get("status") not in (None, "complete")
+
+        # Merged PRs are normally the strongest signal — but a PR whose title
+        # merely REFERENCES a WO (not its actual implementation — e.g. a
+        # docs-only prerequisite/spec-decision commit) can get merged while the
+        # real implementation is still in progress under dispatch tracking.
+        # WO-440 hit this exactly: PR #520 was a spec-decision-only commit
+        # titled "WO-440: ..." that got merged while an agent was still
+        # actively implementing the WO, permanently stamping it "done" on
+        # every dashboard page. Don't trust the merged-PR heuristic over a
+        # dispatch entry that explicitly says otherwise.
+        if num in merged_wo_nums and not dispatch_says_active:
             spec.status = "✅ Done"
             spec.merged_at = next(
                 (p.get("merged_at", "") for p in (merged_prs or [])
@@ -418,6 +434,14 @@ def _apply_live_status(
                 spec.status = "👀 In Review (CI running)"
             else:
                 spec.status = "👀 In Review (ready)"
+        elif num in branch_wo_map and dispatch_map.get(num, {}).get("status") == "retry_queued":
+            # A branch can outlive the attempt that created it — the stale-claim
+            # sweep or a retry doesn't delete the WO's old branch, it just resets
+            # dispatch state. Without this check, a WO queued for retry (not
+            # currently claimed by anyone) shows as "🔄 In Progress" on the board
+            # forever just because a leftover branch from a prior attempt still
+            # exists on GitHub. Same fix as the pr_wo_map retry_queued case above.
+            spec.status = "Queued for retry — not currently claimed"
         elif num in branch_wo_map:
             spec.status = "🔄 In Progress"
             b = branch_wo_map[num]
@@ -515,7 +539,14 @@ async def dashboard(request: Request):
 
     # Dispatch-based active/queue counts — shared definition, see _dispatch_status_counts
     dispatch_counts = _dispatch_status_counts(dispatch)
-    dispatch_running = dispatch_counts["in_progress"]
+    # Not dispatch_counts["in_progress"]: that only counts raw dispatch entries
+    # with status claimed/in_progress, which misses WOs whose live branch
+    # activity marks them in_progress on the board (or excludes ones the board
+    # correctly demoted off a stale leftover branch — see _apply_live_status).
+    # The board's "in_progress" column, after _apply_live_status reconciles
+    # dispatch + branch + PR state, is the more accurate count — this stat
+    # sits directly next to that same board on this page, so it must match it.
+    dispatch_running = len(columns.get("in_progress", []))
     dispatch_awaiting_review = dispatch_counts["awaiting_review"]
     dispatch_needs_attention = dispatch_counts["needs_attention"]
     dispatch_queue = len([w for w in dispatch.values() if w.get("status") in ("queued", "pending", "waiting")])
@@ -712,7 +743,10 @@ async def pm_dashboard(request: Request):
     _apply_live_status(wos, branches, prs, dispatch, merged_prs=merged_prs)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
-    dispatch_running = _dispatch_status_counts(dispatch)["in_progress"]
+    # See the matching comment in the "/" route — must match the board's
+    # in_progress column count, not the narrower raw-dispatch count, since
+    # this stat is rendered right above that same board on this page.
+    dispatch_running = len(columns.get("in_progress", []))
 
     # Program roll-ups — deferred WOs excluded from total/progress (tracked separately)
     programs: dict[str, dict] = defaultdict(lambda: {"total": 0, "done": 0, "in_progress": 0, "blocked": 0, "in_review": 0, "planned": 0, "open": 0, "deferred": 0})
