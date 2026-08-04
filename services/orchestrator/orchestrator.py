@@ -3632,8 +3632,15 @@ async def poll() -> None:
     done_wos = {num for num, s in specs.items() if _is_done(s["status"])} | dispatch_done
     in_progress_wos = active_branch_wos - pr_wos - done_wos
     in_review_wos = pr_wos - done_wos
+    # Audit F-01: open_wos used to only ask the spec file's raw status text, not
+    # dispatch_done (which done_wos, just above, already correctly falls back to).
+    # A WO the orchestrator's own dispatch_state knows is complete — via
+    # /api/complete, before the spec file's status text has been rewritten to
+    # match — would still show up here as open. dispatch_state is the more
+    # current signal in that window; give it the same precedence done_wos does.
     open_wos = {num for num, s in specs.items()
-                if not _is_done(s["status"]) and num not in active_branch_wos and num not in pr_wos}
+                if not _is_done(s["status"]) and num not in dispatch_done
+                and num not in active_branch_wos and num not in pr_wos}
     blocked_wos = {num for num, s in specs.items() if _is_blocked(s["status"])}
 
     # Plan engine only operates on primary repo WOs
@@ -3659,7 +3666,11 @@ async def poll() -> None:
     _plan_overlay = []
     for num, spec in sorted(specs.items()):
         wo_id = f"WO-{num}"
-        if _is_done(spec.get("status", "")) or _is_blocked(spec.get("status", "")):
+        # Audit F-01: same dispatch_done precedence as open_wos above — this
+        # overlay directly feeds /api/next's dispatch queue, so a WO the
+        # orchestrator already knows is complete must not be re-offered just
+        # because the spec file's status text hasn't been rewritten yet.
+        if _is_done(spec.get("status", "")) or num in dispatch_done or _is_blocked(spec.get("status", "")):
             continue
         if spec.get("repo", GITHUB_REPO) != GITHUB_REPO:
             continue  # secondary-repo WOs board-visible only, not dispatchable
