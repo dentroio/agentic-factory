@@ -181,15 +181,23 @@ async def run_ci(worktree: str) -> tuple[bool, str]:
     return rc == 0, out[-3000:]
 
 
-async def run_bandit(worktree: str) -> tuple[bool, list[dict]]:
+async def run_bandit(worktree: str) -> tuple[bool, list[dict], str | None]:
     """Run bandit on Python files changed by this branch only.
 
     Scanning the whole repo would flag pre-existing issues in lab/ and edge/
     that have nothing to do with the agent's work.
+
+    Third return value is a non-None error string when bandit's output couldn't
+    be parsed — kept non-blocking (audit F-04: a scanner crash isn't evidence of
+    a real vulnerability, so failing the WO over it would be the wrong default),
+    but the caller surfaces this to a human instead of it being indistinguishable
+    from "bandit ran clean." Previously this returned (True, []) either way —
+    a real scan with zero findings and a scan that never actually completed
+    looked identical.
     """
     py_files = await _changed_files(worktree, (".py",))
     if not py_files:
-        return True, []  # no Python changes — nothing to scan
+        return True, [], None  # no Python changes — nothing to scan
 
     rc, out = await _run(
         ["bandit", *py_files, "-f", "json", "-q", "--severity-level", "medium"],
@@ -197,22 +205,23 @@ async def run_bandit(worktree: str) -> tuple[bool, list[dict]]:
         timeout=120,
     )
     if rc == -1:
-        return True, []  # bandit not installed — skip
+        return True, [], None  # bandit not installed — skip
     try:
         data = json.loads(out)
         findings = data.get("results", [])
         blockers = [f for f in findings if f.get("issue_severity") in ("HIGH", "CRITICAL")]
-        return len(blockers) == 0, blockers
-    except Exception:
-        return True, []
+        return len(blockers) == 0, blockers, None
+    except Exception as e:
+        return True, [], f"bandit output could not be parsed ({e}) — scan may not have completed: {out[-300:]}"
 
 
-async def run_semgrep(worktree: str) -> tuple[bool, list[dict]]:
-    """Run semgrep on files changed by this branch only."""
+async def run_semgrep(worktree: str) -> tuple[bool, list[dict], str | None]:
+    """Run semgrep on files changed by this branch only. See run_bandit for the
+    third return value's meaning."""
     # semgrep accepts paths directly; pass only changed Python files
     py_files = await _changed_files(worktree, (".py",))
     if not py_files:
-        return True, []
+        return True, [], None
 
     rc, out = await _run(
         ["semgrep", "--json", "--quiet", "--config", "auto", *py_files],
@@ -220,7 +229,7 @@ async def run_semgrep(worktree: str) -> tuple[bool, list[dict]]:
         timeout=180,
     )
     if rc == -1:
-        return True, []  # semgrep not installed — skip
+        return True, [], None  # semgrep not installed — skip
     try:
         data = json.loads(out)
         findings = data.get("results", [])
@@ -228,9 +237,9 @@ async def run_semgrep(worktree: str) -> tuple[bool, list[dict]]:
             f for f in findings
             if f.get("extra", {}).get("severity") == "ERROR"
         ]
-        return len(blockers) == 0, blockers[:20]
-    except Exception:
-        return True, []
+        return len(blockers) == 0, blockers[:20], None
+    except Exception as e:
+        return True, [], f"semgrep output could not be parsed ({e}) — scan may not have completed: {out[-300:]}"
 
 
 # Dangerous JS/TS patterns that warrant a security flag.
@@ -538,6 +547,7 @@ async def run_quality_gate(worktree: str) -> dict:
             "pr_size_msg": size_msg,
             "browser_smoke_passed": True,
             "browser_smoke_msg": "skipped",
+            "scan_errors": [],
         }
 
     # 2. CI + security in parallel
@@ -546,15 +556,17 @@ async def run_quality_gate(worktree: str) -> dict:
     semgrep_task = asyncio.create_task(run_semgrep(worktree))
     js_task      = asyncio.create_task(run_js_security(worktree))
 
-    ci_passed, ci_output         = await ci_task
-    bandit_passed, bandit_findings = await bandit_task
-    semgrep_passed, semgrep_findings = await semgrep_task
-    js_passed, js_findings       = await js_task
+    ci_passed, ci_output              = await ci_task
+    bandit_passed, bandit_findings, bandit_error = await bandit_task
+    semgrep_passed, semgrep_findings, semgrep_error = await semgrep_task
+    js_passed, js_findings            = await js_task
 
     # 3. Browser smoke — only when CI passes (dist/ must exist) and frontend changed
     browser_passed, browser_msg = True, "skipped"
     if ci_passed:
         browser_passed, browser_msg = await run_browser_smoke(worktree)
+
+    scan_errors = [e for e in (bandit_error, semgrep_error) if e]
 
     return {
         "ci_passed": ci_passed and browser_passed,
@@ -567,4 +579,7 @@ async def run_quality_gate(worktree: str) -> dict:
         "pr_size_msg": size_msg,
         "browser_smoke_passed": browser_passed,
         "browser_smoke_msg": browser_msg,
+        # Non-blocking by design (F-04) — a scanner crash isn't a finding, but it
+        # also shouldn't look identical to a clean scan. Caller surfaces this.
+        "scan_errors": scan_errors,
     }
