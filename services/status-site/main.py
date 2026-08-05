@@ -342,7 +342,22 @@ async def _load_ci_health() -> dict:
                 "duration_s": None,
             }
         )
-    completed = [r for r in runs if r.get("conclusion")]
+    # Two corrections to what this stat actually measures, found live on
+    # 2026-08-05 — the dashboard showed "CI Health: 40% PASS" for a repo
+    # whose real CI gate was passing on every PR:
+    #
+    # 1. list_ci_runs() pulls from /actions/runs with no workflow filter, so
+    #    it blended in every automation workflow in the repo — CI Auto-Fix,
+    #    the Dependabot bridge, the automation watchdog — none of which are
+    #    "CI" in the sense this stat is labeled. Scope to the actual CI gate.
+    # 2. "skipped" conclusions were counted in the denominator but never the
+    #    numerator. A conditional workflow correctly skipping because its
+    #    trigger condition wasn't met (no failure to auto-fix, no dependabot
+    #    PR to bridge) is not a failure — counting it as one silently
+    #    deflated the percentage. 12 of 20 recent runs in the live repo were
+    #    exactly this, dragging a true ~88% pass rate down to 40%.
+    ci_runs = [r for r in runs if r.get("name") == "CI"]
+    completed = [r for r in ci_runs if r.get("conclusion") not in (None, "skipped", "cancelled")]
     pass_rate = None
     if completed:
         passed = sum(1 for r in completed if r.get("conclusion") == "success")
