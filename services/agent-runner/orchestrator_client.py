@@ -16,7 +16,7 @@ async def get_next(domain: str = "") -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             params = {"domain": domain} if domain else {}
-            resp = await client.get(f"{ORCHESTRATOR_URL}/api/next", params=params)
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/next", headers=_AUTH, params=params)
             resp.raise_for_status()
             data = resp.json()
             return data if data.get("wo") else None
@@ -119,7 +119,7 @@ async def get_dispatch_status(wo_id: str) -> str:
     """Return the current dispatch status for a WO ('approved', 'rejected', etc.)."""
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch")
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_AUTH)
             resp.raise_for_status()
             state = resp.json()
             return state.get(wo_id, {}).get("status", "unknown")
@@ -131,7 +131,7 @@ async def get_prior_rejections(wo_id: str) -> list[dict]:
     """Return prior rejected validations for this WO, newest first, with a reject_reason."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{ORCHESTRATOR_URL}/api/validations")
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/validations", headers=_AUTH)
             resp.raise_for_status()
             return [
                 v for v in reversed(resp.json())
@@ -147,7 +147,7 @@ async def get_thread_messages(wo_id: str) -> list[dict]:
     """Return all thread messages for a WO."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{ORCHESTRATOR_URL}/api/thread/{wo_id}/messages")
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/thread/{wo_id}/messages", headers=_AUTH)
             resp.raise_for_status()
             msgs = resp.json()
             return msgs if isinstance(msgs, list) else []
@@ -168,7 +168,7 @@ async def get_agent_config() -> dict:
     """Fetch agent config from the orchestrator (preferred backend, reviewers, etc.)."""
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{ORCHESTRATOR_URL}/api/config")
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/config", headers=_AUTH)
             resp.raise_for_status()
             return resp.json()
     except Exception as e:

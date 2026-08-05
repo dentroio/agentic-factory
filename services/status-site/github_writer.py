@@ -21,6 +21,11 @@ WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 LOCAL_REPO_MOUNT = os.getenv("LOCAL_REPO_MOUNT", "")
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
+_API_SECRET = os.getenv("API_SECRET", "")
+
+
+def _orch_headers() -> dict:
+    return {"Authorization": f"Bearer {_API_SECRET}"} if _API_SECRET else {}
 
 
 def _headers(token: str) -> dict:
@@ -212,7 +217,7 @@ async def _register_in_queue(wo_data: dict) -> None:
     }
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{ORCHESTRATOR_URL}/api/queue", json=payload)
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/queue", json=payload, headers=_orch_headers())
             resp.raise_for_status()
     except Exception as e:
         print(f"[github_writer] queue registration for WO-{number} failed: {e}")
@@ -351,7 +356,7 @@ async def add_phase(
         "description": phase_data.get("description", ""),
     }
     async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.post(f"{ORCHESTRATOR_URL}/api/phases", json=payload)
+        resp = await client.post(f"{ORCHESTRATOR_URL}/api/phases", json=payload, headers=_orch_headers())
         if resp.status_code == 409:
             return {"error": f"Phase '{phase_id}' already exists"}
         resp.raise_for_status()
@@ -370,7 +375,7 @@ async def add_milestone(
         "description": milestone_data.get("description", ""),
     }
     async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.post(f"{ORCHESTRATOR_URL}/api/milestones", json=payload)
+        resp = await client.post(f"{ORCHESTRATOR_URL}/api/milestones", json=payload, headers=_orch_headers())
         if resp.status_code == 409:
             return {"error": f"Milestone '{milestone_id}' already exists"}
         resp.raise_for_status()

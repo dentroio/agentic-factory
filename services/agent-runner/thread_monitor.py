@@ -1,8 +1,10 @@
 """Polls the WO thread for new human messages while the agent is working."""
 import httpx
 
-from config import ORCHESTRATOR_URL
+from config import API_SECRET, ORCHESTRATOR_URL
 from orchestrator_client import post_thread_message
+
+_AUTH = {"Authorization": f"Bearer {API_SECRET}"} if API_SECRET else {}
 
 
 def _is_question(content: str) -> bool:
@@ -28,6 +30,7 @@ class ThreadMonitor:
                 resp = await client.get(
                     f"{ORCHESTRATOR_URL}/api/thread/{self.wo_id}/messages",
                     params=params,
+                    headers=_AUTH,
                 )
                 if resp.status_code != 200:
                     return []

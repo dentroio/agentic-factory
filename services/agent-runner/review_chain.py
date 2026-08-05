@@ -297,7 +297,7 @@ async def _fetch_agent_config() -> dict:
     """Fetch live agent config from orchestrator. Falls back to env vars on failure."""
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/config")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/config", headers=_ORCH_AUTH)
             if r.status_code == 200:
                 return r.json()
     except Exception:
