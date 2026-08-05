@@ -25,9 +25,12 @@ from wo_parser import (
 from wo_reconcile import (
     agents_in_flight,
     apply_live_status,
+    average_weekly_throughput,
     build_wo_index,
     dispatch_status_counts,
     spec_file_rank,
+    weekly_wo_throughput,
+    wos_completed_since,
 )
 
 app = FastAPI(title="AI Factory Status")
@@ -489,7 +492,7 @@ async def dashboard(request: Request):
             pass
         return {}
 
-    wos_result, branches, prs, merged_prs_board, ci, agent_runner_online, dispatch = await asyncio.gather(
+    wos_result, branches, prs, merged_window, ci, agent_runner_online, dispatch = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
@@ -499,6 +502,7 @@ async def dashboard(request: Request):
         _load_dispatch(),
     )
     wos, wos_available = wos_result
+    merged_prs_board = merged_window.prs
 
     wos_without_specs = apply_live_status(
         wos, branches, prs, dispatch, merged_prs=merged_prs_board, repo=GITHUB_REPO
@@ -517,12 +521,17 @@ async def dashboard(request: Request):
     dispatch_needs_attention = dispatch_counts["needs_attention"]
     dispatch_queue = len([w for w in dispatch.values() if w.get("status") in ("queued", "pending", "waiting")])
 
-    # Merged PR stats for factory impact panel
+    # Throughput for the factory impact panel. The headline counts work
+    # orders, not the pull requests that carried them — this stat read 195
+    # while 92 work orders had actually landed, because roughly half the
+    # merged PRs name no WO and the rest average more than one PR each. The
+    # PR number is still worth showing, so it is shown, under its own name.
     now_utc = datetime.now(UTC)
     week_start = (now_utc - timedelta(days=7)).isoformat()
     month_start = (now_utc - timedelta(days=30)).isoformat()
-    merged_this_week = sum(1 for p in merged_prs_board if p.get("merged_at", "") >= week_start)
-    merged_this_month = sum(1 for p in merged_prs_board if p.get("merged_at", "") >= month_start)
+    wos_merged_this_week = len(wos_completed_since(merged_prs_board, week_start))
+    wos_merged_this_month = len(wos_completed_since(merged_prs_board, month_start))
+    prs_merged_this_month = sum(1 for p in merged_prs_board if p.get("merged_at", "") >= month_start)
 
     # Derive health status from watchdog data
     if watchdog:
@@ -567,8 +576,10 @@ async def dashboard(request: Request):
             "dispatch_awaiting_review": dispatch_awaiting_review,
             "dispatch_needs_attention": dispatch_needs_attention,
             "dispatch_queue": dispatch_queue,
-            "merged_this_week": merged_this_week,
-            "merged_this_month": merged_this_month,
+            "wos_merged_this_week": wos_merged_this_week,
+            "wos_merged_this_month": wos_merged_this_month,
+            "prs_merged_this_month": prs_merged_this_month,
+            "merge_window_complete": merged_window.complete,
             "watchdog": watchdog,
             "health_status": health_status,
             "wos_available": wos_available,
@@ -678,7 +689,7 @@ async def pm_dashboard(request: Request):
             pass
         return {}
 
-    wos_result, branches, prs, merged_prs, dispatch = await asyncio.gather(
+    wos_result, branches, prs, merged_window, dispatch = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
@@ -686,6 +697,7 @@ async def pm_dashboard(request: Request):
         _pm_dispatch(),
     )
     wos, wos_available = wos_result
+    merged_prs = merged_window.prs
     wos_without_specs = apply_live_status(
         wos, branches, prs, dispatch, merged_prs=merged_prs, repo=GITHUB_REPO
     )
@@ -718,25 +730,17 @@ async def pm_dashboard(request: Request):
         for col_list in prog_data.values():
             col_list.sort(key=lambda s: s.number)
 
-    # Velocity: WOs merged per week over last 8 weeks
-    velocity: list[dict] = []
+    # Velocity: work orders completed per week over the last 8 weeks. This
+    # counted merged PRs and called them WOs, which ran ~2.1x high and made
+    # every projection below it optimistic by the same factor.
     now = datetime.now(UTC)
-    for i in range(7, -1, -1):
-        week_start = now - timedelta(weeks=i + 1)
-        week_end = now - timedelta(weeks=i)
-        count = sum(
-            1 for p in merged_prs
-            if p.get("merged_at") and week_start.isoformat() <= p["merged_at"] <= week_end.isoformat()
-        )
-        velocity.append({
-            "label": week_start.strftime("%-d %b"),
-            "count": count,
-            "bar": "█" * count if count else "·",
-        })
+    velocity = weekly_wo_throughput(
+        merged_prs, now, weeks=8, window_complete=merged_window.complete
+    )
 
-    # Velocity projection
-    recent_counts = [w["count"] for w in velocity[-4:]]
-    avg_velocity = sum(recent_counts) / max(len(recent_counts), 1)
+    # Projection off the same WO-based rate the chart shows, over complete
+    # buckets only.
+    avg_velocity = average_weekly_throughput(velocity, window=4)
     remaining_open = (
         len(columns.get("open", []))
         + len(columns.get("in_progress", []))
@@ -800,6 +804,14 @@ async def pm_dashboard(request: Request):
         "remaining_open": remaining_open,
         "projected_done": projected_done,
         "milestone_projections": milestone_projections,
+        # Shown next to the WO rate so the two can't be confused again. The
+        # gap between them is the whole of defect 5: most weeks this is more
+        # than double the WO count.
+        "prs_per_week": round(average_weekly_throughput(
+            [{**b, "count": b["pr_count"]} for b in velocity], window=4
+        ), 1),
+        "window_complete": merged_window.complete,
+        "window_missing": merged_window.missing,
     }
 
     # Blocked items from watchdog

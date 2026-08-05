@@ -114,11 +114,15 @@
       <div class="text-xs text-slate-500 font-mono">{{ done_count }} done</div>
     </div>
   </div>
-  <div class="glass-panel px-4 py-3 flex flex-col justify-between border-l-2 border-l-emerald-500/50">
-    <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">Merged This Month</div>
+  <div class="glass-panel px-4 py-3 flex flex-col justify-between border-l-2 border-l-emerald-500/50"
+       title="Distinct work orders whose first merge landed in the last 30 days. The PR count is shown alongside because it is roughly twice as large — about half the merged PRs name no work order, and the rest average more than one PR each.">
+    <div class="text-xs text-slate-400 font-display font-medium uppercase tracking-wider">WOs Merged This Month</div>
     <div class="flex items-end justify-between mt-1">
-      <div class="text-2xl font-display font-bold text-emerald-400 text-glow-green">{{ merged_this_month }}</div>
-      <div class="text-xs text-slate-500 font-mono">{{ merged_this_week }} this week</div>
+      <div class="text-2xl font-display font-bold text-emerald-400 text-glow-green">{{ wos_merged_this_month }}{% if not merge_window_complete %}<span class="text-amber-500 text-base align-super" title="Some merged PRs could not be retrieved — this is a floor, not a total">+</span>{% endif %}</div>
+      <div class="text-xs text-slate-500 font-mono text-right">
+        <div>{{ wos_merged_this_week }} this week</div>
+        <div class="text-slate-600">{{ prs_merged_this_month }} PRs merged</div>
+      </div>
     </div>
   </div>
   <div class="glass-panel px-4 py-3 flex flex-col justify-between border-l-2 border-l-indigo-500/50">

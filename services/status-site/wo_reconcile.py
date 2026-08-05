@@ -361,6 +361,101 @@ def apply_live_status(
     return synthesized
 
 
+def wo_completion_times(merged_prs: Iterable[dict]) -> dict[int, str]:
+    """Work order number -> when the work landed, from merged PR titles.
+
+    Velocity is a count of work orders, not of pull requests, and the two are
+    nowhere near each other: over 30 days this repo merged 195 PRs referencing
+    92 distinct work orders, and 95 of those PRs named no work order at all.
+    Counting PRs and labelling the result "WOs/week" inflated the rate ~2.1x,
+    and the milestone projections then divided real WO counts by that inflated
+    rate — which is how the board concluded every open work order would be
+    finished within the week.
+
+    Resolving through resolve_all_wos_for_pr is what makes both directions
+    come out right: a work order split across several PRs is one entry here,
+    and one PR closing several work orders credits each of them.
+
+    A work order lands in the week of its **earliest** merge inside the
+    window, not its latest. Follow-up PRs — conflict resolutions, doc fixes,
+    revert-and-reland — keep naming a WO for weeks after the work is done, and
+    attributing it to the last of those would drag finished work forward into
+    the current week and let a WO hop between buckets on successive page
+    loads. Earliest also gives each work order exactly one bucket, which is
+    what stops it being counted twice across weeks.
+
+    The window edge is the honest caveat: a WO whose real first merge predates
+    the window is credited to its first merge inside it, so it reads as newer
+    than it was.
+    """
+    first_seen: dict[int, str] = {}
+    for pr in merged_prs:
+        merged_at = pr.get("merged_at") or ""
+        if not merged_at:
+            continue
+        for num in resolve_all_wos_for_pr(pr):
+            if num not in first_seen or merged_at < first_seen[num]:
+                first_seen[num] = merged_at
+    return first_seen
+
+
+def wos_completed_since(merged_prs: Iterable[dict], since: str) -> list[int]:
+    """Distinct work orders whose first in-window merge is at or after `since`."""
+    return sorted(n for n, at in wo_completion_times(merged_prs).items() if at >= since)
+
+
+def weekly_wo_throughput(
+    merged_prs: Iterable[dict],
+    now,
+    weeks: int = 8,
+    window_complete: bool = True,
+) -> list[dict]:
+    """Per-week buckets of work orders completed, oldest first.
+
+    Each bucket carries `complete` so the chart can tell "one work order
+    landed that week" apart from "we could not retrieve that week". They used
+    to render identically — a bar of height one — which is how a short fetch
+    reads as a real quiet week.
+
+    When the fetch is short, every bucket is marked incomplete rather than
+    guessing which lost data: search returns results in creation order, so a
+    PR that didn't come back could have merged at any point in the window.
+    """
+    from datetime import timedelta
+
+    prs = list(merged_prs)
+    completion = wo_completion_times(prs)
+
+    buckets: list[dict] = []
+    for i in range(weeks - 1, -1, -1):
+        start = now - timedelta(weeks=i + 1)
+        end = now - timedelta(weeks=i)
+        start_iso, end_iso = start.isoformat(), end.isoformat()
+        wo_count = sum(1 for at in completion.values() if start_iso <= at <= end_iso)
+        pr_count = sum(
+            1 for p in prs if p.get("merged_at") and start_iso <= p["merged_at"] <= end_iso
+        )
+        buckets.append({
+            "label": start.strftime("%-d %b"),
+            "count": wo_count,
+            "pr_count": pr_count,
+            "complete": window_complete,
+            "bar": "█" * wo_count if wo_count else "·",
+        })
+    return buckets
+
+
+def average_weekly_throughput(buckets: list[dict], window: int = 4) -> float:
+    """Mean work orders per week over the most recent `window` complete buckets.
+
+    Incomplete buckets are dropped rather than averaged in. A bucket that is
+    short because the fetch was short would pull the rate down and push every
+    projected date out — a slowdown that never happened.
+    """
+    usable = [b["count"] for b in buckets[-window:] if b.get("complete", True)]
+    return sum(usable) / len(usable) if usable else 0.0
+
+
 def agents_in_flight(
     branches: list[dict],
     wos: dict[int, WOSpec],

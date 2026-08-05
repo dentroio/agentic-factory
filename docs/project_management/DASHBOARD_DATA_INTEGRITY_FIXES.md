@@ -9,9 +9,10 @@ Overview (`/`), PM View (`/pm`), and Factory (`/factory`) pages compute their nu
 with the live evidence for each and the prescribed fix. An implementer should not need
 to redo the investigation.
 
-**Status:** defects 1, 2, 3, 4 and 7 are fixed on `wo/dashboard-wo-source-of-truth` — see
-the Wave 1 and Wave 2 outcome sections at the end. **Defects 5 and 6 remain open** and are
-knowingly out of scope for that branch.
+**Status:** all seven defects are fixed on `wo/dashboard-wo-source-of-truth` (PR #194) —
+see the Wave 1, 2 and 3 outcome sections at the end. Defect 6's original evidence turned
+out to be a misreading; the defect beneath it was real and is recorded honestly in its
+section.
 
 ---
 
@@ -152,21 +153,61 @@ those PRs reference no WO at all**. The headline 196 and the 47.0 WOs/week avera
 inflated roughly 2.1×. Milestone projections (`main.py:834-841`) divide real WO counts by
 that PR-based rate, producing "All 13 open WOs projected done 2026-08-07."
 
-**Fix:** count distinct WO numbers resolved via `resolve_all_wos_for_pr`, not PRs, for
-anything labeled as WO velocity or WO throughput. Keep a PR-count stat if useful, but
-label it "PRs merged". Milestone projection must use the WO-based rate.
+**Fix as built:** `wo_reconcile.wo_completion_times()` maps each work order to the
+earliest merge inside the window that names it, via `resolve_all_wos_for_pr`. Everything
+labelled as work-order throughput counts those: the Overview stat, the PM velocity
+buckets, the four-week average, and the projections underneath it. The PR count survives
+under its own name — "195 PRs merged" beside the WO figure on the Overview, and
+"47.2 PRs/wk" beside "22.0/wk" on the PM header, deliberately adjacent so the gap between
+them is visible rather than something a future reader has to rediscover.
 
-## Defect 6 — Velocity's oldest bucket is a pagination artifact
+Resolving through `resolve_all_wos_for_pr` is what makes both directions come out right:
+a work order spread over implementation, CI fix and conflict-resolution PRs counts once,
+and a program PR closing several work orders credits each of them.
 
-`github_client.py:145-167` — `list_merged_prs` caps at 5 pages × 100.
+**Week attribution is by first merge, not last.** Follow-up PRs keep naming a WO for
+weeks after the work landed; crediting the latest merge would drag finished work forward
+into the current week and let a bar change on successive page loads. First-merge also
+gives each work order exactly one bucket, which is what prevents double-counting across
+weeks. The honest caveat, stated in the code: a WO whose real first merge predates the
+window is credited to its first merge inside it, so it reads as newer than it was. That
+is why "WOs Merged This Month" is 90 rather than the 92 distinct WOs *referenced* by PRs
+merged in the last 30 days — two of those 92 first landed before the 30-day cutoff.
 
-Evidence: for a 56-day window the cutoff was 2026-06-10, but the oldest PR actually
-fetched merged 2026-06-16 — six days of the window were never retrieved. This is why the
-first bar reads "10 Jun: 1"; it looks like a near-dead week and is not.
+## Defect 6 — `list_merged_prs` silently truncates the window
 
-**Fix:** paginate until the window is genuinely covered (or use the search API with a
-`merged:>=` qualifier), and if the cap is hit, mark the truncated buckets as incomplete
-instead of rendering them as zero.
+`github_client.py:145-167` — `list_merged_prs` capped at 5 pages × 100 closed PRs ordered
+by creation date, and returned a bare list.
+
+**The original evidence was misread.** The 56-day cutoff was 2026-06-10 and the oldest PR
+fetched merged 2026-06-16, but those six days are not missing data: exactly **one** PR was
+merged in this repo before 2026-06-16, ever. The "10 Jun: 1" bar was correct — the factory
+had not started yet.
+
+The defect underneath it is real and was measured directly. Creation order is only a proxy
+for merge order, so a PR opened before the cap's horizon and merged inside the window falls
+off the end. Against the live repo the paged version returned **432 of the 439** PRs merged
+in a 56-day window; the seven it dropped (#16–#22) were long-lived dependency bumps opened
+early and merged weeks later. None named a work order, so WO velocity was unaffected — but
+nothing in the code could have told anyone that, which is the actual problem.
+
+**Fix as built:** `list_merged_prs` now queries `/search/issues` with
+`is:pr is:merged merged:>=`, pages until it holds everything `total_count` reports, and
+returns a `MergedPRWindow` carrying `complete` and `missing` alongside the PRs. Coverage is
+answered by the API rather than assumed. Cost is unchanged — 5 requests for 439 results,
+the same as the old 5-page cap, still behind the 1800s cache.
+
+Search returns issue-shaped items with no `head.ref`. Measured before relying on it: over
+56 days, resolving work orders from titles alone yields the same 179 distinct WOs as titles
+plus branches, and not one PR had a branch naming a WO its title did not. This repo
+requires "WO-NNN" in PR titles, which is why.
+
+When the window *is* short, the PM chart says so instead of drawing it: a banner naming the
+number of unretrieved PRs, amber bars, counts suffixed `+`, and empty buckets reading
+"no data" rather than `0`. Incomplete buckets are excluded from the four-week average, so a
+short fetch cannot masquerade as a slowdown and push every projected date out. A failed
+fetch is treated the same way — previously it returned `[]` and rendered as eight dead
+weeks.
 
 ## Defect 7 — The two "agents in flight" lists disagree
 
@@ -263,12 +304,43 @@ branch-only, `retry_queued`, leftover-branch-on-done, and dispatch-vs-open-PR ca
 `dispatch_running` assignment stops going through the helper, or if any template filters
 the dispatch payload for a running status.
 
+## Wave 3 outcome (defects 5, 6) — same branch
+
+| | Before | After |
+|---|---|---|
+| Overview "Merged This Month" | 195, labelled as work orders | **90 WOs**, with "195 PRs merged" beside it |
+| PM velocity, 4-week average | 47.2/wk, labelled WOs/week | **22.0 WOs/wk**, with 47.2 PRs/wk beside it |
+| All open WOs projected done | 2026-08-07 | **2026-08-10** |
+| PRs retrieved for a 56-day window | 432 of 439, silently | **439 of 439**, with a completeness flag |
+
+The projection moved 3 days on a 16-WO backlog. The shift is small only because the
+backlog is small; the rate itself was halved, and it is the rate that feeds every
+milestone date.
+
+**A sanity check that did not come out clean.** 411 work orders are marked Done, but only
+**179 distinct work orders have ever been named by a merged PR** in this repo's entire
+history (440 merged PRs, first one 2026-06-16). So roughly 230 Done work orders have no
+merge evidence behind them at all. The velocity figure is now an honest reading of merge
+history, but merge history explains under half of what the board calls Done — either many
+work orders were completed without a WO-named PR, or many spec files are marked Done
+without the work having landed. That is a separate defect from these seven and is not
+fixed here.
+
+Read the projection accordingly: it is a burn-down of the 16 work orders open right now at
+the observed merge rate, assuming no new ones arrive. The template says so in a tooltip.
+It is not a prediction of when the project finishes.
+
 ## Still open
 
-**Defects 5 and 6 are not fixed** and were deliberately excluded from
-`wo/dashboard-wo-source-of-truth` to keep it reviewable. "Merged This Month" is still
-counting PRs while labeled as work-order throughput, and `list_merged_prs` still truncates
-the oldest bucket of the velocity window. Both remain as described above.
+Nothing from this document. All seven defects are fixed on
+`wo/dashboard-wo-source-of-truth` (PR #194).
+
+Two follow-ups it surfaced, neither in scope here:
+
+- **WO-314 is claimed by two different spec files** in `dentroio/clarion`. The dashboard
+  resolves it deterministically and flags it; one of the two files needs renumbering.
+- **230 Done work orders have no merged PR naming them** (see the sanity check above).
+  Worth understanding before anyone treats "411 Done" as a delivery figure.
 
 ## How to reproduce the measurements
 

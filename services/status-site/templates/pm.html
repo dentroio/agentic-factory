@@ -103,11 +103,20 @@
     {# Velocity bars #}
     <div>
       <div class="flex items-center justify-between mb-3">
-        <h2 class="text-xs font-display font-bold text-slate-400 uppercase tracking-widest">WO Velocity — Last 8 Weeks</h2>
+        <h2 class="text-xs font-display font-bold text-slate-400 uppercase tracking-widest"
+            title="Distinct work orders, counted in the week their first merge landed. A work order spread over several PRs counts once; a PR closing several work orders credits each.">WO Velocity — Last 8 Weeks</h2>
         {% if velocity_summary %}
-        <span class="text-xs font-mono text-slate-500">avg <span class="text-indigo-400 font-bold">{{ velocity_summary.avg_per_week }}</span>/wk (last 4 wks)</span>
+        <span class="text-xs font-mono text-slate-500">avg <span class="text-indigo-400 font-bold">{{ velocity_summary.avg_per_week }}</span>/wk
+          <span class="text-slate-600" title="Pull requests merged per week over the same four weeks. Kept visible so the two rates can't be mistaken for each other — this used to be the number labelled WOs/week.">· {{ velocity_summary.prs_per_week }} PRs/wk</span>
+        </span>
         {% endif %}
       </div>
+      {% if velocity_summary and not velocity_summary.window_complete %}
+      <div class="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg border bg-amber-500/8 border-amber-500/20 text-amber-300 text-xs">
+        <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        <span><strong>Incomplete data</strong> — {{ velocity_summary.window_missing }} merged PR{{ 's' if velocity_summary.window_missing != 1 }} in this window could not be retrieved. Every bar below is a floor, not a count, and the average excludes them.</span>
+      </div>
+      {% endif %}
       {% if velocity %}
       <div class="space-y-1.5">
         {% set max_count = velocity | map(attribute='count') | max %}
@@ -115,22 +124,27 @@
         {% for week in velocity %}
         <div class="flex items-center gap-3 text-xs">
           <span class="text-slate-500 w-14 text-right font-mono text-xs">{{ week.label }}</span>
-          <div class="flex-1 bg-slate-950/60 border border-slate-800/30 rounded h-5 overflow-hidden flex items-center">
+          <div class="flex-1 bg-slate-950/60 border rounded h-5 overflow-hidden flex items-center {% if week.complete %}border-slate-800/30{% else %}border-amber-500/30{% endif %}"
+               title="{{ week.count }} work order{{ 's' if week.count != 1 }} from {{ week.pr_count }} merged PR{{ 's' if week.pr_count != 1 }}{% if not week.complete %} — at least; some PRs in this window were not retrieved{% endif %}">
             {% if week.count > 0 %}
             {% set bar_pct = [(week.count * 100 / safe_max) | round | int, 100] | min %}
-            <div class="bg-gradient-to-r from-indigo-500 to-cyan-500 h-full flex items-center px-2 transition-all duration-500"
+            <div class="h-full flex items-center px-2 transition-all duration-500 {% if week.complete %}bg-gradient-to-r from-indigo-500 to-cyan-500{% else %}bg-gradient-to-r from-amber-600/70 to-amber-500/70{% endif %}"
                  style="width: {{ bar_pct }}%">
-              <span class="text-white font-mono font-semibold text-xs">{{ week.count }}</span>
+              <span class="text-white font-mono font-semibold text-xs">{{ week.count }}{% if not week.complete %}+{% endif %}</span>
             </div>
-            {% else %}
+            {% elif week.complete %}
             <span class="text-slate-700 font-mono text-xs px-2">0</span>
+            {% else %}
+            {# A zero we can't stand behind. Rendering it as "0" is the defect:
+               a bucket that lost data looked exactly like a week nobody worked. #}
+            <span class="text-amber-500/70 font-mono text-xs px-2">no data</span>
             {% endif %}
           </div>
         </div>
         {% endfor %}
       </div>
       {% else %}
-      <p class="text-xs text-slate-500 text-center py-4">No merged PRs in the last 8 weeks.</p>
+      <p class="text-xs text-slate-500 text-center py-4">No work orders completed in the last 8 weeks.</p>
       {% endif %}
     </div>
 
@@ -169,17 +183,21 @@
         </div>
         {% endfor %}
         {% if velocity_summary.projected_done %}
-        <div class="pt-2 border-t border-slate-800/40 flex items-center gap-3 text-xs text-slate-500 font-mono flex-wrap">
+        <div class="pt-2 border-t border-slate-800/40 flex items-center gap-3 text-xs text-slate-500 font-mono flex-wrap"
+             title="Burn-down of the work orders open right now at the current rate. It assumes no new work orders arrive, which they do — read it as when today's backlog clears, not when the project ends.">
           <span class="text-slate-400">All {{ velocity_summary.remaining_open }} open WOs:</span>
           <span class="text-slate-300 font-semibold">projected done {{ velocity_summary.projected_done }}</span>
-          <span class="text-slate-600">at {{ velocity_summary.avg_per_week }} WOs/week</span>
+          <span class="text-slate-600">at {{ velocity_summary.avg_per_week }} WOs/week, backlog as it stands</span>
         </div>
         {% endif %}
       </div>
     </div>
     {% elif velocity_summary and velocity_summary.avg_per_week == 0 %}
     <div class="border-t border-slate-800/50 pt-3">
-      <p class="text-xs text-slate-600 font-mono">No recent merge activity — milestone projections unavailable.</p>
+      <p class="text-xs text-slate-600 font-mono">
+        {% if not velocity_summary.window_complete %}Merge history could not be retrieved — projections withheld rather than computed from partial data.
+        {% else %}No work orders completed recently — milestone projections unavailable.{% endif %}
+      </p>
     </div>
     {% endif %}
   </div>

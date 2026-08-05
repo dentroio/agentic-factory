@@ -38,6 +38,8 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Work order specs sourced from the GitHub default branch | ✅ | Local mount demoted to a blob-SHA-verified cache; warns in-page when it can't be trusted | fix/dashboard-wo-source-of-truth |
 | Single definition of "Running" across Overview, PM and Factory | ✅ | Dispatch `claimed`/`in_progress` via `wo_reconcile.dispatch_status_counts()`; clients read `/api/factory/counts` | fix/dashboard-wo-source-of-truth |
 | Stalled board column | ✅ | Retry-queued or stale claims, and pushed branches with no dispatch entry | fix/dashboard-wo-source-of-truth |
+| Velocity measured in work orders, not pull requests | ✅ | `wo_reconcile.wo_completion_times()`; each WO counted once, in the week of its first merge; PR rate shown beside it under its own label | fix/dashboard-wo-source-of-truth |
+| Merged-PR window reports its own completeness | ✅ | Search API `merged:>=` paged against `total_count`; short or failed fetches render as "no data", not as zero, and are excluded from the average | fix/dashboard-wo-source-of-truth |
 
 ## Dimension 2: PR Watchdog (pr-watchdog)
 
