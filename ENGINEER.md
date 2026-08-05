@@ -19,11 +19,17 @@ Work through these in order. Each one has a check (how to know it's done) and a 
 
 #### 1. Project identity
 **Check:** `CLAUDE.md`, `AGENTS.md`, `.cursor/rules/agent-process.mdc` no longer contain `{{PROJECT_NAME}}`
-**Fix:** Ask the user for the project name. Then find-replace across the repo:
+**Fix:** Run the setup script's own phase for this — it targets an explicit file list
+(`CLAUDE.md`, `AGENTS.md`, `.cursor/rules/agent-process.mdc`, `AGENT_PROCESS.md`, `README.md`)
+rather than a repo-wide find, so it can't touch anything else:
 ```bash
-find . -not -path './.git/*' -type f | xargs grep -l '{{PROJECT_NAME}}' | \
-  xargs sed -i '' 's/{{PROJECT_NAME}}/THEIR_NAME/g'   # macOS
+python3 scripts/setup_factory.py
 ```
+Do not hand-roll a repo-wide `find | xargs sed` for this — a prior version of this doc did
+exactly that and it matched `{{PROJECT_NAME}}` inside `scripts/factory_status.py` and
+`scripts/setup_factory.py` themselves (the string appears in their own placeholder-detection
+code, not as something to fill in), permanently disabling that detection. It also attempted to
+rewrite `.pyc` files, and `sed -i ''` is BSD-only syntax that fails outright on Linux.
 
 #### 2. Makefile
 **Check:** `Makefile` exists (not just `Makefile.template`) and contains no `{{FILL IN}}`

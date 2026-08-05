@@ -81,7 +81,7 @@ def check_makefile() -> bool:
         check("Makefile", False, detail="not found — copy from Makefile.template")
         return False
     content = path.read_text()
-    has_placeholder = "{{FILL IN}}" in content or "{{" in content
+    has_placeholder = bool(re.search(r"\{\{[A-Z][A-Z_ ]*\}\}", content))
     return check("Makefile", not has_placeholder,
                  detail="still contains unfilled placeholders" if has_placeholder else "")
 
@@ -93,7 +93,7 @@ def check_ci_workflow() -> bool:
         check("ci.yml", False, detail="not found — copy from ci.yml.template")
         return False
     content = path.read_text()
-    has_placeholder = "{{" in content
+    has_placeholder = bool(re.search(r"\{\{[A-Z][A-Z_ ]*\}\}", content))
     return check("ci.yml", not has_placeholder,
                  detail="still contains unfilled placeholders" if has_placeholder else "")
 
@@ -106,7 +106,7 @@ def check_cd_workflow() -> bool:
               detail="not configured (copy from deploy.yml.template when ready)")
         return True  # warn but don't fail — CD is optional until the project is deployed
     content = path.read_text()
-    has_placeholder = "{{" in content
+    has_placeholder = bool(re.search(r"\{\{[A-Z][A-Z_ ]*\}\}", content))
     return check("deploy.yml", not has_placeholder,
                  detail="still contains unfilled placeholders" if has_placeholder else "")
 

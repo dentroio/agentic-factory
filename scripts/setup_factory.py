@@ -272,7 +272,7 @@ def phase_makefile(state: dict) -> bool:
         ok("Copied Makefile.template → Makefile")
 
     content = makefile.read_text()
-    placeholders = re.findall(r"\{\{[^}]+\}\}", content)
+    placeholders = re.findall(r"\{\{[A-Z][A-Z_ ]*\}\}", content)
     unique = list(dict.fromkeys(placeholders))
 
     if not unique:
@@ -317,7 +317,7 @@ def phase_ci_workflow(state: dict) -> bool:
         ok("Copied ci.yml.template → ci.yml")
 
     content = ci_path.read_text()
-    placeholders = re.findall(r"\{\{[^}]+\}\}", content)
+    placeholders = re.findall(r"\{\{[A-Z][A-Z_ ]*\}\}", content)
     unique = list(dict.fromkeys(placeholders))
 
     if not unique:
@@ -361,7 +361,7 @@ def phase_cd_workflow(state: dict) -> bool:
         ok("Copied deploy.yml.template → deploy.yml")
 
     content = deploy_path.read_text()
-    placeholders = re.findall(r"\{\{[^}]+\}\}", content)
+    placeholders = re.findall(r"\{\{[A-Z][A-Z_ ]*\}\}", content)
     unique = list(dict.fromkeys(placeholders))
 
     info(f"Found {len(unique)} placeholder(s):")
