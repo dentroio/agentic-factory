@@ -6,10 +6,17 @@ from typing import AsyncIterator
 
 from backends.base import AgentBackend, QuotaExceededError
 
-# Claude Code emits these when the subscription usage cap is hit
+# Claude Code emits these when the subscription usage cap is hit. Missing a
+# wording variant here isn't cosmetic — it's a wasted attempt: the run() loop
+# below only raises QuotaExceededError (triggering fallback to cursor/codex)
+# when this matches, so on a miss the runner sees a plain nonzero exit,
+# treats it as "agent run complete", and plows forward into rebuild + quality
+# gate on whatever half-done state existed. "you've hit your ... limit" was
+# missing this exact way — WO-440 burned a full attempt on it (2026-08-04)
+# with zero real work done and no fallback to an available backend.
 _QUOTA_RE = re.compile(
-    r"usage limit reached|rate limit|you've reached your|claude\.ai usage|"
-    r"exceeded.*limit|limit.*exceeded|upgrade your plan|claude\.ai/upgrade",
+    r"usage limit reached|rate limit|you've reached your|you've hit your.*limit|"
+    r"claude\.ai usage|exceeded.*limit|limit.*exceeded|upgrade your plan|claude\.ai/upgrade",
     re.I,
 )
 
