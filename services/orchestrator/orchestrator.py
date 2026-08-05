@@ -117,6 +117,16 @@ _specs_cache: dict[int, dict] = {}     # all merged WO specs from last poll (pri
 _pm_dispatch: dict | None = None       # PM-requested direct dispatch {wo, backend, title}
 _plan_overlay: list[dict] = []         # spec-file WOs not in PLAN.json — runtime-only, never written to disk
 _approval_skips: dict[str, str] = {}   # wo_id → ISO timestamp until approval is bypassed
+# WOs a human has explicitly approved this session, independent of dispatch
+# state. The approval gate used to key off _dispatch_state[wo_id]["status"]
+# == "approved" alone — but claim_wo pops that entry the moment the claim
+# proceeds, and a transient failure shortly after (e.g. a container rebuild
+# hiccup) resets the entry via release_dispatch, wiping every trace that a
+# human already signed off. The WO then falls straight back into
+# pending_approval on its very next claim attempt, forcing a second approval
+# for a risk decision that hasn't actually changed. Cleared on completion or
+# manual reset — see complete_wo() and reset_dispatch().
+_wo_ever_approved: set[str] = set()
 _preflight_held: dict[str, dict] = {}  # wo_id → {hold_reason, held_at, last_checked}
 _max_retry_notified: set[str] = set()  # wo_ids already alerted for exceeding MAX_RETRY_ATTEMPTS
 
@@ -1687,7 +1697,7 @@ async def claim_wo(req: ClaimRequest):
     wo_priority = wo_spec.get("priority", "P2")
     skip_entry = _approval_skips.get(wo_id)
     skip_active = skip_entry and datetime.now(UTC) < datetime.fromisoformat(skip_entry)
-    already_approved = existing.get("status") == "approved"
+    already_approved = existing.get("status") == "approved" or wo_id in _wo_ever_approved
     needs_approval = (
         REQUIRE_APPROVAL_FOR
         and wo_priority in REQUIRE_APPROVAL_FOR
@@ -1811,6 +1821,7 @@ async def approve_wo(wo_id: str):
     if entry.get("status") != "pending_approval":
         raise HTTPException(status_code=404, detail=f"{wo_id} not in pending_approval state")
     _dispatch_state[wo_id]["status"] = "approved"
+    _wo_ever_approved.add(wo_id)
     _save_dispatch()
     thread_store.append_message(wo_id, thread_store.system_message(
         f"✅ {wo_id} approved for dispatch — agent will pick it up shortly"
@@ -2108,6 +2119,7 @@ async def reset_dispatch(wo_id: str, force: bool = False):
         del _dispatch_state[wo_id]
         _save_dispatch()
     _max_retry_notified.discard(wo_id)
+    _wo_ever_approved.discard(wo_id)
     print(f"[orchestrator] {wo_id} dispatch state hard-reset (attempt counter cleared)")
     return {"ok": True, "reset": wo_id}
 
@@ -2130,6 +2142,7 @@ async def complete_wo(req: CompleteRequest):
         raise HTTPException(status_code=404, detail=f"{wo_id} not in dispatch state")
     _dispatch_state[wo_id]["status"] = "complete"
     _dispatch_state[wo_id]["completed_at"] = _utcnow()
+    _wo_ever_approved.discard(wo_id)
     if req.pr_url:
         _dispatch_state[wo_id]["pr_url"] = req.pr_url
     if req.pr_number:
