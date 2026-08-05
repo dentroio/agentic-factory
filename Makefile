@@ -2,9 +2,11 @@
 
 LABEL := com.dentroio.factory-agent
 LOG_DIR := $(HOME)/Library/Logs/factory-agent
+PYTHON ?= python3
 
 .PHONY: help \
         agent-setup \
+        test pre-pr-check ci-local \
         up down logs restart \
         agent-install agent-remove agent-start agent-stop agent-logs agent-status agent-once \
         docs-check docs-check-strict docs-gdrive \
@@ -16,6 +18,34 @@ help:  ## Show this help
 
 agent-setup:  ## First-time setup — stores secrets in macOS Keychain
 	@bash scripts/agent-setup.sh
+
+# ── CI gate ──────────────────────────────────────────────────────────────────
+# `make ci-local` is documented across AGENT_PROCESS.md, README.md, CLAUDE.md,
+# AGENTS.md and the Cursor rules as the contract every agent runs before a PR,
+# and services/agent-runner/quality_gate.py executes it as a real subprocess.
+# It existed only in Makefile.template, so for every agent that followed the
+# instructions it failed with "No rule to make target".
+#
+# The template's version composes lint/test/check-migrations/build. This repo's
+# CI enforces exactly one thing — the unit tests — so composing steps CI does
+# not run would break the promise in the other direction: a gate that fails
+# locally on code GitHub would accept is a gate people learn to skip. Add a
+# step here only when ci.yml grows one; tests/unit/test_ci_local_mirrors_ci.py
+# fails if the two drift apart.
+
+test:  ## Run unit tests — must stay identical to the Unit Tests job in ci.yml
+	@$(PYTHON) -c "import pytest" 2>/dev/null || { \
+	  echo "pytest is not installed for $(PYTHON)."; \
+	  echo "Install the same set ci.yml does:  $(PYTHON) -m pip install pytest pytest-asyncio httpx"; \
+	  exit 1; }
+	$(PYTHON) -m pytest tests/unit/ -v --tb=short || { ec=$$?; [ $$ec -eq 5 ] || exit $$ec; }
+
+pre-pr-check:  ## Static pre-PR check — the patterns the AI reviewer flags, no API call
+	$(PYTHON) scripts/pre_pr_check.py
+
+ci-local:  ## Full PR gate locally — run this before every PR
+	$(MAKE) test
+	$(MAKE) pre-pr-check
 
 # ── Docker Compose (dashboard + orchestrator + watchdog) ─────────────────────
 

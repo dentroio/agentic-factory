@@ -67,9 +67,19 @@ jobs:
         id: diff
         if: steps.skip_check.outputs.skip != 'true'
         run: |
+          # Source languages only used to be included here, which meant the
+          # reviewer never saw the templates, workflows, Makefile or shell
+          # scripts in a PR — it reviewed half a change and reasoned about the
+          # other half from the description. On #195 it downgraded its own
+          # verdict because the Makefile the PR was about was not in the diff.
+          # These are also where the checks it is asked to run actually bite:
+          # `|| true` lives in Makefiles and CI scripts, secrets in workflows.
+          # Widening this is only safe now that ai_review.py chunks large diffs.
           git diff origin/main...HEAD -- \
             '*.py' '*.ts' '*.tsx' '*.go' '*.java' '*.rs' \
+            '*.html' '*.css' '*.sh' '*.yml' '*.yaml' 'Makefile*' \
             ':!**/node_modules/**' ':!**/vendor/**' ':!**/.git/**' \
+            ':!**/package-lock.json' ':!**/*.min.*' \
             > /tmp/pr_diff.txt
           echo "lines=$(wc -l < /tmp/pr_diff.txt)" >> $GITHUB_OUTPUT
 
