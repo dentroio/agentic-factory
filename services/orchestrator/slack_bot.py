@@ -12,6 +12,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8100")
+_API_SECRET = os.getenv("API_SECRET", "")
+_ORCH_AUTH = {"Authorization": f"Bearer {_API_SECRET}"} if _API_SECRET else {}
 _STATE_PATH = Path("/data/slack_state.json")
 _MAX_HISTORY = 20
 _MAX_THREADS = 100
@@ -225,6 +227,7 @@ def _make_handler(bot_token: str):
                     resp = httpx.post(
                         f"{ORCHESTRATOR_URL}/api/pm/chat",
                         json={"message": confirm_msg, "history": history[-_MAX_HISTORY:]},
+                        headers=_ORCH_AUTH,
                         timeout=60,
                     )
                     resp.raise_for_status()
@@ -288,6 +291,7 @@ def _make_handler(bot_token: str):
             resp = httpx.post(
                 f"{ORCHESTRATOR_URL}/api/pm/chat",
                 json={"message": text, "history": history[-_MAX_HISTORY:]},
+                headers=_ORCH_AUTH,
                 timeout=120,
             )
             resp.raise_for_status()

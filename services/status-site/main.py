@@ -501,7 +501,7 @@ async def dashboard(request: Request):
     async def _load_runner_status() -> bool:
         try:
             async with httpx.AsyncClient(timeout=3) as client:
-                r = await client.get(f"{ORCHESTRATOR_URL}/api/backends")
+                r = await client.get(f"{ORCHESTRATOR_URL}/api/backends", headers=_orch_headers())
                 if r.status_code == 200:
                     return r.json().get("agent_runner_online", False)
         except Exception:
@@ -511,7 +511,7 @@ async def dashboard(request: Request):
     async def _load_dispatch() -> dict:
         try:
             async with httpx.AsyncClient(timeout=3) as client:
-                r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch")
+                r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_orch_headers())
                 if r.status_code == 200:
                     return r.json()
         except Exception:
@@ -678,7 +678,7 @@ async def wo_detail(request: Request, number: int):
     thread_messages: list[dict] = []
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            t_resp = await client.get(f"{ORCHESTRATOR_URL}/api/thread/WO-{number}/messages")
+            t_resp = await client.get(f"{ORCHESTRATOR_URL}/api/thread/WO-{number}/messages", headers=_orch_headers())
             if t_resp.status_code == 200:
                 thread_messages = t_resp.json()
     except Exception:
@@ -733,7 +733,7 @@ async def pm_dashboard(request: Request):
     async def _pm_dispatch() -> dict:
         try:
             async with httpx.AsyncClient(timeout=3) as client:
-                r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch")
+                r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_orch_headers())
                 if r.status_code == 200:
                     return r.json()
         except Exception:
@@ -1148,7 +1148,7 @@ async def proxy_thread_messages(wo: str, since: str = ""):
     try:
         async with httpx.AsyncClient(timeout=8) as client:
             params = {"since": since} if since else {}
-            resp = await client.get(f"{ORCHESTRATOR_URL}/api/thread/{wo}/messages", params=params)
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/thread/{wo}/messages", params=params, headers=_orch_headers())
             return JSONResponse(content=resp.json(), status_code=resp.status_code)
     except Exception as e:
         return JSONResponse(content=[], status_code=200)
@@ -1290,8 +1290,8 @@ async def settings_agents(request: Request, saved: str = "", error: str = ""):
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             cfg_r, sec_r = await asyncio.gather(
-                client.get(f"{ORCHESTRATOR_URL}/api/config"),
-                client.get(f"{ORCHESTRATOR_URL}/api/secrets"),
+                client.get(f"{ORCHESTRATOR_URL}/api/config", headers=_orch_headers()),
+                client.get(f"{ORCHESTRATOR_URL}/api/secrets", headers=_orch_headers()),
             )
             if cfg_r.status_code == 200:
                 cfg = cfg_r.json()
@@ -1303,7 +1303,7 @@ async def settings_agents(request: Request, saved: str = "", error: str = ""):
     installed_backends: dict[str, bool] = {}
     try:
         async with httpx.AsyncClient(timeout=3) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/backends")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/backends", headers=_orch_headers())
             if r.status_code == 200:
                 data = r.json()
                 for b in ("claude", "cursor", "codex", "gemini"):
@@ -1358,8 +1358,8 @@ async def usage_page(request: Request):
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             usage_r, budget_r = await asyncio.gather(
-                client.get(f"{ORCHESTRATOR_URL}/api/usage"),
-                client.get(f"{ORCHESTRATOR_URL}/api/budget"),
+                client.get(f"{ORCHESTRATOR_URL}/api/usage", headers=_orch_headers()),
+                client.get(f"{ORCHESTRATOR_URL}/api/budget", headers=_orch_headers()),
                 return_exceptions=True,
             )
             if not isinstance(usage_r, Exception) and usage_r.status_code == 200:
@@ -1421,8 +1421,8 @@ async def settings_authentication(request: Request, saved: str = "", error: str 
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             sec_r, ntfy_r = await asyncio.gather(
-                client.get(f"{ORCHESTRATOR_URL}/api/secrets"),
-                client.get(f"{ORCHESTRATOR_URL}/api/notifications/config"),
+                client.get(f"{ORCHESTRATOR_URL}/api/secrets", headers=_orch_headers()),
+                client.get(f"{ORCHESTRATOR_URL}/api/notifications/config", headers=_orch_headers()),
                 return_exceptions=True,
             )
             if not isinstance(sec_r, Exception) and sec_r.status_code == 200:
@@ -1520,7 +1520,7 @@ async def settings_plan(request: Request, pr_url: str = "", error: str = ""):
     held: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=4) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/held-wos")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/held-wos", headers=_orch_headers())
             if r.status_code == 200:
                 held = r.json()
     except Exception:
@@ -1808,7 +1808,7 @@ async def api_backends():
     """Proxy to orchestrator /api/backends — tells the UI which agents are available."""
     try:
         async with httpx.AsyncClient(timeout=4) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/backends")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/backends", headers=_orch_headers())
             if r.status_code == 200:
                 return r.json()
     except Exception:
@@ -1964,7 +1964,7 @@ async def api_anthropic_usage():
     """Proxy orchestrator Anthropic API usage summary."""
     try:
         async with httpx.AsyncClient(timeout=3) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/anthropic-usage")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/anthropic-usage", headers=_orch_headers())
             if r.status_code == 200:
                 return r.json()
     except Exception:
@@ -1977,7 +1977,7 @@ async def api_budget():
     """Proxy orchestrator /api/budget — AI provider token/spend summary."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/budget")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/budget", headers=_orch_headers())
             if r.status_code == 200:
                 return r.json()
     except Exception:
@@ -1990,7 +1990,7 @@ async def api_factory_dispatch():
     """Live dispatch state — which WOs are claimed and what each agent is doing."""
     try:
         async with httpx.AsyncClient(timeout=4) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_orch_headers())
             if r.status_code == 200:
                 return r.json()
     except Exception:
@@ -2025,7 +2025,7 @@ async def api_factory_release_all():
 @app.get("/api/factory/pause")
 async def api_factory_pause_state():
     async with httpx.AsyncClient(timeout=3) as client:
-        r = await client.get(f"{ORCHESTRATOR_URL}/api/factory/pause")
+        r = await client.get(f"{ORCHESTRATOR_URL}/api/factory/pause", headers=_orch_headers())
     return JSONResponse(content=r.json(), status_code=r.status_code)
 
 
@@ -2086,7 +2086,7 @@ async def api_factory_slack_status():
     """Proxy Slack bot connection status from orchestrator."""
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/slack/status")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/slack/status", headers=_orch_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         return JSONResponse(content={"connected": False, "error": str(e)}, status_code=503)
@@ -2108,7 +2108,7 @@ async def api_factory_dependabot_prs():
     """Proxy Dependabot PR list from orchestrator."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/dependabot/prs")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/dependabot/prs", headers=_orch_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         return JSONResponse(content={"prs": [], "error": str(e)}, status_code=503)
@@ -2151,7 +2151,7 @@ async def api_factory_dependabot_approve_merge(number: int):
 async def api_factory_approvals():
     """List WOs pending pre-dispatch approval."""
     async with httpx.AsyncClient(timeout=4) as client:
-        r = await client.get(f"{ORCHESTRATOR_URL}/api/approvals")
+        r = await client.get(f"{ORCHESTRATOR_URL}/api/approvals", headers=_orch_headers())
     return JSONResponse(content=r.json() if r.status_code == 200 else {"approvals": []}, status_code=200)
 
 
@@ -2181,7 +2181,7 @@ async def api_factory_agents():
     """Proxy agent daemon status (launchctl/plist) from orchestrator → runner."""
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/runner/agents")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/runner/agents", headers=_orch_headers())
             return JSONResponse(content=r.json() if r.status_code == 200 else {"agents": {}}, status_code=200)
     except Exception:
         return JSONResponse(content={"agents": {}}, status_code=200)
@@ -2447,7 +2447,7 @@ async def api_put_anthropic_key(request: Request):
 async def api_intelligence_status():
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/intelligence/status")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/intelligence/status", headers=_orch_headers())
             if r.status_code == 200:
                 return JSONResponse(content=r.json())
     except Exception as e:
@@ -2478,8 +2478,8 @@ async def factory_floor(request: Request):
     try:
         async with httpx.AsyncClient(timeout=4) as client:
             b_r, d_r = await asyncio.gather(
-                client.get(f"{ORCHESTRATOR_URL}/api/backends"),
-                client.get(f"{ORCHESTRATOR_URL}/api/dispatch"),
+                client.get(f"{ORCHESTRATOR_URL}/api/backends", headers=_orch_headers()),
+                client.get(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_orch_headers()),
                 return_exceptions=True,
             )
             if not isinstance(b_r, Exception) and b_r.status_code == 200:

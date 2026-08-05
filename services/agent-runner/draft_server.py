@@ -559,6 +559,12 @@ class _DraftHandler(BaseHTTPRequestHandler):
 
 
 def start() -> None:
-    server = _ThreadedServer(("0.0.0.0", DRAFT_PORT), _DraftHandler)
-    print(f"[draft-server] Listening on :{DRAFT_PORT}", flush=True)
+    # Was 0.0.0.0 with no auth anywhere in _DraftHandler — anyone on the same
+    # network (office wifi, hotel, café) could POST /dispatch to start
+    # autonomous code execution as this user, or PUT /api/agents/{name} to
+    # plant an attacker-controlled API key and restart the daemon. Loopback
+    # binding is the actual fix; a bearer token would be defense in depth on
+    # top of it but isn't added here since nothing currently reads one.
+    server = _ThreadedServer(("127.0.0.1", DRAFT_PORT), _DraftHandler)
+    print(f"[draft-server] Listening on 127.0.0.1:{DRAFT_PORT}", flush=True)
     server.serve_forever()

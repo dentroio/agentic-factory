@@ -26,6 +26,9 @@ LOCAL_REPO_PATH = os.getenv("LOCAL_REPO_PATH", "")
 POLL_INTERVAL = int(os.getenv("REVIEWER_POLL_INTERVAL", "30"))
 REVIEWER_NAME = "claude-reviewer"
 
+_API_SECRET = os.getenv("API_SECRET", "")
+_AUTH = {"Authorization": f"Bearer {_API_SECRET}"} if _API_SECRET else {}
+
 # Pin the model explicitly rather than let the CLI fall back to whatever a global
 # ~/.claude/settings.json last had selected (e.g. a model this daemon's subscription
 # tier doesn't have credits for) — this subprocess runs with no cwd inside a repo
@@ -74,7 +77,7 @@ def _log(msg: str) -> None:
 async def _get_pending() -> list[dict]:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/validations")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/validations", headers=_AUTH)
             r.raise_for_status()
             return [v for v in r.json() if v.get("status") == "pending" and v.get("pr_url")]
     except Exception as e:
@@ -211,6 +214,7 @@ async def _approve(wo: str, notes: str) -> bool:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(
                 f"{ORCHESTRATOR_URL}/api/validations/{wo}/approve",
+                headers=_AUTH,
                 json={"decided_by": REVIEWER_NAME, "notes": notes},
             )
             return r.status_code == 200
@@ -224,6 +228,7 @@ async def _reject(wo: str, reason: str) -> bool:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(
                 f"{ORCHESTRATOR_URL}/api/validations/{wo}/reject",
+                headers=_AUTH,
                 json={"decided_by": REVIEWER_NAME, "reason": reason},
             )
             return r.status_code == 200
@@ -237,6 +242,7 @@ async def _post_thread(wo: str, content: str) -> None:
         async with httpx.AsyncClient(timeout=8) as client:
             await client.post(
                 f"{ORCHESTRATOR_URL}/api/thread/{wo}/messages",
+                headers=_AUTH,
                 json={"author": REVIEWER_NAME, "role": "agent", "type": "text",
                       "content": content, "metadata": {}},
             )
@@ -247,7 +253,7 @@ async def _post_thread(wo: str, content: str) -> None:
 async def _wo_title(wo: str) -> str:
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/queue/{wo}")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/queue/{wo}", headers=_AUTH)
             if r.status_code == 200:
                 return r.json().get("title", wo)
     except Exception:
@@ -259,7 +265,7 @@ async def _fetch_wo_spec(wo: str) -> dict:
     """Return the full WO queue entry (title, notes, services, etc.)."""
     try:
         async with httpx.AsyncClient(timeout=8) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}/api/queue/{wo}")
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/queue/{wo}", headers=_AUTH)
             if r.status_code == 200:
                 return r.json()
     except Exception:
@@ -463,9 +469,9 @@ async def _cleanup_stale_prs() -> None:
         return
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            dispatch_r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch")
-            held_r = await client.get(f"{ORCHESTRATOR_URL}/api/held-wos")
-            queue_r = await client.get(f"{ORCHESTRATOR_URL}/api/queue")
+            dispatch_r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_AUTH)
+            held_r = await client.get(f"{ORCHESTRATOR_URL}/api/held-wos", headers=_AUTH)
+            queue_r = await client.get(f"{ORCHESTRATOR_URL}/api/queue", headers=_AUTH)
             if not all(r.status_code == 200 for r in (dispatch_r, held_r, queue_r)):
                 return
             dispatch = dispatch_r.json()

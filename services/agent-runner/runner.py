@@ -19,6 +19,7 @@ import os as _os
 from config import (
     AGENT_NAME,
     AGENT_TIMEOUT,
+    API_SECRET,
     DOMAIN_FILTER,
     GITHUB_REPO,
     HOSTNAME,
@@ -28,6 +29,8 @@ from config import (
     PREFERRED_AGENT,
     WORKTREE_BASE,
 )
+
+_AUTH = {"Authorization": f"Bearer {API_SECRET}"} if API_SECRET else {}
 # True when this runner was launched with an explicit PREFERRED_AGENT env var
 # (i.e., a per-backend LaunchAgent plist). In that case the orchestrator's
 # global "preferred" config must not override it.
@@ -69,7 +72,7 @@ def _log(msg: str) -> None:
 async def _post_log(line: str) -> None:
     try:
         async with _httpx.AsyncClient(timeout=1.0) as c:
-            await c.post(f"{ORCHESTRATOR_URL}/api/log", json={"line": line, "agent": AGENT_NAME})
+            await c.post(f"{ORCHESTRATOR_URL}/api/log", headers=_AUTH, json={"line": line, "agent": AGENT_NAME})
     except Exception:
         pass
 
@@ -682,7 +685,7 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         try:
             import json as _json
             async with _httpx.AsyncClient(timeout=5) as _qc:
-                _qr = await _qc.get(f"{ORCHESTRATOR_URL}/api/queue/{wo_id}")
+                _qr = await _qc.get(f"{ORCHESTRATOR_URL}/api/queue/{wo_id}", headers=_AUTH)
                 if _qr.status_code == 200:
                     _entry = _qr.json()
                     raw = _entry.get("docs_required", "[]")

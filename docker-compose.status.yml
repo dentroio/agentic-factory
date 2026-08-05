@@ -19,7 +19,12 @@ services:
     build:
       context: ./services/status-site
     ports:
-      - "8099:8099"
+      # Was "8099:8099" (all interfaces) — 42 write endpoints, zero
+      # authentication, and it forwards requests to the orchestrator with
+      # the bearer token attached, fully defeating the orchestrator's own
+      # loopback binding. vault and orchestrator already restrict to
+      # 127.0.0.1 below; this matches them.
+      - "127.0.0.1:8099:8099"
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_REPO=${GITHUB_REPO}

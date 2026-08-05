@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import os
+import secrets as _secrets_mod
 import re
 import sqlite3
 from contextlib import asynccontextmanager
@@ -1197,18 +1198,51 @@ app = FastAPI(title="Factory Orchestrator", lifespan=lifespan)
 
 API_SECRET = os.getenv("API_SECRET", "")
 
+# Fail closed: this port is meant to be loopback-only, but a misconfigured
+# deploy (or a future change that widens the binding) must not silently run
+# fully unauthenticated. AF-09 found this exact state live: API_SECRET was
+# absent from the deployed .env, so every route — including GET /api/dispatch
+# (full internal state) — was reachable with zero credentials.
+if not API_SECRET:
+    raise RuntimeError(
+        "API_SECRET is not set. The orchestrator refuses to start without it — "
+        "generate one (e.g. `python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"`) "
+        "and set API_SECRET in .env."
+    )
+
 
 @app.middleware("http")
 async def _bearer_auth(request: Request, call_next):
-    """Require bearer token on all non-read requests when API_SECRET is set."""
-    if API_SECRET and request.method not in ("GET", "HEAD", "OPTIONS"):
-        auth = request.headers.get("Authorization", "")
-        if auth != f"Bearer {API_SECRET}":
-            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    """Require a bearer token on every request, GET included.
+
+    GET used to be exempt unconditionally — that meant /api/dispatch (full
+    internal state), /api/config, /api/secrets (booleans only, but still),
+    and /api/log/stream were all readable by anyone who could reach this
+    port with no credentials at all. Every known consumer (status-site,
+    the native agent-runner daemons via orchestrator_client.py, pr-watchdog,
+    reviewer.py, health_agent.py, review_chain.py, thread_monitor.py,
+    slack_bot.py) has been updated to send this header on every call,
+    reads included — see AF-09 in the 2026-08 engineering assessment.
+    """
+    auth = request.headers.get("Authorization", "")
+    if not _secrets_mod.compare_digest(auth, f"Bearer {API_SECRET}"):
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
     return await call_next(request)
 
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# Was allow_origins=["*"] — permitted any website the developer's browser
+# visited to fetch() this port directly (it's loopback-bound, but browsers
+# don't treat "same machine" as "same origin"). Nothing in this system's own
+# UI calls the orchestrator directly from browser JS (status-site's Python
+# backend proxies everything server-side), so there's no legitimate origin
+# that needs this at all — restricting to status-site's own dev origins is
+# defense in depth, not a functional requirement.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8099", "http://127.0.0.1:8099"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ── REST API ──────────────────────────────────────────────────────────────────

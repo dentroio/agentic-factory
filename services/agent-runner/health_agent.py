@@ -184,7 +184,7 @@ def _find_existing_pr(wo_id: str) -> str | None:
 async def _get(path: str) -> dict | list | None:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{ORCHESTRATOR_URL}{path}")
+            r = await client.get(f"{ORCHESTRATOR_URL}{path}", headers=_AUTH)
             if r.status_code == 200:
                 return r.json()
     except Exception:
@@ -695,7 +695,7 @@ async def main() -> None:
     if not NTFY_TOPIC:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                r = await client.get(f"{ORCHESTRATOR_URL}/api/notifications/config")
+                r = await client.get(f"{ORCHESTRATOR_URL}/api/notifications/config", headers=_AUTH)
                 if r.status_code == 200:
                     cfg = r.json()
                     NTFY_TOPIC  = cfg.get("ntfy_topic", "")
