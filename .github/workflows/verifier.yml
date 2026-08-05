@@ -28,6 +28,7 @@ jobs:
   verify-ac:
     name: Verify Acceptance Criteria
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Only run on merged PRs that reference a WO
     if: >
       github.event.pull_request.merged == true &&

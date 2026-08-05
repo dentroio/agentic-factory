@@ -18,6 +18,7 @@ jobs:
   audit:
     name: Scan for stale wiki pages
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4

@@ -49,6 +49,7 @@ jobs:
   update-clarion-wiki:
     name: Update Clarion wiki
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
 
@@ -113,6 +114,7 @@ jobs:
   update-factory-wiki:
     name: Update factory wiki (self)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: write

@@ -25,10 +25,19 @@ permissions:
   issues: write
   contents: read
 
+# Runs every 15 minutes with no cancellation — a run that takes longer than
+# that (e.g. a slow health endpoint) stacks with the next one instead of
+# being superseded by it. One global group since every run checks the same
+# endpoint; there's never a legitimate reason for two to run concurrently.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   health-check:
     name: Health Check
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4

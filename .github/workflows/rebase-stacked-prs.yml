@@ -9,10 +9,23 @@ permissions:
   contents: write
   pull-requests: write
 
+# Fires on every merge and force-pushes stacked PRs' branches — with no
+# concurrency control, several quick merges produce overlapping
+# force-with-lease pushes to the same branches. Unlike the cancel-in-progress
+# pattern used elsewhere, this one queues instead: a git rebase/force-push
+# isn't safely interruptible mid-operation, so cancelling a run partway
+# through could leave a branch in a half-rebased state. One global group
+# since any two runs could touch the same stacked branch regardless of
+# which PR triggered them.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   rebase-stacked:
     name: Retarget stacked PRs to main
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Only act on merged PRs (not manually closed ones)
     if: github.event.pull_request.merged == true
 
