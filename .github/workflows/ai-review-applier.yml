@@ -32,6 +32,7 @@ jobs:
   apply-suggestions:
     name: Apply AI review suggestions
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Only fire when review passed (not "Review required" — those block merge and need human)
     if: github.event.workflow_run.conclusion == 'success'
 

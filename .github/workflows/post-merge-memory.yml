@@ -27,6 +27,7 @@ jobs:
   compact-memory:
     name: Extract Post-Merge Lessons
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Skip merge commits from the memory agent itself to avoid infinite loops
     if: "!contains(github.event.head_commit.message, 'memory(auto)')"
 

@@ -37,6 +37,7 @@ jobs:
   bridge:
     name: Convert failing Dependabot PR to WO issue
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Only act when CI failed on a Dependabot branch
     if: |
       github.event.workflow_run.conclusion == 'failure' &&
