@@ -1,24 +1,46 @@
 # =============================================================================
 # ai-review.yml — Claude AI Code Review (blocking)
 #
-# Runs on every PR opened or updated against main.
-# Posts a structured review comment.
+# Runs on every PR opened or updated against main. Posts a structured review
+# comment and decides the check's colour from the verdict in it.
 #
 # Verdict logic:
 #   "Review required" → job exits 1, merge is blocked
 #   "Needs attention" → comment posted, merge allowed (advisory only)
-#   "LGTM"           → comment posted, merge allowed
-#
-# Token-saving rules (skip conditions — no API call):
-#   - dependabot[bot] — no spend on dependency bumps
-#   - HEAD commit contains [pr-watch-fix] — auto lint fix, already reviewed
-#   - HEAD commit contains [ai-review-apply] — applier commit, loop guard
-#   - HEAD commit contains [ci-autofix] — CI auto-fix, already addressed
-#   Concurrency: cancel in-progress review when a new push arrives on the
-#   same PR — avoids paying for a review that will be immediately superseded.
+#   "LGTM"            → comment posted, merge allowed
+#   no verdict at all → job exits 1. A review that did not happen is not a
+#                       review that passed. Everything below is arranged so
+#                       that this is the default, not a case someone has to
+#                       remember to handle.
 #
 # Cost: ~7K tokens/review × claude-sonnet-4-6 ≈ $0.02–0.05/PR
 # Setup: add ANTHROPIC_API_KEY as a repository Actions secret.
+#
+# ── Why there is no longer a "skip" step ─────────────────────────────────────
+# This job used to short-circuit on the HEAD commit message: auto-generated
+# commits ([pr-watch-fix], [ai-review-apply], [ci-autofix]) and GitHub's
+# "Update branch" merge commits set skip=true, every reviewing step was
+# conditioned on skip != 'true', and the only step that could fail the job was
+# conditioned on the review's outcome. Skipping therefore left the job green —
+# a passing required check with no verdict behind it.
+#
+# Two things were wrong with it, and only one of them was the obvious one:
+#
+#   1. Skip meant pass. Any commit that matched turned the gate green.
+#   2. It never actually matched. On a pull_request event actions/checkout
+#      checks out refs/pull/N/merge, so `git log -1` reads GitHub's synthetic
+#      merge commit ("Merge <head-sha> into <base-sha>"), not the PR's own HEAD
+#      commit. That message carries no [marker] and does not match
+#      `^Merge branch '...' into ...$`, so the branch was dead code. The
+#      token-saving it promised was never delivered, and the bypass it opened
+#      was one `ref:` line away from being live.
+#
+# Deleting it costs nothing that was working. What it was meant to avoid —
+# paying to re-review unchanged content after an "Update branch" click — is
+# already handled by diffing three-dot against the base below: merging main
+# into the PR branch does not change `origin/main...HEAD` unless main touched
+# the same lines, in which case the diff really is different and a re-review
+# is the correct outcome, not a waste.
 # =============================================================================
 
 name: AI Code Review
@@ -41,6 +63,13 @@ jobs:
     name: Claude Code Review
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The only job-level exemption, and it is a physical one rather than a
+    # policy one: a pull_request event from dependabot gets a read-only token
+    # and no secrets, so ANTHROPIC_API_KEY is not available and the review
+    # cannot run at all. Dependency bumps are triaged by dependabot-wo-bridge.yml.
+    # A skipped job counts as a pass for branch protection, so any new
+    # condition added here is a new way to be green without a review —
+    # tests/unit/test_ai_review_gate_fails_closed.py fails if one appears.
     if: github.actor != 'dependabot[bot]'
 
     steps:
@@ -48,49 +77,46 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Skip auto-generated commits
-        id: skip_check
-        run: |
-          msg=$(git log -1 --pretty=%B)
-          first_line=$(echo "$msg" | head -1)
-          if echo "$msg" | grep -qE '\[(pr-watch-fix|ai-review-apply|ci-autofix)\]'; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "Skipping review — auto-generated commit: $first_line"
-          elif echo "$first_line" | grep -qE "^Merge branch '.+' into .+$"; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "Skipping review — GitHub 'Update branch' merge commit (PR code unchanged): $first_line"
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Get PR diff
+      - name: Collect the PR's cumulative diff
         id: diff
-        if: steps.skip_check.outputs.skip != 'true'
         run: |
-          # Source languages only used to be included here, which meant the
-          # reviewer never saw the templates, workflows, Makefile or shell
-          # scripts in a PR — it reviewed half a change and reasoned about the
-          # other half from the description. On #195 it downgraded its own
-          # verdict because the Makefile the PR was about was not in the diff.
-          # These are also where the checks it is asked to run actually bite:
-          # `|| true` lives in Makefiles and CI scripts, secrets in workflows.
-          # Widening this is only safe now that ai_review.py chunks large diffs.
-          git diff origin/main...HEAD -- \
-            '*.py' '*.ts' '*.tsx' '*.go' '*.java' '*.rs' \
-            '*.html' '*.css' '*.sh' '*.yml' '*.yaml' 'Makefile*' \
-            ':!**/node_modules/**' ':!**/vendor/**' ':!**/.git/**' \
-            ':!**/package-lock.json' ':!**/*.min.*' \
+          # Three-dot: everything this PR adds on top of its base, not the
+          # HEAD commit's own diff. That is what is being merged, and it is
+          # stable across "Update branch" merges of main into the branch.
+          #
+          # Filtered by exclusion, never by an allow-list of extensions. An
+          # allow-list silently drops whatever nobody thought to add — this
+          # one listed source languages, so a PR touching only Dockerfiles,
+          # Vault .hcl, JSON config or a .js file produced an empty diff, and
+          # an empty diff skipped straight past the reviewer to a green check.
+          # Excluding known-inert files instead means new file types are
+          # reviewed by default and the empty case really does mean "nothing
+          # here to review".
+          git diff origin/main...HEAD -- . \
+            ':!**/node_modules/**' ':!**/vendor/**' ':!**/dist/**' \
+            ':!**/*.min.*' ':!**/package-lock.json' ':!**/*.lock' \
+            ':!**/*.md' \
+            ':!**/*.png' ':!**/*.jpg' ':!**/*.jpeg' ':!**/*.gif' \
+            ':!**/*.svg' ':!**/*.ico' ':!**/*.pdf' \
             > /tmp/pr_diff.txt
-          echo "lines=$(wc -l < /tmp/pr_diff.txt)" >> $GITHUB_OUTPUT
+          echo "lines=$(wc -l < /tmp/pr_diff.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Files changed in this PR"
+            echo '```'
+            git diff --name-only origin/main...HEAD
+            echo '```'
+            echo "Reviewable diff: $(wc -l < /tmp/pr_diff.txt | tr -d ' ') lines"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/setup-python@v5
-        if: steps.skip_check.outputs.skip != 'true' && steps.diff.outputs.lines > 0
+        if: success() && steps.diff.outputs.lines != '0'
         with:
           python-version: "3.11"
 
       - name: Run Claude review
         id: claude_review
-        if: steps.skip_check.outputs.skip != 'true' && steps.diff.outputs.lines > 0
+        if: success() && steps.diff.outputs.lines != '0'
         continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -104,7 +130,7 @@ jobs:
             --output /tmp/review.md
 
       - name: Post review comment
-        if: steps.skip_check.outputs.skip != 'true' && steps.diff.outputs.lines > 0
+        if: success() && steps.diff.outputs.lines != '0'
         uses: actions/github-script@v7
         with:
           script: |
@@ -117,7 +143,8 @@ jobs:
             // unconditionally then crashed *this* step too, with an opaque
             // ENOENT instead of surfacing what actually went wrong — same
             // "missing file means silence, not a clear error" gap already
-            // fixed in observability.yml.
+            // fixed in observability.yml. Either way the verdict step below
+            // still fails the job; this only decides what the comment says.
             const reviewFileExists = fs.existsSync('/tmp/review.md');
             const review = reviewFileExists
               ? fs.readFileSync('/tmp/review.md', 'utf8')
@@ -136,8 +163,36 @@ jobs:
               body: `${header}\n\n${review}\n\n---\n*Generated by Claude claude-sonnet-4-6*`
             });
 
-      - name: Fail job if review required
-        if: steps.claude_review.outcome == 'failure'
+      - name: Enforce the review verdict
+        # Runs whatever happened above, and denies by default. Every earlier
+        # step can be skipped; this one decides the check, and it only exits 0
+        # on a state it recognises as reviewed. The previous shape — a final
+        # step conditioned on the review having failed — meant every path that
+        # never reached the reviewer ended green.
+        if: ${{ !cancelled() }}
+        env:
+          REVIEW_OUTCOME: ${{ steps.claude_review.outcome }}
+          DIFF_LINES: ${{ steps.diff.outputs.lines }}
         run: |
-          echo "AI review verdict: Review required — blocking merge" >&2
-          exit 1
+          if [ "$DIFF_LINES" = "0" ]; then
+            echo "No reviewable changes — this PR touches only docs, images or lockfiles."
+            echo "Nothing was sent to the reviewer because there is no code in it."
+            exit 0
+          fi
+
+          case "$REVIEW_OUTCOME" in
+            success)
+              echo "AI review verdict: LGTM or Needs attention — merge can proceed"
+              exit 0
+              ;;
+            failure)
+              echo "AI review verdict: Review required, or the review could not run — blocking merge" >&2
+              exit 1
+              ;;
+            *)
+              echo "The reviewer never produced a verdict for this PR (diff lines: '${DIFF_LINES:-unknown}'," >&2
+              echo "review step outcome: '${REVIEW_OUTCOME:-did not run}'). Failing closed: an unreviewed" >&2
+              echo "change is not an approved one. Check the earlier steps in this job for the cause." >&2
+              exit 1
+              ;;
+          esac
