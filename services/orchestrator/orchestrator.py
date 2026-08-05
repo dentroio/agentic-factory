@@ -1960,6 +1960,7 @@ async def reject_validation(wo: str, decision: ValidationDecision):
     total_rejections = sum(1 for v in _validations if v["wo"] == wo and v["status"] == "rejected")
     if total_rejections >= 3 and wo not in _held_wos:
         _held_wos.add(wo)
+        _save_held()
         thread_store.append_message(wo, thread_store.system_message(
             f"⛔ Auto-held after {total_rejections} rejections — human must review and un-hold before agents retry"
         ))
@@ -3782,6 +3783,7 @@ async def poll() -> None:
                 wo_id_str = wo_id
                 if wo_id_str not in _held_wos:
                     _held_wos.add(wo_id_str)
+                    _save_held()
                     state_changed = True
                     print(f"[orchestrator] ⛔ {wo_id} auto-held after {idle} — human must review and un-hold")
         else:
