@@ -13,6 +13,20 @@ from backends.cursor import CursorConnectionError
 import backends.quota_state as quota_state
 
 _BACKEND_FAIL = (CursorConnectionError, BackendHangError)
+
+
+class _AllBackendsFailed(RuntimeError):
+    """Every backend (primary + all fallbacks) failed or is quota-exhausted.
+
+    Distinct from _BACKEND_FAIL/RuntimeError so it can't be accidentally
+    caught by the per-fallback-attempt handlers inside _run_with_fallback
+    itself — it must propagate all the way to run_wo's caller. See AF-19:
+    without this, the caller had no way to distinguish "agent succeeded" from
+    "nothing worked," so it proceeded through container rebuild, quality
+    gate, and review chain on an untouched worktree — the gate passed
+    because nothing changed, and a full attempt was consumed with no code
+    written and no error surfaced.
+    """
 import re
 
 import os as _os
@@ -521,8 +535,10 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
                     _log(f"{wo_id} {fallback_name} also failed: {e}")
                     continue
             _log(f"{wo_id} all backends failed or exhausted")
+            raise _AllBackendsFailed(f"{wo_id}: all backends failed or exhausted")
         except TimeoutError:
             _log(f"{wo_id} timed out after {AGENT_TIMEOUT}s")
+            raise _AllBackendsFailed(f"{wo_id}: timed out after {AGENT_TIMEOUT}s")
         finally:
             checkin_task.cancel()
             monitor_task.cancel()
@@ -557,7 +573,22 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         else:
             await post_thread_message(wo_id, f"Fixing review findings — {round_label} of {MAX_REVIEW_FIX_ROUNDS}...")
 
-        await _run_with_fallback(backend, preferred_agent)
+        try:
+            await _run_with_fallback(backend, preferred_agent)
+        except _AllBackendsFailed as exc:
+            # Every backend failed or is quota-exhausted — the worktree is
+            # untouched. Proceeding into rebuild/gate/review here would pass
+            # the gate on an empty diff and consume a full attempt for no
+            # reason. See AF-19.
+            _log(f"{wo_id} {exc} — stopping without rebuild/gate (nothing changed)")
+            await checkin(wo_id, "all backends failed or exhausted")
+            await post_thread_message(
+                wo_id,
+                f"❌ **All backends failed or are quota-exhausted** — no implementation work "
+                f"was done this attempt. Releasing the claim for retry.\n\n`{exc}`",
+            )
+            await release_dispatch(wo_id)
+            return
 
         _log(f"{wo_id} agent run complete — rebuilding changed containers")
         await checkin(wo_id, "rebuilding changed containers")
@@ -763,6 +794,11 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     if not pr_url:
         _log(f"{wo_id} nothing committed or PR creation failed — aborting")
         await monitor.post("⚠️ Nothing to commit after removing noise, or PR creation failed. Manual intervention needed.")
+        # Without this, the WO is stuck in_progress (set by the checkin above)
+        # with no release — it holds a MAX_PARALLEL_WOS slot for the full
+        # stale-claim timeout and then consumes a retry attempt on a WO that
+        # was never actually broken. See AF-19.
+        await release_dispatch(wo_id)
         return
 
     # Request human validation with the PR URL attached
@@ -780,6 +816,8 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     if not validated:
         _log(f"{wo_id} validate rejected by orchestrator — check error in thread")
         await monitor.post("⚠️ Orchestrator rejected the validation request — see thread for details.")
+        # Same reasoning as the pr_url branch above — see AF-19.
+        await release_dispatch(wo_id)
         return
 
     # Wait for human decision
