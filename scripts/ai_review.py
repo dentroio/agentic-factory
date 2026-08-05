@@ -249,27 +249,56 @@ def parse_verdict(review: str) -> str | None:
     return None
 
 
+_RESULT_TOKEN = re.compile(r"(?:✅|⚠️|⚠|❌)\s*\w*")
+
+
+def _clean_cell(text: str) -> str:
+    return text.strip().strip("|").rstrip("\\").strip().replace("\\|", "|")
+
+
 def split_table_row(line: str) -> tuple[str, str, str] | None:
     """Split one Checks row into (check, result, detail), or None if it isn't one.
 
-    The table is always three columns, but a check name can itself contain a
-    pipe — "No shell || true bypasses" is one of the universal checks, and the
-    model emits it escaped, unescaped, or both in the same table. Splitting
-    naively turned that row into five cells and the merged table rendered a
-    blank result for the check this project cares most about.
+    Anchored on the result symbol rather than on pipe positions. Counting cells
+    mis-slices exactly the rows that matter most: "No shell || true bypasses"
+    is one of the universal checks, its name contains the table's delimiter,
+    and details quoting `|| true` contain it too — the model escapes some of
+    those and not others, sometimes both ways in one table. Result symbols are
+    a closed set of three and never appear anywhere else in a row, so they are
+    the one reliable landmark.
     """
     inner = line.strip()
     if not inner.startswith("|") or set(inner) <= set("|- :"):
         return None
-    cells = re.split(r"(?<!\\)\|", inner.strip("|"))
+
+    body = inner.strip("|")
+    match = _RESULT_TOKEN.search(body)
+    if match:
+        check = _clean_cell(body[: match.start()])
+        detail = _clean_cell(body[match.end():])
+        if check and check.lower() != "check":
+            return check, match.group(0).strip(), detail or "—"
+
+    # No symbol — an "N/A" row for a project check that didn't apply, or a
+    # heading. Fall back to cell counting; surplus cells belong to the name.
+    cells = re.split(r"(?<!\\)\|", body)
     if len(cells) < 3:
         return None
-    # Anything beyond three columns belongs to the name — results are symbols
-    # and details are prose the model does not pipe-delimit.
-    check = "|".join(cells[:-2]).strip().replace("\\|", "|")
+    check = _clean_cell("|".join(cells[:-2]))
     if not check or check.lower() == "check":
         return None
     return check, cells[-2].strip(), cells[-1].strip()
+
+
+def check_key(name: str) -> str:
+    """Collapse cosmetic differences so chunks agree on what a check is called.
+
+    Chunks are independent requests, so the same check comes back as
+    "No shell || true bypasses", "No shell `|| true` bypasses" and
+    "(Project-specific checks)" — three rows in the merged table for one check,
+    each with only part of the picture.
+    """
+    return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
 
 
 def parse_check_rows(review: str) -> list[tuple[str, str, str]]:
@@ -321,7 +350,7 @@ def merge_reviews(chunk_reviews: list[tuple[str, str]]) -> str:
         verdicts.append(parse_verdict(review) or "Review required")
 
         for check, result, detail in parse_check_rows(review):
-            key = check.lower()
+            key = check_key(check)
             if key not in checks:
                 checks[key] = (check, result, [])
                 order.append(key)

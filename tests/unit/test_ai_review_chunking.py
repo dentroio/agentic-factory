@@ -125,6 +125,45 @@ def test_a_check_name_containing_pipes_survives_the_round_trip():
     assert "❌" in rows["No shell || true bypasses"]
 
 
+def test_a_detail_quoting_a_pipe_does_not_swallow_the_result():
+    """Seen live: the model escaped the delimiters, left the `|| true` inside
+    the detail raw, and the merged row came out with an empty Result cell."""
+    row = ("| No shell \\|\\| true bypasses \\| ✅ Pass \\| "
+           "`test_the_gate_has_no_failure_bypasses` guards against `|| true` |")
+
+    check, result, detail = ai_review.split_table_row(row)
+
+    assert check == "No shell || true bypasses"
+    assert result == "✅ Pass"
+    assert "guards against" in detail
+
+
+def test_chunks_naming_the_same_check_differently_produce_one_row():
+    """Independent requests phrase names inconsistently — backticks in one
+    chunk, parentheses in another. Three rows for one check, each holding part
+    of the answer, is worse than no table."""
+    a = _review("LGTM", checks="| No shell `\\|\\|` true bypasses | ✅ Pass | — |")
+    b = _review("Review required", checks="| No shell \\|\\| true bypasses | ❌ Fail | ci.sh:4 |")
+    c = _review("LGTM", checks="| (Project-specific checks) | ✅ Pass | — |")
+    d = _review("LGTM", checks="| Project-specific checks | ✅ Pass | — |")
+
+    merged = ai_review.merge_reviews([
+        ("Chunk 1/4", a), ("Chunk 2/4", b), ("Chunk 3/4", c), ("Chunk 4/4", d),
+    ])
+
+    rows = ai_review.parse_check_rows(merged)
+    assert len(rows) == 2, f"expected the names to collapse, got {[r[0] for r in rows]}"
+    bypasses = next(r for r in rows if "bypasses" in r[0])
+    assert "❌" in bypasses[1]
+    assert "ci.sh:4" in bypasses[2]
+
+
+def test_a_project_check_marked_not_applicable_still_parses():
+    assert ai_review.split_table_row("| Migration registry | N/A | — |") == (
+        "Migration registry", "N/A", "—"
+    )
+
+
 def test_header_and_separator_rows_are_not_treated_as_checks():
     assert ai_review.split_table_row("| Check | Result | Detail |") is None
     assert ai_review.split_table_row("|-------|--------|--------|") is None
