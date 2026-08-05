@@ -249,18 +249,38 @@ def parse_verdict(review: str) -> str | None:
     return None
 
 
+def split_table_row(line: str) -> tuple[str, str, str] | None:
+    """Split one Checks row into (check, result, detail), or None if it isn't one.
+
+    The table is always three columns, but a check name can itself contain a
+    pipe — "No shell || true bypasses" is one of the universal checks, and the
+    model emits it escaped, unescaped, or both in the same table. Splitting
+    naively turned that row into five cells and the merged table rendered a
+    blank result for the check this project cares most about.
+    """
+    inner = line.strip()
+    if not inner.startswith("|") or set(inner) <= set("|- :"):
+        return None
+    cells = re.split(r"(?<!\\)\|", inner.strip("|"))
+    if len(cells) < 3:
+        return None
+    # Anything beyond three columns belongs to the name — results are symbols
+    # and details are prose the model does not pipe-delimit.
+    check = "|".join(cells[:-2]).strip().replace("\\|", "|")
+    if not check or check.lower() == "check":
+        return None
+    return check, cells[-2].strip(), cells[-1].strip()
+
+
 def parse_check_rows(review: str) -> list[tuple[str, str, str]]:
     """Return (check, result, detail) for each data row of the Checks table."""
-    rows: list[tuple[str, str, str]] = []
-    for line in extract_section(review, "Checks").splitlines():
-        line = line.strip()
-        if not line.startswith("|") or set(line) <= set("|- :"):
-            continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        if len(cells) < 3 or cells[0].lower() == "check":
-            continue
-        rows.append((cells[0], cells[1], cells[2]))
-    return rows
+    rows = (split_table_row(ln) for ln in extract_section(review, "Checks").splitlines())
+    return [r for r in rows if r]
+
+
+def escape_cell(text: str) -> str:
+    """Re-escape pipes so a rebuilt row survives the next parse and renders."""
+    return text.replace("\\|", "|").replace("|", "\\|")
 
 
 def _result_severity(result: str) -> int:
@@ -315,7 +335,8 @@ def merge_reviews(chunk_reviews: list[tuple[str, str]]) -> str:
     table = ["| Check | Result | Detail |", "|-------|--------|--------|"]
     for key in order:
         name, result, details = checks[key]
-        table.append(f"| {name} | {result} | {'; '.join(details) if details else '—'} |")
+        detail = "; ".join(details) if details else "—"
+        table.append(f"| {escape_cell(name)} | {result} | {escape_cell(detail)} |")
 
     parts = [
         f"_Reviewed in {len(chunk_reviews)} chunks — the diff exceeds what fits in one "

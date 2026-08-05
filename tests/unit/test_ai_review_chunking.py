@@ -104,6 +104,33 @@ def test_check_rows_are_parsed_without_the_header_or_separator():
     assert rows[0][2] == "one `any`"
 
 
+def test_a_check_name_containing_pipes_survives_the_round_trip():
+    """"No shell || true bypasses" is a universal check and the thing this repo
+    is loudest about. Splitting its row on every pipe gave five cells, so the
+    merged table showed the check with a blank result — the one row a reader
+    scanning for bypasses would look at."""
+    escaped = "| No shell \\|\\| true bypasses | ❌ Fail | Makefile:12 |"
+    raw = "| No shell || true bypasses | ✅ Pass | — |"
+
+    assert ai_review.split_table_row(escaped)[:2] == ("No shell || true bypasses", "❌ Fail")
+    assert ai_review.split_table_row(raw)[:2] == ("No shell || true bypasses", "✅ Pass")
+
+    merged = ai_review.merge_reviews([
+        ("Chunk 1/2", _review("LGTM", checks=raw)),
+        ("Chunk 2/2", _review("Review required", checks=escaped)),
+    ])
+
+    rows = {r[0]: r[1] for r in ai_review.parse_check_rows(merged)}
+    assert list(rows) == ["No shell || true bypasses"], "the same check split into two rows"
+    assert "❌" in rows["No shell || true bypasses"]
+
+
+def test_header_and_separator_rows_are_not_treated_as_checks():
+    assert ai_review.split_table_row("| Check | Result | Detail |") is None
+    assert ai_review.split_table_row("|-------|--------|--------|") is None
+    assert ai_review.split_table_row("just prose") is None
+
+
 # ── Merging ──────────────────────────────────────────────────────────────────
 
 
