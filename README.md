@@ -82,7 +82,7 @@ Every work order has a risk tier that determines the merge workflow:
 | **P0** | Auth, security, data loss risk | Human reviews and approves |
 | **P1** | Core features, schema changes | Human reviews and approves |
 | **P2** | Additive features, tests, docs | Agent opens PR → `gh pr merge --auto --squash` |
-| **P3** | Docs, PM files only | Agent commits directly to `main` |
+| **P3** | Docs, PM files only | Agent opens PR → `gh pr merge --auto --squash` |
 
 Each WO is owned end-to-end by an agent: claim → branch → implement → human checkpoint → PR → CI + AI review → merge → post-merge verification. `make ci-local` mirrors CI exactly and is the contract every agent runs before opening a PR — no `|| true` bypasses.
 

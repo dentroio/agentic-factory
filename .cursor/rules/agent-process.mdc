@@ -11,7 +11,7 @@ Read `AGENT_PROCESS.md` before starting any implementation task.
 
 - **P0/P1 work:** branch → implement → `make ci-local` → PR → notify human (no auto-merge)
 - **P2 work:** branch → implement → `make ci-local` → PR → `gh pr merge --auto --squash`
-- **P3 (docs only):** commit directly to main
+- **P3 (docs only):** branch → implement → `make ci-local` → PR → `gh pr merge --auto --squash` (the branch ruleset rejects direct pushes to main for any tier)
 - **Never skip** `make ci-local` before opening a PR
 - **Never force-push** to main
 - **Never merge** P0/P1 without human approval

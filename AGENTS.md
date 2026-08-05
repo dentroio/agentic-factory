@@ -15,7 +15,7 @@ Read `ENGINEER.md` and act as the Project Engineer. Run `python3 scripts/factory
 - All work is organized into Work Orders (WOs) in `docs/project_management/work_orders/`
 - Every WO has a `## Execution` section — that tells you the branch name, risk tier, PR title, and what PM docs to update
 - Run `make ci-local` before opening any PR — it mirrors the GitHub Actions gate exactly
-- Risk tier determines merge authority: P0/P1 = human merge, P2 = auto-merge after CI, P3 = direct to main
+- Risk tier determines merge authority: P0/P1 = human merge, P2/P3 = auto-merge after CI (both go through a PR — the branch ruleset rejects direct pushes to `main` for any tier)
 
 ## Quick start
 

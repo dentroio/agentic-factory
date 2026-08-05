@@ -35,7 +35,7 @@ Priority determines what the agent does after opening a PR.
 | **P0** | Auth changes, security fixes, data loss risk | Human reviews and approves manually |
 | **P1** | Core features, schema changes, API contracts | Human reviews and approves manually |
 | **P2** | Additive features, tests, refactors, docs | Agent sets `--auto-merge`; merges when CI passes |
-| **P3** | Docs and PM files only, no code | Agent commits directly to `main` — no PR |
+| **P3** | Docs and PM files only, no code | Agent opens PR → `gh pr merge --auto --squash` |
 
 When in doubt, use P1 for anything you would want to read before it lands in main. Use P2 for anything where CI passing is sufficient validation.
 

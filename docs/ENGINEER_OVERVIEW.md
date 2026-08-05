@@ -152,7 +152,7 @@ Every work order is assigned one of four risk tiers. The tier determines the mer
 | P0 | Auth, security, multi-tenant data isolation, breaking API contracts | Human must approve and merge — no exceptions |
 | P1 | DB schema migrations, new API routes, cross-service interfaces | Human must approve and merge |
 | P2 | Feature additions, UI changes, new tests, refactors | Agent enables auto-merge after CI passes |
-| P3 | Docs, PM files, comments, typos | Agent commits directly to `main` |
+| P3 | Docs, PM files, comments, typos | Agent opens PR → `gh pr merge --auto --squash` |
 
 The planning agent (or the AI draft in the factory UI) assigns a tier when creating the WO spec. The human reviewing the spec confirms or adjusts it. From that point, the tier is embedded in the spec and all downstream agents read it before starting work.
 

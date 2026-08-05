@@ -17,7 +17,7 @@ Every work order (WO) is assigned a risk tier that determines who can merge.
 | **P0** | Auth, security, multi-tenant data isolation, breaking API contracts | Yes (`fix/` or `wo/`) | **Human must approve and merge — no exceptions** |
 | **P1** | DB schema migrations, new API routes, cross-service interfaces | Yes (`wo/`) | **Human must approve and merge** |
 | **P2** | Feature additions, UI changes, new tests, refactors | Yes (`wo/`) | Auto-merge after CI passes (`gh pr merge --auto --squash`) |
-| **P3** | Docs, PM files, comments, typos | No — commit directly to `main` | Direct push to main |
+| **P3** | Docs, PM files, comments, typos | Yes (`docs/` or `wo/`) | Auto-merge after CI passes (`gh pr merge --auto --squash`) |
 
 **Hotfix track:** For urgent bug fixes that don't need a full WO spec, use a `fix/` branch. See §5.
 
@@ -46,7 +46,7 @@ Every non-trivial task starts as a Work Order (WO) spec in `docs/project_managem
 13. After merge: make sync  (pulls latest and rebuilds if needed)
 ```
 
-Never push directly to `main` for P0/P1/P2 work.
+Never push directly to `main`, for any tier including P3 — the branch ruleset rejects it outright, and P3 now goes through a PR with auto-merge like P2.
 
 ---
 
