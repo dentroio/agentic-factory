@@ -1,9 +1,11 @@
 import asyncio
+import hashlib
 import json
 import os
 import re
 import time
 from collections import defaultdict
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -19,7 +21,13 @@ from wo_parser import (
     extract_wo_number_from_branch,
     extract_wo_number_from_pr_title,
     parse_wo_file,
-    resolve_all_wos_for_pr,
+)
+from wo_reconcile import (
+    agents_in_flight,
+    apply_live_status,
+    build_wo_index,
+    dispatch_status_counts,
+    spec_file_rank,
 )
 
 app = FastAPI(title="AI Factory Status")
@@ -52,28 +60,12 @@ def _orch_headers() -> dict:
 _wos_cache: tuple[float, dict] | None = None
 _WOS_CACHE_TTL = int(os.getenv("WO_CACHE_TTL", "300"))  # 5 minutes
 
-# Canonical dispatch-status buckets — shared by every page that counts "how many
-# WOs are active." Before this, each page defined its own filter independently
-# (Overview: status == "in_progress" only; Factory: status != "complete", which
-# also swept in awaiting_human/awaiting_commit/stale/rejected) — same underlying
-# dispatch data, three different numbers on three pages that all claimed to mean
-# "active."
-_IN_PROGRESS_STATUSES = {"claimed", "in_progress"}
-_AWAITING_REVIEW_STATUSES = {"awaiting_human", "awaiting_commit"}
-_NEEDS_ATTENTION_STATUSES = {"stale", "rejected", "retry_queued"}
-
-
-def _dispatch_status_counts(dispatch: dict) -> dict:
-    in_progress = sum(1 for w in dispatch.values() if w.get("status") in _IN_PROGRESS_STATUSES)
-    awaiting_review = sum(1 for w in dispatch.values() if w.get("status") in _AWAITING_REVIEW_STATUSES)
-    needs_attention = sum(1 for w in dispatch.values() if w.get("status") in _NEEDS_ATTENTION_STATUSES)
-    return {
-        "in_progress": in_progress,
-        "awaiting_review": awaiting_review,
-        "needs_attention": needs_attention,
-        "total_active": in_progress + awaiting_review + needs_attention,
-    }
-
+# Provenance of the last WO load — which ref the specs came from, whether the
+# result can be trusted, and anything the page should confess to the reader
+# instead of rendering a confident wrong number. Same pattern as
+# _last_open_prs_error below: a silently empty or partial result is
+# indistinguishable from a real one in the UI unless something records why.
+_wo_source: dict = {"trusted": False, "ref": "", "warnings": [], "duplicates": []}
 
 def _load_watchdog() -> dict | None:
     if not WATCHDOG_PATH.exists():
@@ -145,35 +137,140 @@ async def _fetch_plan_from_github() -> dict | None:
         return None
 
 
-def _load_wos_from_disk() -> dict[int, WOSpec] | None:
-    """Read WO markdown files from the locally-mounted repo volume, with TTL cache.
+def _git_blob_sha1(data: bytes) -> str:
+    """Git's object id for a blob — how we tell a mounted file apart from the
+    default-branch file of the same name without downloading the latter."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()
 
-    Returns a populated dict when the mount is available, None when it isn't.
-    Caches the parsed result for WO_CACHE_TTL seconds (default 5 min) to avoid
-    re-parsing 400+ files on every page load.
+
+def _local_checkout_branch() -> str:
+    """Branch the mounted checkout is on, read straight from .git/HEAD."""
+    head = Path(LOCAL_REPO_MOUNT) / ".git" / "HEAD"
+    try:
+        ref = head.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return ref.split("refs/heads/", 1)[1] if "refs/heads/" in ref else ref[:12]
+
+
+def _read_mounted_wo_files() -> dict[str, bytes]:
+    """Every WO-*.md in the mounted checkout, keyed by filename."""
+    wo_dir = Path(LOCAL_REPO_MOUNT) / WO_PATH if LOCAL_REPO_MOUNT else None
+    if wo_dir is None or not wo_dir.is_dir():
+        return {}
+    files: dict[str, bytes] = {}
+    for path in sorted(wo_dir.glob("WO-*.md")):
+        try:
+            files[path.name] = path.read_bytes()
+        except OSError:
+            continue
+    return files
+
+
+async def _load_primary_wos() -> dict[int, WOSpec] | None:
+    """WO specs for the primary repo, pinned to its default branch.
+
+    This used to read whatever the mounted checkout happened to have on disk.
+    Every other number on these pages — PRs, branches, CI, merged history —
+    comes from the GitHub API on the default branch, so a checkout parked on a
+    feature branch made the WO side describe a different tree than the rest of
+    the page, and nothing said so. Live, the checkout sat on
+    `docs/enforce-policy-ux-program` and was missing three WOs that exist on
+    main; a longer-lived branch would hide correspondingly more.
+
+    The default-branch listing is authoritative. The mount is kept as a content
+    cache, not a source: a file is only reused when its git blob id matches the
+    one GitHub reports for that path, so drifted or absent files are fetched
+    rather than trusted. That keeps the common case at two API calls instead of
+    four hundred while making the branch the checkout is on irrelevant.
+
+    Returns None only when neither GitHub nor the mount can produce anything.
     """
-    global _wos_cache
-    if not LOCAL_REPO_MOUNT:
-        return None
-    # Return cached result if still fresh
+    global _wos_cache, _wo_source
     if _wos_cache is not None:
         ts, cached = _wos_cache
         if time.monotonic() - ts < _WOS_CACHE_TTL:
-            return cached
-    wo_dir = Path(LOCAL_REPO_MOUNT) / WO_PATH
-    if not wo_dir.is_dir():
-        return None
-    results: dict[int, WOSpec] = {}
-    for path in wo_dir.glob("WO-*.md"):
-        try:
-            content = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        spec = parse_wo_file(content, path.name, repo=GITHUB_REPO)
+            # Hand out copies: apply_live_status writes status/agent/PR fields
+            # onto the specs it is given, and a cached spec that keeps those
+            # writes would carry a stale "In Progress" long after the branch
+            # behind it disappeared.
+            return {num: replace(spec) for num, spec in cached.items()}
+
+    mounted = _read_mounted_wo_files()
+    listing: list[dict] | None = None
+    default_branch = ""
+    listing_error = ""
+    try:
+        default_branch = await gh.get_default_branch()
+        listing = await gh.list_wo_files(ref=default_branch)
+    except Exception as e:
+        listing_error = str(e)
+
+    warnings: list[str] = []
+    if listing is None:
+        if not mounted:
+            _wo_source = {"trusted": False, "ref": "", "warnings": [], "duplicates": []}
+            return None
+        # No listing means no way to know what the default branch holds. Serve
+        # the mount so the page still works, but it is now a guess and must be
+        # labelled as one.
+        checkout_branch = _local_checkout_branch()
+        warnings.append(
+            f"Could not reach GitHub to list work orders ({listing_error or 'unknown error'}). "
+            f"Showing the local checkout of {GITHUB_REPO}"
+            + (f", currently on branch {checkout_branch}" if checkout_branch else "")
+            + " — counts may not match the default branch."
+        )
+        entries = list(mounted.items())
+        trusted = False
+    else:
+        stale = [
+            f for f in listing
+            if f["name"] not in mounted or _git_blob_sha1(mounted[f["name"]]) != f.get("sha")
+        ]
+        downloads = await asyncio.gather(
+            *[gh.get_file_content(f["path"], ref=default_branch) for f in stale],
+            return_exceptions=True,
+        )
+        downloaded = {
+            f["name"]: c.encode("utf-8")
+            for f, c in zip(stale, downloads)
+            if not isinstance(c, Exception)
+        }
+        missed = len(stale) - len(downloaded)
+        if missed:
+            warnings.append(
+                f"{missed} work order file(s) on {default_branch} could not be downloaded — "
+                "those WOs are missing from the counts below."
+            )
+        entries = [
+            (f["name"], downloaded[f["name"]] if f["name"] in downloaded else mounted[f["name"]])
+            for f in listing
+            if f["name"] in downloaded or f["name"] in mounted
+        ]
+        trusted = not missed
+
+    parsed: list[tuple[str, WOSpec]] = []
+    for name, raw in entries:
+        spec = parse_wo_file(raw.decode("utf-8", errors="replace"), name, repo=GITHUB_REPO)
         if spec:
-            results[spec.number] = spec
-    _wos_cache = (time.monotonic(), results)
-    return results
+            parsed.append((name, spec))
+
+    index = build_wo_index(parsed)
+    for dup in index.unresolved_duplicates:
+        warnings.append(
+            f"WO-{dup.number} is claimed by more than one spec file "
+            f"({', '.join([dup.kept] + dup.shadowed)}) — showing {dup.kept}. "
+            f"One of them needs renumbering in {GITHUB_REPO}."
+        )
+    _wo_source = {
+        "trusted": trusted,
+        "ref": default_branch,
+        "warnings": warnings,
+        "duplicates": index.duplicates,
+    }
+    _wos_cache = (time.monotonic(), index.specs)
+    return {num: replace(spec) for num, spec in index.specs.items()}
 
 
 def _agent_status_from_disk(wo_number: int) -> dict | None:
@@ -190,25 +287,9 @@ def _agent_status_from_disk(wo_number: int) -> dict | None:
 
 
 async def _load_wos() -> tuple[dict[int, WOSpec], bool]:
-    # Prefer reading from the locally-mounted repo — zero GitHub API calls.
-    disk_results = _load_wos_from_disk()
-    if disk_results is not None:
-        results = disk_results
-    else:
-        try:
-            files = await gh.list_wo_files()
-        except Exception:
-            return {}, False
-        results = {}
-        contents = await asyncio.gather(
-            *[gh.get_file_content(f["path"]) for f in files], return_exceptions=True
-        )
-        for f, content in zip(files, contents):
-            if isinstance(content, Exception):
-                continue
-            spec = parse_wo_file(content, f["name"], repo=GITHUB_REPO)
-            if spec:
-                results[spec.number] = spec
+    results = await _load_primary_wos()
+    if results is None:
+        return {}, False
 
     # Load WOs from secondary repos registered via Settings → Projects (always GitHub)
     cfg = _load_factory_config()
@@ -366,131 +447,6 @@ async def _load_ci_health() -> dict:
 
 
 
-def _apply_live_status(
-    wos: dict[int, WOSpec],
-    branches: list[dict],
-    prs: list[dict],
-    dispatch: dict | None = None,
-    merged_prs: list[dict] | None = None,
-) -> None:
-    branch_wo_map = {b["wo_number"]: b for b in branches if b["wo_number"]}
-    pr_wo_map: dict[int, dict] = {}
-    for pr in prs:
-        if pr["wo_number"]:
-            pr_wo_map[pr["wo_number"]] = pr
-
-    # Build set of WO numbers with merged PRs — authoritative "done" signal.
-    # Use resolve_all_wos_for_pr, not resolve_wo_for_pr: conflict-resolution/
-    # follow-up PRs routinely mention two WOs in one title (e.g. "WO-1035:
-    # Resolve conflict: PR #455 — WO-417: ..."), and both are genuinely done
-    # by that merge — crediting only the first left the second stuck looking
-    # unfinished indefinitely.
-    merged_wo_nums: set[int] = set()
-    for p in (merged_prs or []):
-        merged_wo_nums.update(resolve_all_wos_for_pr(p))
-
-    # Build a map from WO number → dispatch entry so we can mark active WOs
-    # even when the branch hasn't been pushed to GitHub yet (which is the normal
-    # case during agent work — branches are local-only until the PR is created).
-    dispatch_map: dict[int, dict] = {}
-    for wo_id, entry in (dispatch or {}).items():
-        try:
-            num = int(re.sub(r"[^0-9]", "", wo_id))
-            dispatch_map[num] = entry
-        except (ValueError, TypeError):
-            pass
-
-    for num, spec in wos.items():
-        # Dispatch state (when present) is the freshest, most specific signal for
-        # a WO actively being worked right now — a live "in_progress"/"claimed"/
-        # "retry_queued"/etc entry means the orchestrator has current, authoritative
-        # knowledge that this WO is NOT finished, regardless of what a merged PR
-        # title or a leftover branch might suggest.
-        dispatch_entry = dispatch_map.get(num)
-        dispatch_says_active = dispatch_entry is not None and dispatch_entry.get("status") not in (None, "complete")
-
-        # Merged PRs are normally the strongest signal — but a PR whose title
-        # merely REFERENCES a WO (not its actual implementation — e.g. a
-        # docs-only prerequisite/spec-decision commit) can get merged while the
-        # real implementation is still in progress under dispatch tracking.
-        # WO-440 hit this exactly: PR #520 was a spec-decision-only commit
-        # titled "WO-440: ..." that got merged while an agent was still
-        # actively implementing the WO, permanently stamping it "done" on
-        # every dashboard page. Don't trust the merged-PR heuristic over a
-        # dispatch entry that explicitly says otherwise.
-        if num in merged_wo_nums and not dispatch_says_active:
-            spec.status = "✅ Done"
-            spec.merged_at = next(
-                (p.get("merged_at", "") for p in (merged_prs or [])
-                 if re.search(rf"WO-{num}\b", p.get("title", ""))),
-                "",
-            )
-            continue
-        if num in pr_wo_map:
-            pr = pr_wo_map[num]
-            spec.pr_number = pr["number"]
-            spec.ci_state = pr["ci_state"]
-            # An open PR with passing CI isn't necessarily "ready" — it may have
-            # already been rejected by review (or failed and been requeued for
-            # another attempt) without the PR itself ever being closed. Dispatch
-            # status is the actual outcome; PR/CI state alone doesn't know that.
-            dispatch_status = dispatch_map.get(num, {}).get("status", "")
-            if dispatch_status == "rejected":
-                spec.status = "🔴 Rejected — awaiting rework"
-            elif dispatch_status == "retry_queued":
-                # No 🔄 prefix here on purpose — that maps board_column to
-                # "in_progress" (shown as RUNNING), which is wrong for a WO
-                # that isn't actively being worked, just eligible for re-claim.
-                # Falls through WOSpec.board_column's default case: "open".
-                spec.status = "Queued for retry — not currently claimed"
-            elif pr["ci_state"] == "failing":
-                spec.status = "🔴 Blocked (CI failing)"
-            elif pr["ci_state"] == "pending":
-                spec.status = "👀 In Review (CI running)"
-            else:
-                spec.status = "👀 In Review (ready)"
-        elif num in branch_wo_map and dispatch_map.get(num, {}).get("status") == "retry_queued":
-            # A branch can outlive the attempt that created it — the stale-claim
-            # sweep or a retry doesn't delete the WO's old branch, it just resets
-            # dispatch state. Without this check, a WO queued for retry (not
-            # currently claimed by anyone) shows as "🔄 In Progress" on the board
-            # forever just because a leftover branch from a prior attempt still
-            # exists on GitHub. Same fix as the pr_wo_map retry_queued case above.
-            spec.status = "Queued for retry — not currently claimed"
-        elif num in branch_wo_map:
-            spec.status = "🔄 In Progress"
-            b = branch_wo_map[num]
-            if b.get("agent_status"):
-                spec.agent_name = b["agent_status"].get("agent", "")
-                spec.agent_step = b["agent_status"].get("step", "")
-        elif num in dispatch_map:
-            # Agent has this WO claimed locally (branch not yet on GitHub)
-            entry = dispatch_map[num]
-            agent_status = entry.get("status", "in_progress")
-            # Complete WOs don't override whatever plan/spec status was set above
-            if agent_status == "complete":
-                pass
-            elif agent_status == "retry_queued":
-                # Third instance of the same gap fixed above for the pr_wo_map
-                # and branch_wo_map cases: this WO has no PR and no branch, just
-                # a bare dispatch entry — but retry_queued still means nobody is
-                # currently working it, only eligible for re-claim. Without this,
-                # it falls to the "else: In Progress" case below and shows as
-                # actively worked when it's actually idle.
-                spec.status = "Queued for retry — not currently claimed"
-            else:
-                step = entry.get("step", "")
-                if agent_status == "awaiting_human":
-                    spec.status = "⏳ Awaiting Review"
-                elif "gate failed" in step:
-                    spec.status = "❌ Gate Failed"
-                else:
-                    spec.status = "🔄 In Progress"
-                # Prefer the backend field (actual AI, e.g. "cursor") over the
-                # runner identity (e.g. "claude-runner") for display purposes.
-                spec.agent_name = entry.get("backend") or entry.get("agent", "")
-
-
 def _board_columns(wos: dict[int, WOSpec]) -> dict[str, list[WOSpec]]:
     cols: dict[str, list[WOSpec]] = defaultdict(list)
     for spec in sorted(wos.values(), key=lambda s: s.number, reverse=True):
@@ -544,67 +500,22 @@ async def dashboard(request: Request):
     )
     wos, wos_available = wos_result
 
-    _apply_live_status(wos, branches, prs, dispatch, merged_prs=merged_prs_board)
-    # "Active Agents" lists whatever branches still exist on GitHub matching
-    # wo/NNN-* — but a branch not auto-deleted after merge (or a lingering
-    # remote-tracking ref) then shows the WO as "active" forever, with no
-    # agent_status, since there's obviously no live agent working on
-    # already-merged code. Drop anything _apply_live_status has since
-    # determined is actually done.
-    branches = [
-        b for b in branches
-        if not (b.get("wo_number") in wos and wos[b["wo_number"]].board_column == "done")
-    ]
+    wos_without_specs = apply_live_status(
+        wos, branches, prs, dispatch, merged_prs=merged_prs_board, repo=GITHUB_REPO
+    )
+    branches = agents_in_flight(branches, wos, dispatch, format_age=format_duration)
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
     validations = _load_validations()
     pending_validations = [v for v in validations if v.get("status") == "pending"]
 
-    # Dispatch-based active/queue counts — shared definition, see _dispatch_status_counts
-    dispatch_counts = _dispatch_status_counts(dispatch)
-    # Not dispatch_counts["in_progress"]: that only counts raw dispatch entries
-    # with status claimed/in_progress, which misses WOs whose live branch
-    # activity marks them in_progress on the board (or excludes ones the board
-    # correctly demoted off a stale leftover branch — see _apply_live_status).
-    # The board's "in_progress" column, after _apply_live_status reconciles
-    # dispatch + branch + PR state, is the more accurate count — this stat
-    # sits directly next to that same board on this page, so it must match it.
-    dispatch_running = len(columns.get("in_progress", []))
+    # Every "Running" on this page — this stat, the lifecycle strip, and the
+    # JS that refreshes both — resolves to dispatch_status_counts()["in_progress"].
+    dispatch_counts = dispatch_status_counts(dispatch)
+    dispatch_running = dispatch_counts["in_progress"]
     dispatch_awaiting_review = dispatch_counts["awaiting_review"]
     dispatch_needs_attention = dispatch_counts["needs_attention"]
     dispatch_queue = len([w for w in dispatch.values() if w.get("status") in ("queued", "pending", "waiting")])
-
-    # A WO can be claimed and actively worked before any branch reaches
-    # GitHub — wo_start.sh creates the branch locally only; it's pushed
-    # later on the agent's first commit. Without this, "Active Agents" can
-    # show empty while the RUNNING stat above is nonzero. Synthesize a
-    # branch-like entry from dispatch state for any WO that's genuinely
-    # active but not yet represented by a real branch.
-    branch_wo_numbers = {b["wo_number"] for b in branches if b.get("wo_number")}
-    for wo_id, entry in dispatch.items():
-        if entry.get("status") not in ("claimed", "in_progress", "awaiting_human", "awaiting_commit"):
-            continue
-        m = re.match(r"WO-(\d+)", wo_id)
-        if not m:
-            continue
-        wo_num = int(m.group(1))
-        if wo_num in branch_wo_numbers:
-            continue
-        claimed_at = entry.get("claimed_at") or entry.get("last_seen") or ""
-        branches.append(
-            {
-                "branch": entry.get("slug", wo_id),
-                "wo_number": wo_num,
-                "last_commit_sha": "",
-                "last_commit_date": claimed_at,
-                "last_commit_ago": format_duration(claimed_at) if claimed_at else "just now",
-                "agent_status": {
-                    "agent": entry.get("backend") or entry.get("agent", ""),
-                    "step": entry.get("step") or entry.get("status", "working"),
-                },
-            }
-        )
-    branches.sort(key=lambda x: x.get("last_commit_date", ""), reverse=True)
 
     # Merged PR stats for factory impact panel
     now_utc = datetime.now(UTC)
@@ -641,6 +552,7 @@ async def dashboard(request: Request):
                 "open": columns.get("open", []),
                 "in_progress": columns.get("in_progress", []),
                 "review": columns.get("review", []),
+                "stalled": columns.get("stalled", []),
                 "blocked": columns.get("blocked", []),
                 "deferred": columns.get("deferred", []),
                 "done": columns.get("done", [])[:20],
@@ -660,6 +572,8 @@ async def dashboard(request: Request):
             "watchdog": watchdog,
             "health_status": health_status,
             "wos_available": wos_available,
+            "wo_source": _wo_source,
+            "wos_without_specs": wos_without_specs,
             "pending_validations": pending_validations,
             "agent_runner_online": agent_runner_online,
         },
@@ -669,14 +583,23 @@ async def dashboard(request: Request):
 @app.get("/wo/{number}", response_class=HTMLResponse)
 async def wo_detail(request: Request, number: int):
     try:
-        files = await gh.list_wo_files()
-        match = next((f for f in files if f["name"].startswith(f"WO-{number}-")), None)
-        if not match:
+        # Same ref and same tie-break as the board — otherwise a WO with an
+        # AGENT-BRIEF companion shows one file here and the other one there.
+        default_branch = await gh.get_default_branch()
+        files = await gh.list_wo_files(ref=default_branch)
+        candidates = sorted(
+            (f for f in files if f["name"].startswith(f"WO-{number}-")),
+            key=lambda f: spec_file_rank(f["name"]),
+        )
+        if not candidates:
             return HTMLResponse(
-                f"<h1 style='font-family:monospace;padding:2rem'>WO-{number} not found</h1>",
+                f"<h1 style='font-family:monospace;padding:2rem'>WO-{number} has no spec file on "
+                f"{default_branch}</h1><p style='font-family:monospace;padding:0 2rem'>It may exist "
+                "only as an open PR, a branch, or a dispatch entry.</p>",
                 status_code=404,
             )
-        content = await gh.get_file_content(match["path"])
+        match = candidates[0]
+        content = await gh.get_file_content(match["path"], ref=default_branch)
         spec = parse_wo_file(content, match["name"])
     except Exception as exc:
         return templates.TemplateResponse(
@@ -763,16 +686,16 @@ async def pm_dashboard(request: Request):
         _pm_dispatch(),
     )
     wos, wos_available = wos_result
-    _apply_live_status(wos, branches, prs, dispatch, merged_prs=merged_prs)
+    wos_without_specs = apply_live_status(
+        wos, branches, prs, dispatch, merged_prs=merged_prs, repo=GITHUB_REPO
+    )
     columns = _board_columns(wos)
     watchdog = _load_watchdog()
-    # See the matching comment in the "/" route — must match the board's
-    # in_progress column count, not the narrower raw-dispatch count, since
-    # this stat is rendered right above that same board on this page.
-    dispatch_running = len(columns.get("in_progress", []))
+    # Same source as the Overview's "Running Now" — see the comment there.
+    dispatch_running = dispatch_status_counts(dispatch)["in_progress"]
 
     # Program roll-ups — deferred WOs excluded from total/progress (tracked separately)
-    programs: dict[str, dict] = defaultdict(lambda: {"total": 0, "done": 0, "in_progress": 0, "blocked": 0, "in_review": 0, "planned": 0, "open": 0, "deferred": 0})
+    programs: dict[str, dict] = defaultdict(lambda: {"total": 0, "done": 0, "in_progress": 0, "blocked": 0, "in_review": 0, "planned": 0, "open": 0, "stalled": 0, "deferred": 0})
     for spec in wos.values():
         prog = spec.program or "Standalone"
         col = spec.board_column if spec.board_column != "review" else "in_review"
@@ -787,7 +710,7 @@ async def pm_dashboard(request: Request):
         prog["pct"] = round(prog["done"] / total * 100) if total else 0
 
     # Per-program WO lists grouped by board column for expanded program cards
-    program_wos: dict[str, dict] = defaultdict(lambda: {"planned": [], "open": [], "in_progress": [], "review": [], "blocked": [], "done": [], "deferred": []})
+    program_wos: dict[str, dict] = defaultdict(lambda: {"planned": [], "open": [], "in_progress": [], "review": [], "stalled": [], "blocked": [], "done": [], "deferred": []})
     for spec in wos.values():
         prog = spec.program or "Standalone"
         program_wos[prog][spec.board_column].append(spec)
@@ -814,7 +737,12 @@ async def pm_dashboard(request: Request):
     # Velocity projection
     recent_counts = [w["count"] for w in velocity[-4:]]
     avg_velocity = sum(recent_counts) / max(len(recent_counts), 1)
-    remaining_open = len(columns.get("open", [])) + len(columns.get("in_progress", [])) + len(columns.get("review", []))
+    remaining_open = (
+        len(columns.get("open", []))
+        + len(columns.get("in_progress", []))
+        + len(columns.get("review", []))
+        + len(columns.get("stalled", []))
+    )
     weeks_to_done = (remaining_open / avg_velocity) if avg_velocity > 0 else None
     projected_done = (now + timedelta(weeks=weeks_to_done)).date().isoformat() if weeks_to_done is not None else None
 
@@ -877,8 +805,7 @@ async def pm_dashboard(request: Request):
     # Blocked items from watchdog
     blocked_alerts = [a for a in (watchdog or {}).get("alerts", []) if a.get("severity") == "error" and a.get("pr_number")]
 
-    # Active agents from branches
-    active_agents = [b for b in branches if b.get("agent_status")]
+    active_agents = agents_in_flight(branches, wos, dispatch, format_age=format_duration)
 
     orchestrator = _load_orchestrator()
     validations = _load_validations()
@@ -888,7 +815,7 @@ async def pm_dashboard(request: Request):
         "site_title": SITE_TITLE,
         "refresh_seconds": REFRESH_SECONDS,
         "github_repo": GITHUB_REPO,
-        "columns": {k: columns.get(k, []) for k in ("planned", "open", "in_progress", "review", "blocked", "done", "deferred")},
+        "columns": {k: columns.get(k, []) for k in ("planned", "open", "in_progress", "review", "stalled", "blocked", "done", "deferred")},
         "total_wos": len(wos),
         "done_count": len(columns.get("done", [])),
         "dispatch_running": dispatch_running,
@@ -901,6 +828,8 @@ async def pm_dashboard(request: Request):
         "watchdog": watchdog,
         "orchestrator": orchestrator,
         "wos_available": wos_available,
+        "wo_source": _wo_source,
+        "wos_without_specs": wos_without_specs,
         "pending_validations": pending_validations,
     })
 
@@ -2000,9 +1929,7 @@ async def api_budget():
     return {}
 
 
-@app.get("/api/factory/dispatch")
-async def api_factory_dispatch():
-    """Live dispatch state — which WOs are claimed and what each agent is doing."""
+async def _fetch_dispatch() -> dict:
     try:
         async with httpx.AsyncClient(timeout=4) as client:
             r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_orch_headers())
@@ -2011,6 +1938,24 @@ async def api_factory_dispatch():
     except Exception:
         pass
     return {}
+
+
+@app.get("/api/factory/dispatch")
+async def api_factory_dispatch():
+    """Live dispatch state — which WOs are claimed and what each agent is doing."""
+    return await _fetch_dispatch()
+
+
+@app.get("/api/factory/counts")
+async def api_factory_counts():
+    """Dispatch counts for the client, from the same helper the pages render.
+
+    The Overview used to re-implement this filter in JavaScript and overwrite
+    the server-rendered number a second after load — it counted `in_progress`
+    but not `claimed`, so the page flipped from 5 to 3 in front of the reader.
+    No template may count dispatch statuses itself; it consumes this.
+    """
+    return dispatch_status_counts(await _fetch_dispatch())
 
 
 @app.delete("/api/factory/dispatch/{wo_id}")
@@ -2509,13 +2454,14 @@ async def factory_floor(request: Request):
         key=lambda w: w.get("claimed_at") or "",
         reverse=True,
     )
-    # Overview's "Running Now" only counts claimed/in_progress — this list is
-    # broader (also awaiting_human/awaiting_commit/stale/rejected/retry_queued),
-    # which is why the two pages show different numbers for what looks like the
-    # same thing. Surface the breakdown so it's clear why, instead of relabeling
-    # this list down to match (it's a genuinely useful "everything not done yet"
-    # view for this page).
-    active_breakdown = _dispatch_status_counts(dispatch)
+    # This list is everything the orchestrator still has open, which is wider
+    # than "running" — it also holds awaiting-review, stale, rejected and
+    # retry-queued entries. The count next to it therefore must not be called
+    # "active" on its own: a human comparing it to the Overview's "Running Now"
+    # read two different quantities as the same one and concluded the dashboard
+    # was lying. The template leads with `in_progress` from the shared helper
+    # and labels this total "tracked by dispatch".
+    active_breakdown = dispatch_status_counts(dispatch)
 
     # Map which backend names are actively working WOs so agent cards can show status.
     # Use the `backend` field (set by runner when claiming) for exact matching.

@@ -49,9 +49,19 @@ async def _get(path: str, params: dict | None = None, ttl: int | None = None) ->
     return val
 
 
-async def list_wo_files() -> list[dict]:
+async def get_default_branch() -> str:
+    """The branch the dashboard treats as the truth for work orders — never
+    assume "main", a repo is free to call it something else."""
+    data = await _get(f"/repos/{GITHUB_REPO}")
+    return data.get("default_branch", "main")
+
+
+async def list_wo_files(ref: str | None = None) -> list[dict]:
+    """Directory listing for the WO folder. Each entry carries a `sha` — the
+    git blob id — which lets a caller check a local copy against the branch
+    without downloading the file."""
     path = f"/repos/{GITHUB_REPO}/contents/{WO_PATH}"
-    items = await _get(path)
+    items = await _get(path, {"ref": ref} if ref else None)
     return [i for i in items if i["name"].endswith(".md") and i["name"].startswith("WO-")]
 
 
@@ -61,9 +71,9 @@ async def list_wo_files_for(repo: str, wo_path: str) -> list[dict]:
     return [i for i in items if i["name"].endswith(".md") and i["name"].startswith("WO-")]
 
 
-async def get_file_content(file_path: str) -> str:
+async def get_file_content(file_path: str, ref: str | None = None) -> str:
     path = f"/repos/{GITHUB_REPO}/contents/{file_path}"
-    data = await _get(path)
+    data = await _get(path, {"ref": ref} if ref else None)
     return base64.b64decode(data["content"]).decode("utf-8")
 
 

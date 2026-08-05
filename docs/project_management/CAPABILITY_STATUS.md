@@ -35,6 +35,9 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | WO creation form with auto-numbered WO | ✅ | Dynamic acceptance criteria list | WO-1014 |
 | Oryntra annotation image rendering in thread | ✅ | Inline with click-to-zoom, source URL | WO-1011 |
 | CORS proxy for browser extension posting | ✅ | `/api/proxy/thread/{wo}/messages` | WO-1011 |
+| Work order specs sourced from the GitHub default branch | ✅ | Local mount demoted to a blob-SHA-verified cache; warns in-page when it can't be trusted | fix/dashboard-wo-source-of-truth |
+| Single definition of "Running" across Overview, PM and Factory | ✅ | Dispatch `claimed`/`in_progress` via `wo_reconcile.dispatch_status_counts()`; clients read `/api/factory/counts` | fix/dashboard-wo-source-of-truth |
+| Stalled board column | ✅ | Retry-queued or stale claims, and pushed branches with no dispatch entry | fix/dashboard-wo-source-of-truth |
 
 ## Dimension 2: PR Watchdog (pr-watchdog)
 
@@ -135,6 +138,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
+| 2026-08-05 | Dashboard data integrity — one WO source of truth, one "Running" definition, Stalled column, shared agents-in-flight list | fix/dashboard-wo-source-of-truth |
 | 2026-07-14 | Auto-recovery on failure (release_dispatch), retry context injection, reject_reason storage, dispatch management endpoints, status site timestamps | fix/factory-resilience |
 | 2026-07-04 | Agent quality+security+optimization alignment (semgrep threshold, JS scan, performance mandate, backend ask() fixes) | fix/factory-quality-alignment |
 | 2026-07-04 | Oryntra Chrome extension + orchestrator image storage/serving + status site CORS proxy | WO-1011 |

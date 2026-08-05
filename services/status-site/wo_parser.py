@@ -15,6 +15,10 @@ class WOSpec:
     program: str
     raw: str
     repo: str = ""
+    # Set when the WO was reconstructed from a PR/branch/dispatch entry with no
+    # spec file behind it — the board still has to show it, but nothing on the
+    # page should imply a spec was read.
+    spec_missing: bool = False
     # runtime fields set after load
     agent_name: str = ""
     agent_step: str = ""
@@ -44,6 +48,12 @@ class WOSpec:
             return "in_progress"
         if s.startswith(("🔴", "❌")) or sl.startswith("blocked"):
             return "blocked"
+        # Started, then abandoned: a branch or a dead claim exists but no agent
+        # is dispatched. Distinct from "open" (never started) and from
+        # "in_progress" (an agent is on it right now) — collapsing it into
+        # either one is how leftover branches used to read as live work.
+        if s.startswith("⚠") or sl.startswith("stalled"):
+            return "stalled"
         # "Planned" is acknowledged backlog — visible as open on the board.
         # Dispatch eligibility (Ready vs Planned) is enforced by the orchestrator separately.
         return "open"
