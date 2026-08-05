@@ -455,6 +455,14 @@ def _apply_live_status(
             # Complete WOs don't override whatever plan/spec status was set above
             if agent_status == "complete":
                 pass
+            elif agent_status == "retry_queued":
+                # Third instance of the same gap fixed above for the pr_wo_map
+                # and branch_wo_map cases: this WO has no PR and no branch, just
+                # a bare dispatch entry — but retry_queued still means nobody is
+                # currently working it, only eligible for re-claim. Without this,
+                # it falls to the "else: In Progress" case below and shows as
+                # actively worked when it's actually idle.
+                spec.status = "Queued for retry — not currently claimed"
             else:
                 step = entry.get("step", "")
                 if agent_status == "awaiting_human":
