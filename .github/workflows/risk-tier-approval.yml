@@ -1,0 +1,50 @@
+# =============================================================================
+# risk-tier-approval.yml — Enforce human approval for P0/P1 WOs (AF-01)
+#
+# The ruleset's own required_approving_review_count is 0 and applies
+# uniformly to every PR — raising it would block P2/P3's documented
+# auto-merge-after-CI flow just as hard as an unreviewed P0/P1 merge. This
+# workflow is the tier-aware alternative: it reads the WO's own declared
+# risk tier (from its spec file's Priority field) and only requires a human
+# APPROVED review when that tier is P0 or P1. P2/P3 pass immediately, same
+# as branches with no associated WO spec at all (hotfixes, dependency bumps).
+#
+# Re-runs on every review submission, not just pushes, so approving a PR
+# flips this check green without needing a new commit.
+# =============================================================================
+
+name: Risk Tier Approval Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: risk-tier-approval-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Risk Tier Approval Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check risk-tier approval requirement
+        env:
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/check_risk_tier_approval.py
