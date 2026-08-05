@@ -78,6 +78,79 @@ def next_memory_filename(memory_dir: str, slug: str) -> str:
     return f"auto_{slug}_overflow.md"
 
 
+# type -> MEMORY.md section. Deliberately not a clean 1:1 with memory_agent's
+# own 4-type taxonomy: empirically, auto-extracted "project" lessons are
+# almost always durable technical gotchas (a race condition, an auth
+# exemption, a subprocess invariant), not epic/program tracking — "Known
+# Invariants" fits their actual content far better than "Active Programs"
+# would. "reference" has no dedicated section in the template; it lands here
+# too rather than being silently dropped.
+_SECTION_BY_TYPE = {
+    "feedback": "## Feedback & Working Style",
+    "user": "## Team & Collaboration",
+    "project": "## Known Invariants",
+    "reference": "## Known Invariants",
+}
+
+
+def _parse_frontmatter(memory_text: str) -> dict:
+    """Extract name/description/type from a memory file's frontmatter block."""
+    m = re.match(r"^---\n(.*?)\n---\n", memory_text, re.DOTALL)
+    if not m:
+        return {}
+    fm: dict[str, str] = {}
+    for line in m.group(1).splitlines():
+        line = line.strip()
+        if line.startswith("name:"):
+            fm["name"] = line.split(":", 1)[1].strip()
+        elif line.startswith("description:"):
+            fm["description"] = line.split(":", 1)[1].strip()
+        elif line.startswith("type:"):
+            fm["type"] = line.split(":", 1)[1].strip()
+    return fm
+
+
+def append_to_memory_index(memory_dir: str, filename: str, memory_text: str) -> bool:
+    """Add a one-line pointer to MEMORY.md under the right section.
+
+    This is the fix for AF-38 (2026-08 engineering assessment): the memory
+    agent wrote 14 files here across weeks and MEMORY.md — the documented
+    entry point, which calls itself "Index only" — pointed at none of them,
+    because the workflow relied on a human doing this by hand during PR
+    review and that step was silently skipped every single time. Returns
+    False (non-fatal) if MEMORY.md is missing or has no matching section,
+    so a template layout change can't crash the workflow.
+    """
+    index_path = os.path.join(memory_dir, "MEMORY.md")
+    if not os.path.isfile(index_path):
+        return False
+
+    fm = _parse_frontmatter(memory_text)
+    name = fm.get("name", filename.removesuffix(".md"))
+    description = fm.get("description", "")
+    section = _SECTION_BY_TYPE.get(fm.get("type", ""), "## Known Invariants")
+    entry = f"- [{name}]({filename}) — {description}" if description else f"- [{name}]({filename})"
+
+    with open(index_path) as f:
+        lines = f.readlines()
+
+    try:
+        start = next(i for i, l in enumerate(lines) if l.rstrip() == section)
+    except StopIteration:
+        return False
+
+    # Insert after the section header (and past any HTML-comment placeholder
+    # lines immediately following it), before the next "## " heading or EOF.
+    insert_at = start + 1
+    while insert_at < len(lines) and lines[insert_at].lstrip().startswith("<!--"):
+        insert_at += 1
+    lines.insert(insert_at, entry + "\n")
+
+    with open(index_path, "w") as f:
+        f.writelines(lines)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--diff", required=True)
@@ -129,7 +202,8 @@ What should future agents know about this change that they would NOT discover by
         messages=[{"role": "user", "content": user_content}],
     )
 
-    result = next(b.text for b in message.content if b.type == "text").strip()
+    text_blocks = [b.text for b in message.content if b.type == "text"]
+    result = "".join(text_blocks).strip()
 
     if result == "NOTHING_TO_REMEMBER" or not result:
         print("Memory agent: nothing noteworthy in this PR.")
@@ -147,7 +221,16 @@ What should future agents know about this change that they would NOT discover by
     with open(memory_path, "w") as f:
         f.write(result)
 
-    # Output file tells the workflow which file was written (for the commit step)
+    # AF-38: this used to be a manual step during PR review ("add a MEMORY.md
+    # pointer") that never actually happened across 14 real memory files —
+    # do it automatically instead so the index can't silently drift again.
+    indexed = append_to_memory_index(args.memory_dir, filename, result)
+    if indexed:
+        print(f"Indexed in {os.path.join(args.memory_dir, 'MEMORY.md')}")
+    else:
+        print("Could not index in MEMORY.md (missing file or section) — added the memory file only.")
+
+    # Output file tells the workflow which file(s) were written (for the commit step)
     with open(args.output, "w") as f:
         f.write(memory_path)
 
