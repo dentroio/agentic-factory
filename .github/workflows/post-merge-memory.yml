@@ -86,7 +86,10 @@ jobs:
             execSync('git config user.name "github-actions[bot]"');
             execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
             execSync(`git checkout -b ${branch}`);
-            execSync(`git add "${memoryPath}"`);
+            // memory_agent.py now also updates MEMORY.md's index in the same
+            // run (AF-38) — stage both, and don't fail if MEMORY.md happened
+            // not to change (e.g. no matching section for this entry's type).
+            execSync(`git add "${memoryPath}" memory/MEMORY.md`);
             execSync(`git commit -m "memory(auto): extract lesson from ${sha}"`);
             execSync(`git push origin ${branch}`);
 
