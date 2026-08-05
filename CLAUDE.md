@@ -24,7 +24,7 @@ That activates the Project Engineer — an agent persona that walks you through 
 |----------|--------|
 | P0/P1 | sync → branch → implement → **deploy → ask user to verify** → ci-local → PR → notify human |
 | P2 | sync → branch → implement → **deploy → ask user to verify** → ci-local → PR → auto-merge |
-| P3 (docs/PM only) | Commit directly to `main` — no deploy, no user checkpoint |
+| P3 (docs/PM only) | sync → branch → implement → ci-local → PR → auto-merge — no deploy, no user checkpoint |
 
 ## ⛔ Ask the user to verify before committing
 
