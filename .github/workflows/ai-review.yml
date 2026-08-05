@@ -99,10 +99,25 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const review = fs.readFileSync('/tmp/review.md', 'utf8');
             const blocked = '${{ steps.claude_review.outcome }}' === 'failure';
+            // ai_review.py has `continue-on-error: true` on the step above, so a
+            // crash there (rate limit, API error, a bug in the script itself —
+            // not necessarily "found blocking issues") doesn't fail the job
+            // outright, it just leaves /tmp/review.md missing. Reading it
+            // unconditionally then crashed *this* step too, with an opaque
+            // ENOENT instead of surfacing what actually went wrong — same
+            // "missing file means silence, not a clear error" gap already
+            // fixed in observability.yml.
+            const reviewFileExists = fs.existsSync('/tmp/review.md');
+            const review = reviewFileExists
+              ? fs.readFileSync('/tmp/review.md', 'utf8')
+              : 'The review script exited without producing output — it likely crashed ' +
+                '(API error, rate limit, or a bug in ai_review.py) rather than finding ' +
+                'blocking issues. Check the workflow run logs for the actual error.';
             const header = blocked
-              ? '## 🤖 AI Code Review — ❌ Review Required (merge blocked)'
+              ? (reviewFileExists
+                  ? '## 🤖 AI Code Review — ❌ Review Required (merge blocked)'
+                  : '## 🤖 AI Code Review — ⚠️ Review script failed to run')
               : '## 🤖 AI Code Review';
             await github.rest.issues.createComment({
               owner: context.repo.owner,
