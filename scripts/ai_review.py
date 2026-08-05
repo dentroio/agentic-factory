@@ -113,10 +113,12 @@ part the CI gate can act on. Keep the Summary to one paragraph and the Suggestio
 highest-value items. Never let a long Suggestions section crowd out the Verdict.
 """
 
-# Hard ceiling on diff size sent to the model at all, as cost protection. Beyond
-# this the tail is dropped and the review says so explicitly rather than
-# pretending it saw everything.
-MAX_DIFF_LINES = int(os.getenv("AI_REVIEW_MAX_DIFF_LINES", "20000"))
+# Hard ceiling on diff size sent to the model at all. Chunks are reviewed
+# sequentially, so this also bounds job runtime: at CHUNK_LINES per request this
+# is ~10 requests, a few minutes, comfortably inside the workflow's 30-minute
+# timeout. Beyond the ceiling the tail is dropped and the review says so
+# explicitly rather than pretending it saw everything.
+MAX_DIFF_LINES = int(os.getenv("AI_REVIEW_MAX_DIFF_LINES", "12000"))
 
 # Diff lines per request. Sized so a chunk's review comfortably fits in
 # MAX_OUTPUT_TOKENS with the Verdict section intact.
