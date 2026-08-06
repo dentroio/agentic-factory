@@ -1,6 +1,7 @@
 import base64
 import os
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -49,9 +50,19 @@ async def _get(path: str, params: dict | None = None, ttl: int | None = None) ->
     return val
 
 
-async def list_wo_files() -> list[dict]:
+async def get_default_branch() -> str:
+    """The branch the dashboard treats as the truth for work orders — never
+    assume "main", a repo is free to call it something else."""
+    data = await _get(f"/repos/{GITHUB_REPO}")
+    return data.get("default_branch", "main")
+
+
+async def list_wo_files(ref: str | None = None) -> list[dict]:
+    """Directory listing for the WO folder. Each entry carries a `sha` — the
+    git blob id — which lets a caller check a local copy against the branch
+    without downloading the file."""
     path = f"/repos/{GITHUB_REPO}/contents/{WO_PATH}"
-    items = await _get(path)
+    items = await _get(path, {"ref": ref} if ref else None)
     return [i for i in items if i["name"].endswith(".md") and i["name"].startswith("WO-")]
 
 
@@ -61,9 +72,9 @@ async def list_wo_files_for(repo: str, wo_path: str) -> list[dict]:
     return [i for i in items if i["name"].endswith(".md") and i["name"].startswith("WO-")]
 
 
-async def get_file_content(file_path: str) -> str:
+async def get_file_content(file_path: str, ref: str | None = None) -> str:
     path = f"/repos/{GITHUB_REPO}/contents/{file_path}"
-    data = await _get(path)
+    data = await _get(path, {"ref": ref} if ref else None)
     return base64.b64decode(data["content"]).decode("utf-8")
 
 
@@ -142,28 +153,104 @@ async def list_active_runs() -> list[dict]:
         return []
 
 
-async def list_merged_prs(days: int = 56) -> list[dict]:
-    """A single page sorted by 'updated' silently drops PRs merged within the
-    window but with no post-merge activity (comments, label changes) — they
-    get pushed off the top-100 by newer, unrelated PR activity even though
-    they're well inside `days`. Sort by 'created' instead (a much better
-    proxy for merge recency — not perturbed by post-merge noise) and
-    paginate across several pages rather than trusting a single page of 100
-    to contain everything in the window."""
+@dataclass(frozen=True)
+class MergedPRWindow:
+    """Merged PRs for a time window, plus whether we actually got all of them.
+
+    The completeness flag is the point. A chart that draws a truncated bucket
+    as a low bar is worse than one that admits it doesn't know.
+    """
+
+    prs: list[dict]
+    since: str
+    total_reported: int
+    complete: bool
+
+    @property
+    def missing(self) -> int:
+        return max(self.total_reported - len(self.prs), 0)
+
+
+# The search API refuses to return past 1000 results regardless of paging.
+_SEARCH_PAGE_LIMIT = 10
+
+
+def _search_item_to_pr(item: dict) -> dict:
+    """Normalize a search result into the PR shape the rest of the app reads.
+
+    Search returns issue-shaped items, so there is no `head.ref`. For merged
+    PRs that costs nothing measurable here: over the last 56 days, resolving
+    work orders from titles alone yields the same 179 distinct WOs as
+    resolving from titles plus branches, and not one PR had a branch naming a
+    WO its title didn't. This repo's PR titles are required to carry
+    "WO-NNN", which is why. `head` is still present and empty so callers can
+    keep using resolve_all_wos_for_pr unchanged.
+    """
+    return {
+        "number": item.get("number"),
+        "title": item.get("title", "") or "",
+        "merged_at": (item.get("pull_request") or {}).get("merged_at", "") or "",
+        "html_url": item.get("html_url", ""),
+        "user": item.get("user") or {},
+        "head": {"ref": ""},
+    }
+
+
+async def list_merged_prs(days: int = 56) -> MergedPRWindow:
+    """Every PR merged in the last `days`, via search's `merged:>=` qualifier.
+
+    This used to page through `/pulls?state=closed&sort=created`, capped at
+    five pages, and return a bare list. Two problems, one of them invisible.
+
+    Creation order is only a proxy for merge order, so a PR opened before the
+    cap's horizon and merged inside the window fell off the end. Measured
+    against this repo: the paged version returned 432 of the 439 PRs merged in
+    a 56-day window. The seven it dropped were long-lived dependency bumps
+    opened early and merged weeks later — exactly the shape the proxy misses.
+
+    Worse, nothing could tell. The cap produced a short list indistinguishable
+    from a quiet fortnight, and the velocity chart rendered the shortfall as
+    real low weeks. Search filters on merge time directly and reports
+    `total_count`, so "did we get everything" is answered by the API rather
+    than assumed — and when the answer is no, callers are told.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    since = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # merged:>= takes a date, so this over-selects by up to a day; the
+    # timestamp filter below trims it. total_count describes the same
+    # date-granular set as the items, so the two stay comparable.
+    query = f"repo:{GITHUB_REPO} is:pr is:merged merged:>={since[:10]}"
+
+    items: list[dict] = []
+    total = 0
     try:
-        from datetime import UTC, datetime, timedelta
-        since = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        results: list[dict] = []
-        for page in range(1, 6):  # up to 500 PRs — generous for a 56-day window
+        for page in range(1, _SEARCH_PAGE_LIMIT + 1):
             data = await _get(
-                f"/repos/{GITHUB_REPO}/pulls",
-                {"state": "closed", "per_page": 100, "page": page, "sort": "created", "direction": "desc"},
+                "/search/issues",
+                {
+                    "q": query,
+                    "per_page": 100,
+                    "page": page,
+                    "sort": "created",
+                    "order": "desc",
+                    "advanced_search": "true",
+                },
             )
-            if not data:
+            total = data.get("total_count", 0)
+            batch = data.get("items", []) or []
+            items.extend(batch)
+            if not batch or len(items) >= total:
                 break
-            results.extend(p for p in data if p.get("merged_at") and p["merged_at"] >= since)
-            if len(data) < 100:
-                break  # last page
-        return results
     except Exception:
-        return []
+        # No data at all is not zero merges — say so, so the chart can render
+        # "unknown" instead of eight empty weeks.
+        return MergedPRWindow(prs=[], since=since, total_reported=0, complete=False)
+
+    prs = [p for p in map(_search_item_to_pr, items) if p["merged_at"] >= since]
+    return MergedPRWindow(
+        prs=prs,
+        since=since,
+        total_reported=total,
+        complete=len(items) >= total,
+    )

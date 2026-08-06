@@ -162,6 +162,7 @@ body {
 .kanban-col-open     { border-top: 3px solid rgba(148, 163, 184, 0.7); box-shadow: inset 0 3px 0 rgba(148, 163, 184, 0.2); }
 .kanban-col-progress { border-top: 3px solid rgba(99, 102, 241, 0.7);  box-shadow: inset 0 3px 0 rgba(99, 102, 241, 0.2); }
 .kanban-col-review   { border-top: 3px solid rgba(245, 158, 11, 0.7);  box-shadow: inset 0 3px 0 rgba(245, 158, 11, 0.2); }
+.kanban-col-stalled  { border-top: 3px solid rgba(217, 119, 6, 0.6);   box-shadow: inset 0 3px 0 rgba(217, 119, 6, 0.15); }
 .kanban-col-blocked  { border-top: 3px solid rgba(239, 68, 68, 0.7);   box-shadow: inset 0 3px 0 rgba(239, 68, 68, 0.2); }
 .kanban-col-deferred { border-top: 3px solid rgba(100, 116, 139, 0.5); box-shadow: inset 0 3px 0 rgba(100, 116, 139, 0.15); }
 .kanban-col-done     { border-top: 3px solid rgba(16, 185, 129, 0.7);  box-shadow: inset 0 3px 0 rgba(16, 185, 129, 0.2); }

@@ -38,6 +38,30 @@
 </div>
 {% endif %}
 
+{% if wo_source and wo_source.warnings %}
+<div class="mb-4 px-4 py-3 rounded-xl border bg-amber-500/8 border-amber-500/20 text-amber-300 text-xs">
+  <div class="flex items-center gap-3">
+    <svg class="w-4 h-4 flex-shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+    <strong>Work order counts may be incomplete</strong>
+  </div>
+  <ul class="mt-1.5 ml-7 list-disc space-y-1 text-amber-200/80">
+    {% for w in wo_source.warnings %}<li>{{ w }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if wos_without_specs %}
+<div class="mb-4 flex items-start gap-3 px-4 py-3 rounded-xl border bg-slate-800/30 border-slate-700/50 text-slate-300 text-xs">
+  <svg class="w-4 h-4 flex-shrink-0 text-slate-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+  <span>
+    <strong>{{ wos_without_specs | length }} work order{{ "s" if wos_without_specs | length != 1 else "" }} with no spec file</strong>
+    — {% for n in wos_without_specs %}<a href="/wo/{{ n }}" class="font-mono text-indigo-400 hover:underline">WO-{{ n }}</a>{{ ", " if not loop.last }}{% endfor %}
+    {{ "have" if wos_without_specs | length != 1 else "has" }} an open PR, branch or dispatch entry but nothing in
+    <span class="font-mono">{{ wo_source.ref or "the default branch" }}</span>. Counted here so the board matches the PR queue.
+  </span>
+</div>
+{% endif %}
+
 {# ── Blocked items ─────────────────────────────────────────────────────── #}
 {% if blocked_alerts %}
 <div class="mb-4 glass-panel overflow-hidden border border-rose-500/20 bg-rose-500/5">
@@ -79,11 +103,20 @@
     {# Velocity bars #}
     <div>
       <div class="flex items-center justify-between mb-3">
-        <h2 class="text-xs font-display font-bold text-slate-400 uppercase tracking-widest">WO Velocity — Last 8 Weeks</h2>
+        <h2 class="text-xs font-display font-bold text-slate-400 uppercase tracking-widest"
+            title="Distinct work orders, counted in the week their first merge landed. A work order spread over several PRs counts once; a PR closing several work orders credits each.">WO Velocity — Last 8 Weeks</h2>
         {% if velocity_summary %}
-        <span class="text-xs font-mono text-slate-500">avg <span class="text-indigo-400 font-bold">{{ velocity_summary.avg_per_week }}</span>/wk (last 4 wks)</span>
+        <span class="text-xs font-mono text-slate-500">avg <span class="text-indigo-400 font-bold">{{ velocity_summary.avg_per_week }}</span>/wk
+          <span class="text-slate-600" title="Pull requests merged per week over the same four weeks. Kept visible so the two rates can't be mistaken for each other — this used to be the number labelled WOs/week.">· {{ velocity_summary.prs_per_week }} PRs/wk</span>
+        </span>
         {% endif %}
       </div>
+      {% if velocity_summary and not velocity_summary.window_complete %}
+      <div class="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg border bg-amber-500/8 border-amber-500/20 text-amber-300 text-xs">
+        <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        <span><strong>Incomplete data</strong> — {{ velocity_summary.window_missing }} merged PR{{ 's' if velocity_summary.window_missing != 1 }} in this window could not be retrieved. Every bar below is a floor, not a count, and the average excludes them.</span>
+      </div>
+      {% endif %}
       {% if velocity %}
       <div class="space-y-1.5">
         {% set max_count = velocity | map(attribute='count') | max %}
@@ -91,22 +124,27 @@
         {% for week in velocity %}
         <div class="flex items-center gap-3 text-xs">
           <span class="text-slate-500 w-14 text-right font-mono text-xs">{{ week.label }}</span>
-          <div class="flex-1 bg-slate-950/60 border border-slate-800/30 rounded h-5 overflow-hidden flex items-center">
+          <div class="flex-1 bg-slate-950/60 border rounded h-5 overflow-hidden flex items-center {% if week.complete %}border-slate-800/30{% else %}border-amber-500/30{% endif %}"
+               title="{{ week.count }} work order{{ 's' if week.count != 1 }} from {{ week.pr_count }} merged PR{{ 's' if week.pr_count != 1 }}{% if not week.complete %} — at least; some PRs in this window were not retrieved{% endif %}">
             {% if week.count > 0 %}
             {% set bar_pct = [(week.count * 100 / safe_max) | round | int, 100] | min %}
-            <div class="bg-gradient-to-r from-indigo-500 to-cyan-500 h-full flex items-center px-2 transition-all duration-500"
+            <div class="h-full flex items-center px-2 transition-all duration-500 {% if week.complete %}bg-gradient-to-r from-indigo-500 to-cyan-500{% else %}bg-gradient-to-r from-amber-600/70 to-amber-500/70{% endif %}"
                  style="width: {{ bar_pct }}%">
-              <span class="text-white font-mono font-semibold text-xs">{{ week.count }}</span>
+              <span class="text-white font-mono font-semibold text-xs">{{ week.count }}{% if not week.complete %}+{% endif %}</span>
             </div>
-            {% else %}
+            {% elif week.complete %}
             <span class="text-slate-700 font-mono text-xs px-2">0</span>
+            {% else %}
+            {# A zero we can't stand behind. Rendering it as "0" is the defect:
+               a bucket that lost data looked exactly like a week nobody worked. #}
+            <span class="text-amber-500/70 font-mono text-xs px-2">no data</span>
             {% endif %}
           </div>
         </div>
         {% endfor %}
       </div>
       {% else %}
-      <p class="text-xs text-slate-500 text-center py-4">No merged PRs in the last 8 weeks.</p>
+      <p class="text-xs text-slate-500 text-center py-4">No work orders completed in the last 8 weeks.</p>
       {% endif %}
     </div>
 
@@ -145,17 +183,21 @@
         </div>
         {% endfor %}
         {% if velocity_summary.projected_done %}
-        <div class="pt-2 border-t border-slate-800/40 flex items-center gap-3 text-xs text-slate-500 font-mono flex-wrap">
+        <div class="pt-2 border-t border-slate-800/40 flex items-center gap-3 text-xs text-slate-500 font-mono flex-wrap"
+             title="Burn-down of the work orders open right now at the current rate. It assumes no new work orders arrive, which they do — read it as when today's backlog clears, not when the project ends.">
           <span class="text-slate-400">All {{ velocity_summary.remaining_open }} open WOs:</span>
           <span class="text-slate-300 font-semibold">projected done {{ velocity_summary.projected_done }}</span>
-          <span class="text-slate-600">at {{ velocity_summary.avg_per_week }} WOs/week</span>
+          <span class="text-slate-600">at {{ velocity_summary.avg_per_week }} WOs/week, backlog as it stands</span>
         </div>
         {% endif %}
       </div>
     </div>
     {% elif velocity_summary and velocity_summary.avg_per_week == 0 %}
     <div class="border-t border-slate-800/50 pt-3">
-      <p class="text-xs text-slate-600 font-mono">No recent merge activity — milestone projections unavailable.</p>
+      <p class="text-xs text-slate-600 font-mono">
+        {% if not velocity_summary.window_complete %}Merge history could not be retrieved — projections withheld rather than computed from partial data.
+        {% else %}No work orders completed recently — milestone projections unavailable.{% endif %}
+      </p>
     </div>
     {% endif %}
   </div>
@@ -168,16 +210,32 @@
       {% for b in active_agents %}
       <div class="border-b border-slate-800/40 pb-4 last:border-0 last:pb-0">
         <div class="flex items-center gap-2 mb-1.5">
+          {% if b.live %}
           <span class="relative flex h-2 w-2 flex-shrink-0">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-emerald-400"></span>
             <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
           </span>
           <span class="text-xs font-bold text-slate-200 font-display">{{ b.agent_status.agent }}</span>
+          {% else %}
+          <span class="inline-flex rounded-full h-2 w-2 bg-slate-600 flex-shrink-0"></span>
+          <span class="text-xs font-bold text-slate-400 font-display">{{ b.agent_status.agent if b.agent_status else "no agent" }}</span>
+          {# Same pill as the Overview panel — both render the one list from
+             agents_in_flight(), so they cannot describe a WO differently. #}
+          <span title="No dispatch entry — nothing is driving this branch right now"
+                class="text-xs px-1.5 py-0.5 rounded font-mono border
+                {% if b.wo_column == 'review' %}bg-amber-500/10 text-amber-400 border-amber-500/20
+                {% elif b.wo_column == 'blocked' %}bg-rose-500/10 text-rose-400 border-rose-500/20
+                {% else %}bg-slate-700/30 text-slate-400 border-slate-600/30{% endif %}">
+            {{ {"review": "in review", "stalled": "stalled", "blocked": "blocked"}.get(b.wo_column, "no agent") }}
+          </span>
+          {% endif %}
         </div>
         <div class="text-xs text-indigo-400 font-mono font-semibold mb-1">
           {% if b.wo_number %}<a href="/wo/{{ b.wo_number }}" class="hover:underline">WO-{{ b.wo_number }}</a>{% else %}{{ b.branch }}{% endif %}
         </div>
-        <div class="text-xs text-slate-400 mb-1 leading-relaxed">{{ b.agent_status.step }}</div>
+        {% if b.agent_status %}
+        <div class="text-xs text-slate-400 mb-1 leading-relaxed">{{ "" if b.live else "last step: " }}{{ b.agent_status.step }}</div>
+        {% endif %}
         <div class="text-xs text-slate-500 font-mono">Pushed {{ b.last_commit_ago }} ago</div>
       </div>
       {% endfor %}
@@ -193,21 +251,23 @@
 <div class="mb-4">
   <div class="flex items-center justify-between mb-3">
     <h2 class="text-xs font-display font-bold text-slate-400 uppercase tracking-widest">Work Order Board</h2>
-    <span class="text-xs text-slate-500">Click any card for details · "Running" = dispatched to an agent right now</span>
+    <span class="text-xs text-slate-500">Click any card for details · "Running" = dispatched to an agent right now · "Stalled" = started, nobody on it</span>
   </div>
-  <div class="grid grid-cols-1 md:grid-cols-6 gap-3">
+  <div class="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-7 gap-3">
     {% set board = [
-      ("Open",        "open",        "kanban-col-open"),
-      ("Running",     "in_progress", "kanban-col-progress"),
-      ("In Review",   "review",      "kanban-col-review"),
-      ("Blocked",     "blocked",     "kanban-col-blocked"),
-      ("Deferred",    "deferred",    "kanban-col-deferred"),
-      ("Done",        "done",        "kanban-col-done"),
+      ("Open",        "open",        "kanban-col-open",     ""),
+      ("Running",     "in_progress", "kanban-col-progress", "Dispatch status claimed or in_progress — an agent holds this WO right now"),
+      ("In Review",   "review",      "kanban-col-review",   ""),
+      ("Stalled",     "stalled",     "kanban-col-stalled",  "Started, then dropped: a retry-queued or stale claim, or a pushed branch with no dispatch entry. The Factory page's 'stalled' count covers the dispatch ones only."),
+      ("Blocked",     "blocked",     "kanban-col-blocked",  ""),
+      ("Deferred",    "deferred",    "kanban-col-deferred", ""),
+      ("Done",        "done",        "kanban-col-done",     ""),
     ] %}
-    {% for label, key, col_class in board %}
+    {% for label, key, col_class, hint in board %}
     <div class="glass-panel {{ col_class }} p-3 flex flex-col">
       <div class="flex items-center justify-between mb-3 pb-2 border-b border-slate-800/40">
-        <span class="text-xs font-display font-bold text-slate-200 uppercase tracking-wider">{{ label }}</span>
+        <span class="text-xs font-display font-bold text-slate-200 uppercase tracking-wider"
+              {% if hint %}title="{{ hint }}"{% endif %}>{{ label }}</span>
         <span class="text-xs font-mono font-bold bg-slate-800 text-slate-300 rounded-full px-2 py-0.5">{{ columns[key] | length }}</span>
       </div>
       <div class="space-y-2 flex-1 overflow-y-auto max-h-[320px] pr-0.5">
@@ -228,13 +288,20 @@
             </div>
           </div>
           <div class="text-xs text-slate-200 font-medium leading-snug mb-1">{{ spec.title }}</div>
-          {% if spec.agent_name %}
+          {% if spec.agent_name and key == "in_progress" %}
           <div class="flex items-center gap-1.5 bg-indigo-950/20 border border-indigo-900/40 rounded px-2 py-1 mt-1">
             <span class="relative flex h-1.5 w-1.5 flex-shrink-0">
               <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
               <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-500"></span>
             </span>
             <span class="text-xs text-indigo-300 font-semibold truncate flex-1">{{ spec.agent_name }}</span>
+          </div>
+          {% elif spec.agent_name %}
+          {# Name from the last run, not a live agent — the pulsing dot above is
+             reserved for the Running column so it can't be misread here. #}
+          <div class="flex items-center gap-1.5 bg-slate-800/30 border border-slate-700/40 rounded px-2 py-1 mt-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-slate-600 flex-shrink-0"></span>
+            <span class="text-xs text-slate-400 truncate flex-1">last: {{ spec.agent_name }}</span>
           </div>
           {% endif %}
           {% if spec.effort %}
@@ -272,7 +339,7 @@
   {# ── Open programs table ── #}
   <div id="prog-view-open">
     {% set ns = namespace(has_open=false) %}
-    {% for prog_name, pw in prog_list %}{% if (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.open|length) > 0 %}{% set ns.has_open = true %}{% endif %}{% endfor %}
+    {% for prog_name, pw in prog_list %}{% if (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.stalled|length)+(pw.open|length) > 0 %}{% set ns.has_open = true %}{% endif %}{% endfor %}
     {% if ns.has_open %}
     <table class="w-full text-xs text-left">
       <thead>
@@ -288,7 +355,7 @@
       <tbody class="divide-y divide-slate-800/20">
         {% for prog_name, pw in prog_list %}
         {% set prog = programs[prog_name] if prog_name in programs else {"total": 0, "done": 0, "pct": 0} %}
-        {% set open_count = (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.open|length) %}
+        {% set open_count = (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.stalled|length)+(pw.open|length) %}
         {% set active_count = (pw.in_progress|length)+(pw.review|length) %}
         {% set blocked_count = pw.blocked|length %}
         {% if open_count > 0 %}
@@ -334,7 +401,7 @@
   {# ── Closed programs table ── #}
   <div id="prog-view-closed" class="hidden">
     {% set ns2 = namespace(has_closed=false) %}
-    {% for prog_name, pw in prog_list %}{% set oc2 = (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.open|length) %}{% if oc2 == 0 and (pw.done|length)+(pw.deferred|length) > 0 %}{% set ns2.has_closed = true %}{% endif %}{% endfor %}
+    {% for prog_name, pw in prog_list %}{% set oc2 = (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.stalled|length)+(pw.open|length) %}{% if oc2 == 0 and (pw.done|length)+(pw.deferred|length) > 0 %}{% set ns2.has_closed = true %}{% endif %}{% endfor %}
     {% if ns2.has_closed %}
     <table class="w-full text-xs text-left">
       <thead>
@@ -349,7 +416,7 @@
       <tbody class="divide-y divide-slate-800/20">
         {% for prog_name, pw in prog_list %}
         {% set prog = programs[prog_name] if prog_name in programs else {"total": 0, "done": 0, "pct": 0} %}
-        {% set oc3 = (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.open|length) %}
+        {% set oc3 = (pw.blocked|length)+(pw.in_progress|length)+(pw.review|length)+(pw.stalled|length)+(pw.open|length) %}
         {% if oc3 == 0 and (pw.done|length)+(pw.deferred|length) > 0 %}
         <tr data-closed-prog="{{ prog_name }}"
           class="cursor-pointer hover:bg-slate-800/30 transition-colors group opacity-65">
@@ -418,7 +485,7 @@ const _PROG = {
     pct: {{ prog.pct }},
     total: {{ prog.total }},
     done_count: {{ prog.done }},
-    open: [{% for s in (pw.blocked + pw.in_progress + pw.review + pw.open) %}{n:{{ s.number }},t:{{ s.title | tojson }},s:{{ s.board_column | tojson }},p:{{ s.priority | tojson }},pc:{{ s.priority_class | tojson }},e:{{ (s.effort | string if s.effort else "—") | tojson }}}{% if not loop.last %},{% endif %}{% endfor %}],
+    open: [{% for s in (pw.blocked + pw.in_progress + pw.review + pw.stalled + pw.open) %}{n:{{ s.number }},t:{{ s.title | tojson }},s:{{ s.board_column | tojson }},p:{{ s.priority | tojson }},pc:{{ s.priority_class | tojson }},e:{{ (s.effort | string if s.effort else "—") | tojson }}}{% if not loop.last %},{% endif %}{% endfor %}],
     closed: [{% for s in (pw.done + pw.deferred) %}{n:{{ s.number }},t:{{ s.title | tojson }},s:{{ s.board_column | tojson }},p:{{ s.priority | tojson }},pc:{{ s.priority_class | tojson }},e:{{ (s.effort | string if s.effort else "—") | tojson }}}{% if not loop.last %},{% endif %}{% endfor %}]
   }{% if not loop.last %},{% endif %}
   {% endfor %}
@@ -497,7 +564,7 @@ document.addEventListener('click', e => {
 <div class="glass-panel overflow-hidden">
   <div class="px-5 py-3 bg-slate-900/40 border-b border-slate-800/80">
     <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">
-      All Open Work Orders ({{ (columns.open | length) + (columns.in_progress | length) + (columns.review | length) + (columns.blocked | length) }})
+      All Open Work Orders ({{ (columns.open | length) + (columns.in_progress | length) + (columns.review | length) + (columns.stalled | length) + (columns.blocked | length) }})
     </span>
   </div>
   <div class="overflow-x-auto max-h-[360px] overflow-y-auto">
@@ -512,7 +579,7 @@ document.addEventListener('click', e => {
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-800/30">
-        {% for spec in (columns.blocked + columns.in_progress + columns.review + columns.open) %}
+        {% for spec in (columns.blocked + columns.in_progress + columns.review + columns.stalled + columns.open) %}
         <tr class="hover:bg-slate-900/20 transition-colors">
           <td class="px-5 py-3">
             <div class="flex items-center gap-1.5">
@@ -525,6 +592,10 @@ document.addEventListener('click', e => {
               <span class="text-xs px-1.5 py-0.5 rounded bg-indigo-900/50 text-indigo-300 font-mono border border-indigo-800/40">{{ _rn }}</span>
               {% endif %}
               {% endif %}
+              {% if spec.spec_missing %}
+              <span title="Reconstructed from an open PR, branch or dispatch entry — no spec file on the default branch"
+                    class="text-xs px-1.5 py-0.5 rounded bg-slate-800/70 text-slate-400 font-mono border border-slate-700/60">no spec</span>
+              {% endif %}
             </div>
           </td>
           <td class="px-5 py-3 text-slate-200 font-medium">{{ spec.title }}</td>
@@ -536,6 +607,7 @@ document.addEventListener('click', e => {
               {% if spec.board_column == 'blocked' %}text-rose-400 text-glow-red
               {% elif spec.board_column == 'in_progress' %}text-indigo-400 text-glow-blue
               {% elif spec.board_column == 'review' %}text-amber-400 text-glow-amber
+              {% elif spec.board_column == 'stalled' %}text-amber-500
               {% else %}text-slate-400{% endif %}">
               {{ spec.status | truncate(30) }}
             </span>

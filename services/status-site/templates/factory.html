@@ -45,9 +45,27 @@
     <span class="text-xs font-mono text-rose-400">Runner offline</span>
     {% endif %}
     <span class="text-slate-700 text-xs">|</span>
-    <span class="text-xs font-mono text-slate-400" title="Overview's 'Running Now' only counts running/claimed — this total also includes awaiting-review and needs-attention WOs">
-      <span id="sb-active-count">{{ active_wos | length }}</span> WOs active
-      {% if active_breakdown %}({{ active_breakdown.in_progress }} running, {{ active_breakdown.awaiting_review }} awaiting review{% if active_breakdown.needs_attention %}, {{ active_breakdown.needs_attention }} needs attention{% endif %}){% endif %}
+    {# Lead with running — the same number the Overview and PM View show — and
+       name the wider total for what it is. Printing "5 WOs active" next to the
+       Overview's "3 running" is what made the factory look broken when both
+       numbers were correct answers to different questions.
+
+       Each bucket below is named after the board column it feeds, rather than
+       a separate vocabulary for this page: two labels for one set is how the
+       pages diverged in the first place. #}
+    <span class="text-xs font-mono text-slate-400"
+          title="Running = dispatch status claimed or in_progress, the same definition every page uses">
+      <span id="sb-running-count" class="text-indigo-400 font-semibold">{{ active_breakdown.in_progress }}</span> running
+      <span class="text-slate-600">·</span>
+      {{ active_breakdown.awaiting_review }} in review
+      <span class="text-slate-600">·</span>
+      <span title="Retry-queued or stale claims. The PM board's Stalled column also counts work orders with a pushed branch and no dispatch entry at all, so it can be higher than this.">{{ active_breakdown.stalled }} stalled</span>
+      {% if active_breakdown.rejected %}
+      <span class="text-slate-600">·</span>
+      <span class="text-rose-400">{{ active_breakdown.rejected }} rejected</span>
+      {% endif %}
+      <span class="text-slate-600">·</span>
+      <span id="sb-active-count">{{ active_wos | length }}</span> tracked by dispatch
     </span>
     <span class="text-slate-700 text-xs">|</span>
     <span class="text-xs font-mono text-slate-500">{{ active_backend_names | join(', ') if active_backend_names else '—' }}</span>
@@ -103,10 +121,15 @@
     <div class="lg:col-span-1 flex flex-col gap-3">
       <div class="glass-panel overflow-hidden flex-1">
         <div class="px-4 py-3 bg-slate-900/40 border-b border-slate-800/40 flex items-center justify-between">
-          <span class="text-xs font-mono text-slate-400 uppercase tracking-widest">Active Jobs</span>
+          <span class="text-xs font-mono text-slate-400 uppercase tracking-widest">Dispatch Queue</span>
           <div class="flex items-center gap-2">
-            <span id="active-wo-count" class="text-xs font-mono text-slate-600"
-              title="{% if active_breakdown %}{{ active_breakdown.in_progress }} running, {{ active_breakdown.awaiting_review }} awaiting review{% if active_breakdown.needs_attention %}, {{ active_breakdown.needs_attention }} needs attention{% endif %}{% endif %}">{{ active_wos | length }}</span>
+            {# Every open dispatch entry, not a running count — the status
+               badge on each row says which is which. #}
+            <span class="text-xs font-mono text-slate-600"
+              title="Work orders the orchestrator still has open, in every state except complete">
+              <span id="job-running-count" class="text-indigo-400">{{ active_breakdown.in_progress }}</span> running /
+              <span id="active-wo-count">{{ active_wos | length }}</span> tracked
+            </span>
             <button id="pause-btn" onclick="togglePause()" title="Pause/resume factory"
               class="text-xs font-mono px-2 py-0.5 rounded border transition-all
                 bg-slate-800/60 text-slate-400 border-slate-700/50 hover:text-amber-300 hover:border-amber-500/40">
@@ -243,6 +266,22 @@
   window.clearFeed = () => { feed.innerHTML = ''; lineCount = 0; lineCountEl.textContent = '0 lines'; };
 
   /* ── Active WO polling ─────────────────────────────────────────── */
+
+  // "Running" is defined once, on the server. This page must not recount the
+  // dispatch payload it already has in hand — doing exactly that on the
+  // Overview is how three pages ended up with three answers.
+  async function refreshRunningCount() {
+    try {
+      const r = await fetch('/api/factory/counts');
+      if (!r.ok) return;
+      const counts = await r.json();
+      ['job-running-count', 'sb-running-count'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = counts.in_progress;
+      });
+    } catch(_) {}
+  }
+
   async function refreshDispatch() {
     try {
       const r = await fetch('/api/factory/dispatch');
@@ -254,6 +293,7 @@
       document.getElementById('active-wo-count').textContent = activeWos.length;
       const sbCount = document.getElementById('sb-active-count');
       if (sbCount) sbCount.textContent = activeWos.length;
+      refreshRunningCount();
       const woSel = document.getElementById('wo-filter');
       if (woSel) {
         const cur = woSel.value;
