@@ -329,7 +329,13 @@ Every PR runs these jobs. All must pass before merge:
 | test | Unit test suite |
 | build | Build/compile check |
 | migration-check | Schema migration registry is consistent |
-| ai-review | Claude code review — advisory only, never blocks merge; posts comment for awareness |
+| ai-review | Claude code review — fails the job on a "Review required" verdict, and on any run that produced no verdict at all |
+
+> **The AI review job is red-or-green on its own, but it is not yet enforced.** The
+> repository ruleset's `required_status_checks` currently lists only `Unit Tests`, so a
+> red AI review does not by itself prevent a merge to `main`. Until `Claude Code Review`
+> is added to that list, treat its verdict as a signal a human must act on, not as a
+> gate that acts for you.
 
 After the AI review completes, the **Merge Advisor** (`merge-advisor.yml`) posts a synthesized recommendation comment on every P0/P1 PR. It is always the last comment before a human reviewer looks at the PR.
 
