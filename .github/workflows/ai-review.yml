@@ -89,9 +89,12 @@ jobs:
           # one listed source languages, so a PR touching only Dockerfiles,
           # Vault .hcl, JSON config or a .js file produced an empty diff, and
           # an empty diff skipped straight past the reviewer to a green check.
-          # Excluding known-inert files instead means new file types are
-          # reviewed by default and the empty case really does mean "nothing
-          # here to review".
+          # It also missed templates, workflows, Makefiles and shell scripts —
+          # on #195 the reviewer downgraded its own verdict because the
+          # Makefile the PR was about wasn't in the diff. Excluding known-inert
+          # files instead means every other file type is reviewed by default,
+          # and an empty diff really does mean "nothing here to review". Safe
+          # now that ai_review.py chunks large diffs.
           git diff origin/main...HEAD -- . \
             ':!**/node_modules/**' ':!**/vendor/**' ':!**/dist/**' \
             ':!**/*.min.*' ':!**/package-lock.json' ':!**/*.lock' \
