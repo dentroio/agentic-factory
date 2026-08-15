@@ -1,4 +1,4 @@
-# Agents — {{PROJECT_NAME}}
+# Agents — Dentro AI Factory
 
 This file is the entry point for OpenAI Codex and other agents that read `AGENTS.md`.
 

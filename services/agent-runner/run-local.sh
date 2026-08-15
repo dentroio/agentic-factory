@@ -133,6 +133,13 @@ fi
 [ -n "$_PLIST_PREFERRED_AGENT" ] && export PREFERRED_AGENT="$_PLIST_PREFERRED_AGENT"
 [ -n "$_PLIST_AGENT_NAME" ]      && export AGENT_NAME="$_PLIST_AGENT_NAME"
 
+if [ -z "${API_SECRET:-}" ]; then
+    echo "[factory-agent] ERROR: API_SECRET is not set (Keychain or .env)." >&2
+    echo "[factory-agent] The orchestrator refuses unauthenticated calls. Refusing to start." >&2
+    echo "[factory-agent] Run 'make agent-setup' or add API_SECRET to .env. Do not start the daemon until this is fixed." >&2
+    exit 1
+fi
+
 # ── Local overrides (Docker internal paths don't work on the host) ────────────
 export ORCHESTRATOR_URL="${ORCHESTRATOR_URL:-http://localhost:8100}"
 export WORKTREE_BASE="${WORKTREE_BASE:-$HOME/workspace/factory-worktrees}"

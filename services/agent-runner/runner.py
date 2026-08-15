@@ -52,6 +52,7 @@ _BACKEND_EXPLICITLY_SET = _os.getenv("PREFERRED_AGENT") is not None
 import httpx as _httpx
 from github_client import fetch_wo_markdown
 from orchestrator_client import (
+    ClaimLost,
     checkin,
     claim,
     complete,
@@ -212,7 +213,11 @@ async def _checkin_loop(wo_id: str, interval: int = 90, label: str = "working") 
     """
     while True:
         await asyncio.sleep(interval)
-        await checkin(wo_id, label)
+        try:
+            await checkin(wo_id, label)
+        except ClaimLost:
+            print(f"[runner] {wo_id} lost claim lease during heartbeat — stopping checkins")
+            return
 
 
 async def _handle_qa(wo_id: str, question: str, monitor: ThreadMonitor, backend) -> None:
@@ -871,6 +876,8 @@ async def main(once: bool = False) -> None:
             wo_id = f"WO-{wo_number}" if not str(wo_number).startswith("WO-") else str(wo_number)
             try:
                 await run_wo(next_wo, preferred_agent=run_backend)
+            except ClaimLost:
+                _log(f"{wo_id} lost claim lease — not releasing (another agent holds it)")
             except Exception as e:
                 # A crash here (e.g. missing CLI, bad auth) must not take down the whole
                 # process — launchd's KeepAlive would just relaunch it straight into

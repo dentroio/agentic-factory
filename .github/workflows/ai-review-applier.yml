@@ -140,6 +140,15 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Checkout trusted scripts from default branch
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: scripts
+          path: trusted-scripts
+          persist-credentials: false
+
       - name: Get PR diff for context
         if: steps.check.outputs.skip != 'true'
         id: diff
@@ -163,15 +172,17 @@ jobs:
       - name: Call Claude to apply suggestions
         id: apply
         if: steps.check.outputs.skip != 'true'
-        run: |
-          python3 scripts/ai_review_apply.py \
-            --diff /tmp/pr_diff.txt \
-            --suggestions "${{ steps.check.outputs.suggestions }}" \
-            --review "${{ steps.check.outputs.review_body }}" \
-            --output-file /tmp/apply_result.json
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          SUGGESTIONS: ${{ steps.check.outputs.suggestions }}
+          REVIEW_BODY: ${{ steps.check.outputs.review_body }}
+        run: |
+          python3 trusted-scripts/scripts/ai_review_apply.py \
+            --diff /tmp/pr_diff.txt \
+            --suggestions "$SUGGESTIONS" \
+            --review "$REVIEW_BODY" \
+            --output-file /tmp/apply_result.json
 
       - name: Check if edits were applied
         id: write_files
