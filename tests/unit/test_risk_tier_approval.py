@@ -97,45 +97,18 @@ def test_main_passes_for_non_wo_branch(monkeypatch):
     assert m.main() == 0
 
 
-def test_has_approval_label_matches_exact_name(monkeypatch):
-    monkeypatch.setattr(
-        m,
-        "_api_get",
-        lambda url, token: [{"name": "bug"}, {"name": "risk-tier-approved"}],
-    )
-    assert m.has_approval_label("owner/repo", 1, "tok") is True
-    monkeypatch.setattr(m, "_api_get", lambda url, token: [{"name": "approved"}])
-    assert m.has_approval_label("owner/repo", 1, "tok") is False
-
-
 def test_main_fails_p0_without_approval(monkeypatch, tmp_path):
     wo_dir = tmp_path / "work_orders"
     wo_dir.mkdir()
     (wo_dir / "WO-500-critical.md").write_text("**Priority:** P0\n")
     monkeypatch.setattr(m, "WO_DIRS", [wo_dir])
     monkeypatch.setattr(m, "has_approval", lambda repo, num, token: False)
-    monkeypatch.setattr(m, "has_approval_label", lambda repo, num, token: False)
 
     monkeypatch.setenv("PR_HEAD_REF", "wo/500-critical")
     monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
     monkeypatch.setenv("PR_NUMBER", "1")
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
     assert m.main() == 1
-
-
-def test_main_passes_p0_with_approval_label(monkeypatch, tmp_path):
-    wo_dir = tmp_path / "work_orders"
-    wo_dir.mkdir()
-    (wo_dir / "WO-500-critical.md").write_text("**Priority:** P0\n")
-    monkeypatch.setattr(m, "WO_DIRS", [wo_dir])
-    monkeypatch.setattr(m, "has_approval", lambda repo, num, token: False)
-    monkeypatch.setattr(m, "has_approval_label", lambda repo, num, token: True)
-
-    monkeypatch.setenv("PR_HEAD_REF", "wo/500-critical")
-    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
-    monkeypatch.setenv("PR_NUMBER", "1")
-    monkeypatch.setenv("GITHUB_TOKEN", "tok")
-    assert m.main() == 0
 
 
 def test_main_passes_p0_with_approval(monkeypatch, tmp_path):
