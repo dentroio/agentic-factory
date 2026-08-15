@@ -13,7 +13,7 @@ Auto-refreshes every 60 seconds via HTML meta tag. No JavaScript required.
 
 ```bash
 # From the agentic-factory root
-GITHUB_TOKEN=ghp_your_token GITHUB_REPO=your-org/your-repo \
+GITHUB_TOKEN=github_pat_your_token GITHUB_REPO=your-org/your-repo \
   docker compose -f docker-compose.status.yml up --build
 
 # Open http://localhost:8099

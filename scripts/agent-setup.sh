@@ -30,12 +30,17 @@ _store_keychain() {
 
 # GitHub Token
 echo "── GitHub Token ─────────────────────────────────────────"
-echo "  Required. Format: ghp_... or github_pat_..."
-echo "  Scopes needed: repo, read:org"
+echo "  Required. Fine-grained PAT only (github_pat_...)."
+echo "  Repos: only the product repo and this factory repo."
+echo "  Permissions: Contents, Pull requests, Issues, Actions (read/write)."
+echo "  No gist. Classic ghp_ and GitHub CLI gho_ tokens are rejected."
 printf "  Token: "
 read -rs GITHUB_TOKEN_VAL
 echo ""
-_store_keychain "GITHUB_TOKEN" "$GITHUB_TOKEN_VAL"
+if ! printf '%s' "$GITHUB_TOKEN_VAL" | python3 "$REPO_ROOT/scripts/github_token.py" --store; then
+    echo "ERROR: not storing GitHub token."
+    exit 1
+fi
 
 # GitHub Repo
 echo ""

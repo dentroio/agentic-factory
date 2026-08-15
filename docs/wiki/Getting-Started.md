@@ -73,7 +73,7 @@ make agent-setup
 ```
 
 The script prompts for:
-- **GitHub token** — format `ghp_...` or `github_pat_...`, needs `repo` and `read:org` scopes
+- **GitHub token** — fine-grained PAT (`github_pat_...`) limited to the product repo and this factory repo. Contents, Pull requests, Issues, and Actions (read/write). No `gist`. Classic `ghp_` and GitHub CLI `gho_` tokens are rejected.
 - **GitHub repo** — `owner/repo` that the factory monitors (your product repo, or this repo itself)
 - **Cursor API key** — only needed if `PREFERRED_AGENT=cursor`; press Enter to skip
 - **ntfy push topic** — auto-generated; subscribe to it in the ntfy app for phone notifications
