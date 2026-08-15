@@ -11,8 +11,9 @@ Categories:
 Auth (OAuth2 — required for personal Gmail):
   Run once locally:
     python scripts/publish_to_gdrive.py --auth
-  Store the printed token as GitHub secret GDRIVE_REFRESH_TOKEN.
-  Also set GDRIVE_CLIENT_ID and GDRIVE_CLIENT_SECRET.
+  Secrets are written to ~/.config/factory-agent/gdrive-oauth.env (mode 0600).
+  Copy GDRIVE_REFRESH_TOKEN, GDRIVE_CLIENT_ID, and GDRIVE_CLIENT_SECRET
+  from that file into GitHub Actions secrets. Do not print them.
 
 Drive map:
   docs/google_drive_map.json — maps local file paths → Drive Doc IDs
@@ -59,6 +60,26 @@ FOLDER_ENV: dict[str, str] = {
     "architecture": "GDRIVE_FOLDER_ARCHITECTURE",
     "executive": "GDRIVE_FOLDER_EXECUTIVE",
 }
+
+GDRIVE_OAUTH_ENV_PATH = Path.home() / ".config" / "factory-agent" / "gdrive-oauth.env"
+
+
+def write_gdrive_oauth_env(
+    refresh_token: str,
+    client_id: str,
+    client_secret: str,
+    dest: Path | None = None,
+) -> Path:
+    """Write OAuth secrets to a 0600 env file. Never print the values (AF-12)."""
+    dest = dest or GDRIVE_OAUTH_ENV_PATH
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(f"GDRIVE_REFRESH_TOKEN={refresh_token}\n")
+        handle.write(f"GDRIVE_CLIENT_ID={client_id}\n")
+        handle.write(f"GDRIVE_CLIENT_SECRET={client_secret}\n")
+    os.chmod(dest, 0o600)
+    return dest
 
 
 def category_for(path: Path) -> str | None:
@@ -172,13 +193,18 @@ def _run_auth_flow():
     flow = InstalledAppFlow.from_client_config(client_config, scopes=SCOPES)
     creds = flow.run_local_server(port=0)
 
+    dest = write_gdrive_oauth_env(
+        refresh_token=creds.refresh_token or "",
+        client_id=client_id,
+        client_secret=client_secret,
+    )
     print("\n" + "=" * 60)
     print("OAuth2 authorized successfully!")
-    print("\nAdd these as GitHub Actions secrets on dentroio/agentic-factory:\n")
-    print(f"  GDRIVE_REFRESH_TOKEN  =  {creds.refresh_token}")
-    print(f"  GDRIVE_CLIENT_ID      =  {client_id}")
-    print(f"  GDRIVE_CLIENT_SECRET  =  {client_secret}")
-    print("\nAlso add folder IDs:")
+    print("\nWrote GDRIVE_REFRESH_TOKEN / GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET")
+    print(f"to {dest} (mode 0600).")
+    print("Copy those values into GitHub Actions secrets from that file.")
+    print("Do not paste them into logs or chat.")
+    print("\nAlso add folder IDs as GitHub secrets:")
     print("  GDRIVE_FOLDER_ARCHITECTURE  =  <Drive folder ID for technical docs>")
     print("  GDRIVE_FOLDER_EXECUTIVE     =  <Drive folder ID for executive docs>")
     print("=" * 60 + "\n")

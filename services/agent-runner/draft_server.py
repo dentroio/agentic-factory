@@ -10,6 +10,7 @@ No extra dependencies — uses Python stdlib http.server only.
 import asyncio
 import json
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -80,56 +81,41 @@ _AGENT_META: dict[str, dict] = {
 }
 
 
+def _plist_dict(name: str, meta: dict) -> dict:
+    env = {
+        "PREFERRED_AGENT": str(meta["preferred_agent"]),
+        "AGENT_NAME": str(meta["agent_name"]),
+    }
+    for key, val in (meta.get("extra_env") or {}).items():
+        env[str(key)] = str(val)
+    return {
+        "Label": meta["label"],
+        "ProgramArguments": ["/bin/bash", _RUNNER_SCRIPT],
+        "EnvironmentVariables": env,
+        "WorkingDirectory": _RUNNER_DIR_PATH,
+        "KeepAlive": True,
+        "RunAtLoad": True,
+        "ThrottleInterval": 30,
+        "StandardOutPath": f"{_PLIST_LOG_DIR}/out-{meta['log_suffix']}.log",
+        "StandardErrorPath": f"{_PLIST_LOG_DIR}/err-{meta['log_suffix']}.log",
+        "ProcessType": "Background",
+    }
+
+
+def write_secure_plist(path: str, data: dict) -> None:
+    """Write a LaunchAgent plist mode 0600 with plistlib-escaped XML (AF-12)."""
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        plistlib.dump(data, handle, fmt=plistlib.FMT_XML)
+    os.chmod(path, 0o600)
+
+
 def _plist_content(name: str, meta: dict) -> str:
-    label = meta["label"]
-    log_suffix = meta["log_suffix"]
-    extra_keys = "".join(
-        f"\n        <key>{k}</key>\n        <string>{v}</string>"
-        for k, v in meta.get("extra_env", {}).items()
-    )
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{label}</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>/bin/bash</string>
-        <string>{_RUNNER_SCRIPT}</string>
-    </array>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PREFERRED_AGENT</key>
-        <string>{meta["preferred_agent"]}</string>
-        <key>AGENT_NAME</key>
-        <string>{meta["agent_name"]}</string>{extra_keys}
-    </dict>
-
-    <key>WorkingDirectory</key>
-    <string>{_RUNNER_DIR_PATH}</string>
-
-    <key>KeepAlive</key>
-    <true/>
-
-    <key>RunAtLoad</key>
-    <true/>
-
-    <key>ThrottleInterval</key>
-    <integer>30</integer>
-
-    <key>StandardOutPath</key>
-    <string>{_PLIST_LOG_DIR}/out-{log_suffix}.log</string>
-
-    <key>StandardErrorPath</key>
-    <string>{_PLIST_LOG_DIR}/err-{log_suffix}.log</string>
-
-    <key>ProcessType</key>
-    <string>Background</string>
-</dict>
-</plist>"""
+    """XML text of a new agent plist — kept for tests; prefer write_secure_plist."""
+    return plistlib.dumps(_plist_dict(name, meta), fmt=plistlib.FMT_XML).decode()
 
 _PROMPT_TEMPLATE = """\
 You are a software engineering planning agent. Convert this plain-English feature request \
@@ -398,7 +384,7 @@ class _DraftHandler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def _handle_agents_configure(self, name: str) -> None:
-        import plistlib, time
+        import time
         meta = _AGENT_META.get(name)
         if not meta:
             self._json(404, {"error": f"Unknown agent: {name}"})
@@ -420,8 +406,7 @@ class _DraftHandler(BaseHTTPRequestHandler):
         if not os.path.isfile(plist_path):
             try:
                 os.makedirs(_PLIST_LOG_DIR, exist_ok=True)
-                with open(plist_path, "w") as f:
-                    f.write(_plist_content(name, meta))
+                write_secure_plist(plist_path, _plist_dict(name, meta))
             except Exception as e:
                 self._json(500, {"error": f"Failed to create plist: {e}"})
                 return
@@ -440,8 +425,7 @@ class _DraftHandler(BaseHTTPRequestHandler):
                     else:
                         penv.pop("DOMAIN_FILTER", None)
                 pdata["EnvironmentVariables"] = penv
-                with open(plist_path, "wb") as f:
-                    plistlib.dump(pdata, f, fmt=plistlib.FMT_XML)
+                write_secure_plist(plist_path, pdata)
             except Exception as e:
                 self._json(500, {"error": f"Failed to update plist: {e}"})
                 return
@@ -504,8 +488,7 @@ class _DraftHandler(BaseHTTPRequestHandler):
         if not os.path.isfile(plist_path):
             try:
                 os.makedirs(_PLIST_LOG_DIR, exist_ok=True)
-                with open(plist_path, "w") as f:
-                    f.write(_plist_content(name, meta))
+                write_secure_plist(plist_path, _plist_dict(name, meta))
             except Exception as e:
                 self._json(500, {"error": f"Failed to create plist: {e}"})
                 return

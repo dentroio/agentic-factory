@@ -132,13 +132,7 @@ echo "Setup complete. Starting factory services..."
 echo ""
 
 cd "$REPO_ROOT"
-bash scripts/factory-env.sh > .env.runtime 2>/dev/null || true
-if [ -s .env.runtime ]; then
-    docker compose -f docker-compose.status.yml --env-file .env.runtime up -d
-else
-    docker compose -f docker-compose.status.yml up -d
-fi
-rm -f .env.runtime
+bash scripts/compose-with-env.sh up -d
 
 echo ""
 echo "════════════════════════════════════════════════════════"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Reads factory secrets from macOS Keychain and prints KEY=VALUE for docker compose --env-file
-# Usage: bash scripts/factory-env.sh > .env.runtime
-# Silent on errors — missing Keychain entry = empty string
+# Usage: bash scripts/compose-with-env.sh up -d
+# Do not redirect this script into the repo (.env.runtime) — AF-12.
 
 _kc() { security find-generic-password -s "dentroio-factory" -a "$1" -w 2>/dev/null || echo ""; }
 
