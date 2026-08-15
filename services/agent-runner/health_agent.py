@@ -705,10 +705,17 @@ async def main() -> None:
 
     while True:
         try:
-            await check_local_runners()
+            paused = False
+            pause_state = await _get("/api/factory/pause")
+            if isinstance(pause_state, dict):
+                paused = bool(pause_state.get("paused"))
+            if paused:
+                _log("factory paused — skipping runner revival and WO re-dispatch")
+            else:
+                await check_local_runners()
+                await check_stuck_wos()
+                await check_rejected_wos()
             await check_github_runner_disk()
-            await check_stuck_wos()
-            await check_rejected_wos()
             await check_stale_validations()
             await check_ci_lock()
             await check_backends()

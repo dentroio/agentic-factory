@@ -38,6 +38,7 @@ from wo_resolver import (
     extract_wo_from_branch,
     extract_wo_from_title,
 )
+import dispatch_control
 
 load_dotenv()
 
@@ -175,11 +176,7 @@ def _load_state() -> None:
             _held_wos = set(json.loads(HOLD_PATH.read_text()))
         except Exception:
             _held_wos = set()
-    if PAUSE_PATH.exists():
-        try:
-            _factory_paused = json.loads(PAUSE_PATH.read_text()).get("paused", False)
-        except Exception:
-            _factory_paused = False
+    _factory_paused = dispatch_control.load_pause(PAUSE_PATH)["paused"]
     if INTELLIGENCE_STATE_PATH.exists():
         try:
             _last_intelligence_run = json.loads(INTELLIGENCE_STATE_PATH.read_text())
@@ -381,6 +378,38 @@ def _save_validations() -> None:
 
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _lease_token(request: Request, body_token: str = "") -> str:
+    return (request.headers.get("X-Factory-Claim-Token") or body_token or "").strip()
+
+
+def _require_lease(wo_id: str, token: str) -> dict:
+    """AF-18: mutating calls for an in-flight WO must present the claim token."""
+    entry = _dispatch_state.get(wo_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"{wo_id} not claimed")
+    stored = entry.get("claim_token")
+    if not dispatch_control.lease_matches(stored, token):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{wo_id} claim lease mismatch — this agent no longer holds the claim",
+        )
+    return entry
+
+
+def _refuse_if_paused() -> None:
+    if _factory_paused:
+        raise HTTPException(
+            status_code=423,
+            detail="factory paused — drain mode active, no new claims",
+        )
+
+
+def _public_dispatch_entry(entry: dict) -> dict:
+    public = dict(entry)
+    public.pop("claim_token", None)
+    return public
 
 
 # ── Pre-flight environment validation ────────────────────────────────────────
@@ -1000,6 +1029,7 @@ class CompleteRequest(BaseModel):
     agent: str = ""
     pr_url: str = ""
     pr_number: int | None = None
+    claim_token: str = ""
 
 
 class ValidateRequest(BaseModel):
@@ -1013,6 +1043,7 @@ class ValidateRequest(BaseModel):
     thread_summary: str = ""
     pr_url: str = ""        # GitHub PR URL — must be non-empty before validation is accepted
     pr_number: int | None = None
+    claim_token: str = ""
 
 
 class CodexDispatchRequest(BaseModel):
@@ -1449,6 +1480,7 @@ async def get_next(domain: str = ""):
 async def pm_dispatch_wo(wo: str, backend: str = "claude"):
     """Store a PM-requested direct dispatch — picked up by the runner on next /api/next poll."""
     global _pm_dispatch
+    _refuse_if_paused()
     wo_id = wo.upper() if wo.upper().startswith("WO-") else f"WO-{wo}"
     _pm_dispatch = {"wo": wo_id, "backend": backend}
     print(f"[orchestrator] PM dispatch queued: {wo_id} → {backend}")
@@ -1496,7 +1528,7 @@ async def pause_factory():
     """Stop claiming new WOs — in-flight agents finish their current WO then idle."""
     global _factory_paused
     _factory_paused = True
-    PAUSE_PATH.write_text(json.dumps({"paused": True}))
+    dispatch_control.save_pause(PAUSE_PATH, True, "operator pause")
     return {"paused": True, "message": "Factory draining — no new WOs will be claimed"}
 
 
@@ -1505,8 +1537,7 @@ async def resume_factory():
     """Allow the runner to claim new WOs again."""
     global _factory_paused
     _factory_paused = False
-    if PAUSE_PATH.exists():
-        PAUSE_PATH.unlink()
+    dispatch_control.save_pause(PAUSE_PATH, False)
     return {"paused": False, "message": "Factory resumed"}
 
 
@@ -1618,6 +1649,7 @@ async def list_reserved_wos(repo: str = GITHUB_REPO):
 @app.post("/api/claim")
 async def claim_wo(req: ClaimRequest):
     """Atomically claim a WO. Returns 409 if already claimed by another agent."""
+    _refuse_if_paused()
     # Normalize WO ID: uppercase, ensure single "WO-" prefix
     wo_id = req.wo.strip()
     wo_upper = wo_id.upper()
@@ -1766,6 +1798,7 @@ async def claim_wo(req: ClaimRequest):
         del _reserved[GITHUB_REPO][wo_num]
         _save_reserved()
 
+    claim_token = dispatch_control.issue_claim_token()
     _dispatch_state[wo_id] = {
         "wo": wo_id,
         "slug": req.slug,
@@ -1778,6 +1811,7 @@ async def claim_wo(req: ClaimRequest):
         "pr_url": "",
         "attempt_count": attempt_count,
         "first_claimed_at": prev.get("first_claimed_at", _utcnow()),
+        "claim_token": claim_token,
     }
     _save_dispatch()
     _db_append_step(wo_id, "claimed", agent=req.agent)
@@ -1785,18 +1819,22 @@ async def claim_wo(req: ClaimRequest):
         f"{wo_id} claimed by **{req.agent}** on `{req.workstation or 'unknown'}`"
     ))
     print(f"[orchestrator] {wo_id} claimed by {req.agent} on {req.workstation}")
-    return {"ok": True, "wo": wo_id, "agent": req.agent}
+    return {"ok": True, "wo": wo_id, "agent": req.agent, "claim_token": claim_token}
 
 
 @app.post("/api/checkin")
-async def checkin(wo: str, agent: str, step: str = ""):
+async def checkin(request: Request, wo: str, agent: str, step: str = ""):
     """Agent heartbeat — update step label while working."""
-    if wo not in _dispatch_state:
-        raise HTTPException(status_code=404, detail=f"{wo} not claimed")
-    _dispatch_state[wo]["status"] = "in_progress"
-    _dispatch_state[wo]["step"] = step
-    _dispatch_state[wo]["last_seen"] = _utcnow()
-    _dispatch_state[wo].pop("stuck", None)
+    entry = _require_lease(wo, _lease_token(request))
+    if agent and entry.get("agent") and agent != entry.get("agent"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{wo} claimed by {entry.get('agent')}, not {agent}",
+        )
+    entry["status"] = "in_progress"
+    entry["step"] = step
+    entry["last_seen"] = _utcnow()
+    entry.pop("stuck", None)
     _save_dispatch()
     return {"ok": True}
 
@@ -1862,26 +1900,26 @@ async def hold_via_approval(wo_id: str):
 
 
 @app.post("/api/wos/{wo_id}/heartbeat")
-async def wo_heartbeat(wo_id: str):
+async def wo_heartbeat(request: Request, wo_id: str):
     """Lightweight heartbeat — agent signals it is still active without changing step."""
     wo_id = wo_id.upper()
     if not wo_id.startswith("WO-"):
         wo_id = f"WO-{wo_id}"
-    if wo_id not in _dispatch_state:
-        raise HTTPException(status_code=404, detail=f"{wo_id} not in dispatch state")
-    _dispatch_state[wo_id]["last_seen"] = _utcnow()
-    _dispatch_state[wo_id].pop("stuck", None)
+    entry = _require_lease(wo_id, _lease_token(request))
+    entry["last_seen"] = _utcnow()
+    entry.pop("stuck", None)
     _save_dispatch()
-    return {"ok": True, "wo": wo_id, "last_seen": _dispatch_state[wo_id]["last_seen"]}
+    return {"ok": True, "wo": wo_id, "last_seen": entry["last_seen"]}
 
 
 @app.post("/api/validate")
-async def request_validation(req: ValidateRequest):
+async def request_validation(request: Request, req: ValidateRequest):
     """Agent signals it needs human sign-off before committing.
 
     Rejects with 422 if CI or security gate not met — the agent must fix
     the failures and call /api/validate again with passing results.
     """
+    _require_lease(req.wo, _lease_token(request, req.claim_token))
     gate_failures = []
     if not req.ci_passed:
         gate_failures.append("CI checks failed")
@@ -2135,11 +2173,10 @@ async def release_all_dispatch():
 
 
 @app.post("/api/complete")
-async def complete_wo(req: CompleteRequest):
+async def complete_wo(request: Request, req: CompleteRequest):
     """Agent signals WO is merged and done."""
     wo_id = req.wo
-    if wo_id not in _dispatch_state:
-        raise HTTPException(status_code=404, detail=f"{wo_id} not in dispatch state")
+    _require_lease(wo_id, _lease_token(request, req.claim_token))
     _dispatch_state[wo_id]["status"] = "complete"
     _dispatch_state[wo_id]["completed_at"] = _utcnow()
     _wo_ever_approved.discard(wo_id)
@@ -2447,8 +2484,8 @@ async def dispatch_codex(req: CodexDispatchRequest):
 
 @app.get("/api/dispatch")
 async def get_dispatch():
-    """Full dispatch state — which agent owns which WO."""
-    return _dispatch_state
+    """Full dispatch state — which agent owns which WO. Claim tokens are never returned."""
+    return {wo_id: _public_dispatch_entry(entry) for wo_id, entry in _dispatch_state.items()}
 
 
 @app.get("/api/runs/{wo_id}/history")
@@ -4987,7 +5024,7 @@ async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
         entry = _dispatch_state.get(wo_id)
         if not entry:
             return f"{wo_id} has no dispatch history — never claimed, or fully cleared."
-        result = {"dispatch": entry}
+        result = {"dispatch": _public_dispatch_entry(entry)}
         try:
             messages = thread_store.load_thread(wo_id)[-12:]
             result["recent_thread"] = [
@@ -5006,6 +5043,8 @@ async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
     # API path these tools are the primary, structured way to trigger an action
     # instead of the model emitting bracketed text the server then regexes out.
     if tool_name == "dispatch_wo":
+        if _factory_paused:
+            return "⚠️ Factory is paused — refusing dispatch. Resume from the dashboard before starting work."
         raw_wo = str(tool_input.get("wo", "")).strip()
         backend = str(tool_input.get("backend", "")).strip()
         wo_id = raw_wo if raw_wo.startswith("WO-") else f"WO-{raw_wo}"
@@ -5055,6 +5094,22 @@ async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
         pr_num = int(tool_input.get("pr_number"))
         try:
             async with httpx.AsyncClient(timeout=15) as _ac:
+                pr_resp = await _ac.get(
+                    f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}",
+                    headers=_headers(),
+                )
+                if pr_resp.status_code != 200:
+                    return f"⚠️ Cannot inspect PR #{pr_num} ({pr_resp.status_code}) — merge refused"
+                pr_data = pr_resp.json()
+                wo_num, _src = resolve_wo_for_pr_with_source(pr_data)
+                priority = None
+                if wo_num is not None:
+                    priority = _specs_cache.get(wo_num, {}).get("priority")
+                if not dispatch_control.merge_allowed_for_priority(priority):
+                    return (
+                        f"⚠️ Refused to merge PR #{pr_num} — risk tier is "
+                        f"{priority or 'unknown'} (P2/P3 only; P0/P1 and unknown require a human)."
+                    )
                 mr = await _ac.put(
                     f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/merge",
                     headers=_headers(), json={"merge_method": "squash"},
@@ -5116,20 +5171,10 @@ async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
                     return (f"✅ Triggered recreate on PR #{pr_num} — Dependabot will open a fresh PR against main" if resp.status_code in (200, 201)
                             else f"⚠️ Recreate on PR #{pr_num} failed ({resp.status_code})")
                 elif action == "approve-merge":
-                    ar = await _ac.post(
-                        f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/reviews",
-                        headers=_headers(),
-                        json={"event": "APPROVE", "body": "✅ Approved by factory PM."},
+                    return (
+                        f"⚠️ Refused approve-merge on PR #{pr_num} — "
+                        "merging from PM chat is limited to merge_pr on P2/P3 WO PRs."
                     )
-                    if ar.status_code in (200, 201):
-                        mr = await _ac.put(
-                            f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/merge",
-                            headers=_headers(), json={"merge_method": "squash"},
-                        )
-                        return (f"✅ Approved and merged PR #{pr_num}" if mr.status_code in (200, 201)
-                                else f"⚠️ PR #{pr_num} approved but merge failed ({mr.status_code}: {mr.text[:100]})")
-                    else:
-                        return f"⚠️ Approve on PR #{pr_num} failed ({ar.status_code})"
                 return f"Unknown dependabot action: {action}"
         except Exception as exc:
             return f"⚠️ Action {action} on PR #{pr_num} errored: {exc}"
@@ -5705,141 +5750,55 @@ async def pm_chat(req: PMChatRequest):
                         else f"⚠️ Recreate on PR #{pr_num} failed ({resp.status_code})"
                     )
                 elif action == "approve-merge":
-                    ar = await _ac.post(
-                        f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/reviews",
-                        headers=_headers(),
-                        json={"event": "APPROVE", "body": "✅ Approved by factory PM."},
+                    action_results.append(
+                        f"⚠️ Refused [DEPENDABOT:approve-merge:{pr_num}] — "
+                        "free-text tags cannot merge. Use merge_pr on a P2/P3 WO PR, or merge in GitHub."
                     )
-                    if ar.status_code in (200, 201):
-                        mr = await _ac.put(
-                            f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/merge",
-                            headers=_headers(), json={"merge_method": "squash"},
-                        )
-                        action_results.append(
-                            f"✅ Approved and merged PR #{pr_num}" if mr.status_code in (200, 201)
-                            else f"⚠️ PR #{pr_num} approved but merge failed ({mr.status_code}: {mr.text[:100]})"
-                        )
-                    else:
-                        action_results.append(f"⚠️ Approve on PR #{pr_num} failed ({ar.status_code})")
         except Exception as exc:
             action_results.append(f"⚠️ Action {action} on PR #{pr_num} errored: {exc}")
 
     if action_results:
         clean_text = clean_text + "\n\n" + "\n".join(action_results)
 
-    # Parse and execute WO PR merge tags, e.g. [PR:merge:308]
-    # Does NOT attempt a GitHub review (which would 422 as self-review); squash-merges directly.
+    # AF-15: free-text tags must not execute privileged actions. Strip them
+    # and tell the operator — the structured tools (risk-tier gated) remain.
     pr_merge_pattern = re.compile(r"\[PR:merge:(\d+)\]")
     pr_merge_results: list[str] = []
     for match in pr_merge_pattern.finditer(clean_text):
-        pr_num = int(match.group(1))
+        pr_num = match.group(1)
         clean_text = clean_text.replace(match.group(0), "").strip()
-        try:
-            async with httpx.AsyncClient(timeout=15) as _ac:
-                mr = await _ac.put(
-                    f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}/merge",
-                    headers=_headers(), json={"merge_method": "squash"},
-                )
-                if mr.status_code in (200, 201):
-                    pr_merge_results.append(f"✅ Merged PR #{pr_num} (squash)")
-                    # Auto-complete the owning WO dispatch entry
-                    try:
-                        async with httpx.AsyncClient(timeout=10) as _pc:
-                            pr_resp = await _pc.get(
-                                f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}",
-                                headers=_headers(),
-                            )
-                            if pr_resp.status_code == 200:
-                                pr_data = pr_resp.json()
-                                pr_html = pr_data.get("html_url", "")
-                                wo_num, wo_src = resolve_wo_for_pr_with_source(pr_data)
-                                if wo_num is not None and wo_src == "title":
-                                    print(f"[orchestrator] auto-complete WO-{wo_num} skipped — title-only match, needs branch corroboration (PR #{pr_num})")
-                                elif wo_num is not None and wo_src == "branch":
-                                    wo_match = f"WO-{wo_num}"
-                                    if _is_overridden(wo_match, "no-auto-complete"):
-                                        print(f"[orchestrator] auto-complete {wo_match} skipped — override tombstone active")
-                                    elif wo_match in _dispatch_state and _dispatch_state[wo_match].get("status") not in ("complete", "rejected"):
-                                        _dispatch_state[wo_match]["status"] = "complete"
-                                        _dispatch_state[wo_match]["completed_at"] = _utcnow()
-                                        _dispatch_state[wo_match]["step"] = f"PR #{pr_num} merged via PM · 🤖 reconciler"
-                                        _dispatch_state[wo_match]["pr_url"] = pr_html
-                                        _dispatch_state[wo_match]["pr_number"] = pr_num
-                                        _save_dispatch()
-                                        _db_append_step(wo_match, "complete", step=f"PR #{pr_num} merged via PM")
-                                        print(f"[orchestrator] auto-completed {wo_match} after PM merged PR #{pr_num}")
-                    except Exception as ex:
-                        print(f"[orchestrator] auto-complete after merge PR #{pr_num} failed: {ex}")
-                elif mr.status_code == 405:
-                    pr_merge_results.append(f"⚠️ PR #{pr_num} not mergeable yet — CI may still be running")
-                else:
-                    pr_merge_results.append(f"⚠️ Merge PR #{pr_num} failed ({mr.status_code}: {mr.text[:120]})")
-        except Exception as exc:
-            pr_merge_results.append(f"⚠️ Merge PR #{pr_num} errored: {exc}")
+        pr_merge_results.append(
+            f"⚠️ Refused [PR:merge:{pr_num}] from free text. "
+            "Merges require the merge_pr tool (P2/P3 only) or a human."
+        )
 
     if pr_merge_results:
         clean_text = clean_text + "\n\n" + "\n".join(pr_merge_results)
 
-    # Parse and execute DISPATCH action tags, e.g. [DISPATCH:WO-375:cursor]
     dispatch_pattern = re.compile(r"\[DISPATCH:(WO-\d+|\d+):([\w-]+)\]")
     dispatch_results: list[str] = []
     for match in dispatch_pattern.finditer(clean_text):
         raw_wo, backend = match.group(1), match.group(2)
         wo_id = raw_wo if raw_wo.startswith("WO-") else f"WO-{raw_wo}"
         clean_text = clean_text.replace(match.group(0), "").strip()
-        try:
-            async with httpx.AsyncClient(timeout=10) as _dc:
-                # Queue in orchestrator so /api/next returns it
-                await _dc.post(
-                    f"http://localhost:{API_PORT}/api/pm/dispatch",
-                    params={"wo": wo_id, "backend": backend},
-                )
-                # Try to wake the runner immediately so it doesn't wait for the next poll
-                runner_woke = False
-                try:
-                    await _dc.post(
-                        f"{AGENT_RUNNER_URL}/dispatch",
-                        json={"wo": wo_id, "backend": backend},
-                        timeout=3,
-                    )
-                    runner_woke = True
-                except Exception:
-                    pass
-                dispatch_results.append(
-                    f"✅ {wo_id} dispatched to {backend} — {'runner woke up' if runner_woke else 'runner picks it up on next poll'}"
-                )
-                # Persist to PM memory
-                from datetime import UTC, datetime
-                _pm_memory.setdefault("dispatched", []).append({
-                    "wo": wo_id, "backend": backend,
-                    "date": datetime.now(UTC).date().isoformat(),
-                })
-                _pm_memory["dispatched"] = _pm_memory["dispatched"][-50:]
-                _save_pm_memory()
-        except Exception as exc:
-            dispatch_results.append(f"⚠️ Dispatch of {wo_id} failed: {exc}")
+        dispatch_results.append(
+            f"⚠️ Refused [DISPATCH:{wo_id}:{backend}] from free text. "
+            "Dispatch requires the dispatch_wo tool after an explicit confirmation, and the factory must not be paused."
+        )
 
     if dispatch_results:
         clean_text = clean_text + "\n\n" + "\n".join(dispatch_results)
 
-    # Parse and execute RESET action tags, e.g. [RESET:WO-420]
     reset_pattern = re.compile(r"\[RESET:(WO-\d+|\d+)\]")
     reset_results: list[str] = []
     for match in reset_pattern.finditer(clean_text):
         raw_wo = match.group(1)
         wo_id = raw_wo if raw_wo.startswith("WO-") else f"WO-{raw_wo}"
         clean_text = clean_text.replace(match.group(0), "").strip()
-        try:
-            async with httpx.AsyncClient(timeout=10) as _rc:
-                resp = await _rc.post(f"http://localhost:{API_PORT}/api/dispatch/{wo_id}/reset")
-                if resp.status_code == 200:
-                    reset_results.append(f"✅ {wo_id} reset — attempt counter cleared, claimable again.")
-                elif resp.status_code == 409:
-                    reset_results.append(f"⚠️ {wo_id} not reset: {resp.json().get('detail', 'blocked')}")
-                else:
-                    reset_results.append(f"⚠️ Reset of {wo_id} failed ({resp.status_code}): {resp.text[:200]}")
-        except Exception as exc:
-            reset_results.append(f"⚠️ Reset of {wo_id} failed: {exc}")
+        reset_results.append(
+            f"⚠️ Refused [RESET:{wo_id}] from free text. "
+            "Reset the attempt counter from the dashboard or the reset_wo tool."
+        )
 
     if reset_results:
         clean_text = clean_text + "\n\n" + "\n".join(reset_results)

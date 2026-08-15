@@ -1,4 +1,4 @@
-# Claude Code — {{PROJECT_NAME}}
+# Claude Code — Dentro AI Factory
 
 ## First time here?
 

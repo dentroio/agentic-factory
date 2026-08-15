@@ -134,14 +134,14 @@ gh label create new-wo --color "#0075ca" --description "Triggers the planning ag
 ```bash
 gh api repos/OWNER/REPO/rulesets | python3 -c "import json,sys; rules=json.load(sys.stdin); [print(r['name']) for r in rules]"
 ```
-Look for a ruleset named `main-protection`.
+Look for a ruleset named `Protect main` or `main-protection`.
 **Fix:** Direct them to: **GitHub repo → Settings → Rules → Rulesets → New branch ruleset**
 
 Settings:
-- Name: `main-protection`
+- Name: `Protect main` (or `main-protection`)
 - Target: `main`
-- Required status checks (add each): `Claude Code Review`, `Lint`, `Unit Tests`, `Build`, `Secret Detection (Gitleaks)`
-- These names must exactly match the `name:` fields in `ci.yml` and `ai-review.yml`
+- Required status checks (add each): `Claude Code Review`, `Risk Tier Approval Gate`, `Unit Tests`
+- These names must exactly match the job `name:` fields in `ci.yml`, `ai-review.yml`, and `risk-tier-approval.yml`
 
 Alternatively, create it via API (use `gh api -X POST repos/OWNER/REPO/rulesets` with the correct payload).
 

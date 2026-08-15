@@ -9,15 +9,16 @@
 # APPROVED review when that tier is P0 or P1. P2/P3 pass immediately, same
 # as branches with no associated WO spec at all (hotfixes, dependency bumps).
 #
-# Re-runs on every review submission, not just pushes, so approving a PR
-# flips this check green without needing a new commit.
+# Re-runs on every review submission and on label changes, so approving a PR
+# (or adding `risk-tier-approved`, which GitHub allows on your own PR) flips
+# this check green without needing a new commit.
 # =============================================================================
 
 name: Risk Tier Approval Gate
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     branches: [main]
   pull_request_review:
     types: [submitted, dismissed]
@@ -37,6 +38,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          # pull_request_review otherwise checks out the default branch, so a
+          # P0 spec that only exists on the PR would be "not found" and the
+          # gate would pass without checking for an approval.
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: actions/setup-python@v5
         with:

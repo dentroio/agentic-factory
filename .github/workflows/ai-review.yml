@@ -77,6 +77,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout trusted scripts from default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: scripts
+          path: trusted-scripts
+          persist-credentials: false
+
       - name: Collect the PR's cumulative diff
         id: diff
         run: |
@@ -128,7 +136,7 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           pip install anthropic --quiet
-          python3 scripts/ai_review.py \
+          python3 trusted-scripts/scripts/ai_review.py \
             --diff /tmp/pr_diff.txt \
             --output /tmp/review.md
 

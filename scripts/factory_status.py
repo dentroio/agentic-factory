@@ -148,10 +148,39 @@ def check_ruleset() -> bool:
     try:
         rulesets = json.loads(out)
         names = [r.get("name", "") for r in rulesets]
-        has_ruleset = "main-protection" in names
-        return check("main-protection ruleset", has_ruleset,
-                     detail="" if has_ruleset else
-                     "not found — create in Settings → Rules → Rulesets")
+        has_ruleset = any(n in ("main-protection", "Protect main") for n in names)
+        ok = check("main-protection ruleset", has_ruleset,
+                   detail="" if has_ruleset else
+                   "not found — create in Settings → Rules → Rulesets")
+        if not ok:
+            return False
+        matching = next(
+            (r for r in rulesets if r.get("name") in ("main-protection", "Protect main")),
+            None,
+        )
+        repo = get_repo()
+        if not matching or not matching.get("id") or not repo:
+            return ok
+        code2, out2 = run(f"gh api repos/{repo}/rulesets/{matching['id']} 2>/dev/null")
+        if code2 != 0:
+            check("required status checks", False, warn=True, detail="could not read ruleset details")
+            return True
+        detail = json.loads(out2)
+        contexts: list[str] = []
+        for rule in detail.get("rules") or []:
+            if rule.get("type") != "required_status_checks":
+                continue
+            for item in (rule.get("parameters") or {}).get("required_status_checks") or []:
+                ctx = item.get("context")
+                if ctx:
+                    contexts.append(ctx)
+        required = ["Unit Tests", "Claude Code Review", "Risk Tier Approval Gate"]
+        missing = [c for c in required if c not in contexts]
+        return check(
+            "required status checks",
+            not missing,
+            detail="" if not missing else "missing: " + ", ".join(missing),
+        )
     except json.JSONDecodeError:
         check("main-protection ruleset", False, warn=True, detail="could not parse API response")
         return True

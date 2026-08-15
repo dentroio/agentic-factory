@@ -6,6 +6,19 @@ import httpx
 from config import ORCHESTRATOR_URL, AGENT_NAME, HOSTNAME, API_SECRET
 
 _AUTH = {"Authorization": f"Bearer {API_SECRET}"} if API_SECRET else {}
+_claim_tokens: dict[str, str] = {}
+
+
+class ClaimLost(Exception):
+    """The orchestrator rejected our claim lease (409). Stop touching this WO."""
+
+
+def _lease_headers(wo_id: str = "") -> dict:
+    headers = dict(_AUTH)
+    token = _claim_tokens.get(wo_id, "")
+    if token:
+        headers["X-Factory-Claim-Token"] = token
+    return headers
 
 
 def _utcnow() -> str:
@@ -35,6 +48,9 @@ async def claim(wo_id: str, slug: str = "", backend: str = "") -> bool:
                 "workstation": HOSTNAME,
                 "slug": slug,
             })
+            if resp.status_code == 423:
+                print(f"[runner] {wo_id} claim refused — factory paused")
+                return False
             if resp.status_code == 429:
                 # Distinct from a routine 409 (someone else has it) — this WO is
                 # permanently blocked until a human resets it. Say so plainly instead
@@ -44,7 +60,15 @@ async def claim(wo_id: str, slug: str = "", backend: str = "") -> bool:
                 except Exception:
                     detail = ""
                 print(f"[runner] {wo_id} claim blocked — {detail or 'exceeded max retry attempts, needs manual reset'}")
-            return resp.status_code == 200
+            if resp.status_code == 200:
+                try:
+                    token = resp.json().get("claim_token") or ""
+                except Exception:
+                    token = ""
+                if token:
+                    _claim_tokens[wo_id] = token
+                return True
+            return False
     except Exception as e:
         print(f"[runner] claim {wo_id} failed: {e}")
         return False
@@ -53,10 +77,18 @@ async def claim(wo_id: str, slug: str = "", backend: str = "") -> bool:
 async def checkin(wo_id: str, step: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(f"{ORCHESTRATOR_URL}/api/checkin", headers=_AUTH,
-                              params={"wo": wo_id, "agent": AGENT_NAME, "step": step})
+            resp = await client.post(
+                f"{ORCHESTRATOR_URL}/api/checkin",
+                headers=_lease_headers(wo_id),
+                params={"wo": wo_id, "agent": AGENT_NAME, "step": step},
+            )
+            if resp.status_code == 409:
+                _claim_tokens.pop(wo_id, None)
+                raise ClaimLost(wo_id)
+    except ClaimLost:
+        raise
     except Exception:
-        pass  # non-blocking
+        pass  # non-blocking for transient errors
 
 
 async def request_validate(wo_id: str, verify_url: str = "", steps: list[str] | None = None,
@@ -65,7 +97,7 @@ async def request_validate(wo_id: str, verify_url: str = "", steps: list[str] | 
                            pr_number: int | None = None) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{ORCHESTRATOR_URL}/api/validate", headers=_AUTH, json={
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/validate", headers=_lease_headers(wo_id), json={
                 "wo": wo_id,
                 "agent": AGENT_NAME,
                 "workstation": HOSTNAME,
@@ -77,10 +109,15 @@ async def request_validate(wo_id: str, verify_url: str = "", steps: list[str] | 
                 "pr_url": pr_url,
                 "pr_number": pr_number,
             })
+            if resp.status_code == 409:
+                _claim_tokens.pop(wo_id, None)
+                raise ClaimLost(wo_id)
             if resp.status_code == 422:
                 print(f"[runner] validate rejected: {resp.json().get('detail')}")
                 return False
             return resp.status_code == 200
+    except ClaimLost:
+        raise
     except Exception as e:
         print(f"[runner] validate failed: {e}")
         return False
@@ -89,7 +126,7 @@ async def request_validate(wo_id: str, verify_url: str = "", steps: list[str] | 
 async def complete(wo_id: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(f"{ORCHESTRATOR_URL}/api/complete", headers=_AUTH,
+            await client.post(f"{ORCHESTRATOR_URL}/api/complete", headers=_lease_headers(wo_id),
                               json={"wo": wo_id, "agent": AGENT_NAME})
     except Exception as e:
         print(f"[runner] complete {wo_id} failed: {e}")
@@ -159,7 +196,8 @@ async def release_dispatch(wo_id: str) -> None:
     """Remove WO from dispatch state so capacity is freed and it can be re-claimed."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}/retry", headers=_AUTH)
+            await client.post(f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}/retry", headers=_lease_headers(wo_id))
+        _claim_tokens.pop(wo_id, None)
     except Exception as e:
         print(f"[runner] release_dispatch {wo_id} failed: {e}")
 
