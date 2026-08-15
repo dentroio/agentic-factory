@@ -112,7 +112,7 @@ The settings hub links to four sub-pages.
 
 Manage all credentials:
 
-- **GitHub token** — classic PAT with `repo` and `read:org` scopes. Required for everything.
+- **GitHub token** — fine-grained PAT (`github_pat_...`) on the selected repos only: Contents, Pull requests, Issues, Actions. No `gist`. Required for everything.
 - **Anthropic API key** — required for the `claude-api` draft backend and for GitHub Actions AI workflows.
 - **ntfy push notifications** — your auto-generated topic URL and server. Buttons to copy the subscribe URL, generate a new topic, and send a test notification.
 - **Slack webhook** — for Slack channel notifications. Set it here to enable Slack alongside ntfy.
