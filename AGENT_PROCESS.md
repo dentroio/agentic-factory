@@ -21,6 +21,8 @@ Every work order (WO) is assigned a risk tier that determines who can merge.
 
 **Hotfix track:** For urgent bug fixes that don't need a full WO spec, use a `fix/` branch. See §5.
 
+**P0/P1 approval on GitHub:** GitHub will not let the PR author click Approve. If you opened the PR yourself, add the `risk-tier-approved` label instead — the Risk Tier Approval Gate treats that as the human approval. A second reviewer's Approve still works when one exists.
+
 ---
 
 ## §2 Work Order Execution Flow
