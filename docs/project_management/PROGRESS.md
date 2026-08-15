@@ -19,7 +19,8 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
-| WO-1055 | Treat WO markdown as untrusted prompt data | P1 | 🟡 In Progress | — |
+| WO-1056 | Do not write factory secrets to disk or logs | P1 | 🟡 In Progress | — |
+| WO-1055 | Treat WO markdown as untrusted prompt data | P1 | ✅ Complete | 2026-08-15 |
 | WO-1054 | Factory audit closeout (no autonomous development) | P0 | ✅ Complete | 2026-08-15 |
 | WO-1014 | Plan Authoring UI — Create WOs/Phases/Milestones | P2 | ✅ Complete | 2026-07-04 |
 | WO-1013 | Multi-Agent Peer Review Chain | P2 | ✅ Complete | 2026-07-04 |

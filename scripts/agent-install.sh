@@ -80,6 +80,7 @@ sed \
     -e "s|LOG_PATH|$LOG_DIR|g" \
     "$SCRIPT_DIR/com.dentroio.factory-agent.plist" \
     > "$PLIST_DEST"
+chmod 600 "$PLIST_DEST"
 
 echo "Plist written to $PLIST_DEST"
 
@@ -114,6 +115,7 @@ for domain_label in "${!DOMAIN_RUNNERS[@]}"; do
             -e "s|</dict>|    <key>EnvironmentVariables</key>\n    <dict>\n        <key>DOMAIN_FILTER</key>\n        <string>${domain_filter}</string>\n    </dict>\n\n</dict>|" \
             "$SCRIPT_DIR/com.dentroio.factory-agent.plist" \
         > "$domain_plist"
+        chmod 600 "$domain_plist"
         echo "Domain plist written: $domain_plist"
     fi
 done

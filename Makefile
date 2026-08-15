@@ -50,13 +50,7 @@ ci-local:  ## Full PR gate locally — run this before every PR
 # ── Docker Compose (dashboard + orchestrator + watchdog) ─────────────────────
 
 up:  ## Start factory services (reads secrets from macOS Keychain if available)
-	@bash scripts/factory-env.sh > .env.runtime 2>/dev/null || true
-	@if [ -s .env.runtime ]; then \
-		docker compose -f docker-compose.status.yml --env-file .env.runtime up -d; \
-	else \
-		docker compose -f docker-compose.status.yml up -d; \
-	fi
-	@rm -f .env.runtime
+	@bash scripts/compose-with-env.sh up -d
 	@echo "Dashboard: http://localhost:8099   Orchestrator: http://localhost:8100 (localhost only)"
 
 vault-export-keys:  ## Save Vault unseal key + root token from Docker volume to macOS Keychain
@@ -78,7 +72,7 @@ logs:  ## Tail logs for all factory services
 
 restart:  ## Rebuild and restart all factory services
 	docker compose -f docker-compose.status.yml build
-	docker compose -f docker-compose.status.yml up -d --force-recreate
+	@bash scripts/compose-with-env.sh up -d --force-recreate
 
 pin-base-images:  ## Pre-pull Docker base images used by Clarion builds (run daily to avoid DeadlineExceeded)
 	docker pull node:20-alpine
