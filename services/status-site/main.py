@@ -404,6 +404,23 @@ async def _load_open_prs() -> list[dict]:
     return sorted(results, key=lambda x: x["created_at"])
 
 
+async def _load_dispatch() -> dict:
+    """Orchestrator's live dispatch table — which WOs an agent currently holds.
+
+    Module-level so every page that needs live WO status (the Overview board,
+    a single WO's detail page) reads the same call instead of each route
+    growing its own copy that quietly drifts from the others.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_orch_headers())
+            if r.status_code == 200:
+                return r.json()
+    except Exception:
+        pass
+    return {}
+
+
 async def _load_ci_health() -> dict:
     try:
         runs = await gh.list_ci_runs()
@@ -481,16 +498,6 @@ async def dashboard(request: Request):
         except Exception:
             pass
         return False
-
-    async def _load_dispatch() -> dict:
-        try:
-            async with httpx.AsyncClient(timeout=3) as client:
-                r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_orch_headers())
-                if r.status_code == 200:
-                    return r.json()
-        except Exception:
-            pass
-        return {}
 
     wos_result, branches, prs, merged_window, ci, agent_runner_online, dispatch = await asyncio.gather(
         _load_wos(),
@@ -603,15 +610,32 @@ async def wo_detail(request: Request, number: int):
             key=lambda f: spec_file_rank(f["name"]),
         )
         if not candidates:
-            return HTMLResponse(
-                f"<h1 style='font-family:monospace;padding:2rem'>WO-{number} has no spec file on "
-                f"{default_branch}</h1><p style='font-family:monospace;padding:0 2rem'>It may exist "
-                "only as an open PR, a branch, or a dispatch entry.</p>",
-                status_code=404,
+            # No spec file, but the board still shows a card for this WO when it
+            # has a branch, an open PR or a dispatch entry — apply_live_status()
+            # synthesizes exactly that placeholder for the Overview and PM
+            # boards. The detail page used to skip straight to a bare 404 here,
+            # so clicking a card like WO-486 — labelled "stalled" on the board,
+            # with a real pushed branch behind it — landed on a page with no
+            # branch, no dispatch state, nothing: strictly less information
+            # than the card the user clicked from. Run it through the same
+            # reconciliation the boards use instead of a second, poorer path.
+            branches, prs, dispatch, merged_window = await asyncio.gather(
+                _load_active_branches(), _load_open_prs(), _load_dispatch(), gh.list_merged_prs(days=56)
             )
-        match = candidates[0]
-        content = await gh.get_file_content(match["path"], ref=default_branch)
-        spec = parse_wo_file(content, match["name"])
+            wos: dict[int, WOSpec] = {}
+            apply_live_status(wos, branches, prs, dispatch, merged_prs=merged_window.prs, repo=GITHUB_REPO)
+            spec = wos.get(number)
+            if spec is None:
+                return HTMLResponse(
+                    f"<h1 style='font-family:monospace;padding:2rem'>WO-{number} has no spec file on "
+                    f"{default_branch}</h1><p style='font-family:monospace;padding:0 2rem'>It may exist "
+                    "only as an open PR, a branch, or a dispatch entry.</p>",
+                    status_code=404,
+                )
+        else:
+            match = candidates[0]
+            content = await gh.get_file_content(match["path"], ref=default_branch)
+            spec = parse_wo_file(content, match["name"])
     except Exception as exc:
         return templates.TemplateResponse(
             request=request,
@@ -679,22 +703,12 @@ async def pm_dashboard(request: Request):
             "site_title": SITE_TITLE, "message": "GITHUB_TOKEN and GITHUB_REPO required."
         })
 
-    async def _pm_dispatch() -> dict:
-        try:
-            async with httpx.AsyncClient(timeout=3) as client:
-                r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_orch_headers())
-                if r.status_code == 200:
-                    return r.json()
-        except Exception:
-            pass
-        return {}
-
     wos_result, branches, prs, merged_window, dispatch = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
         gh.list_merged_prs(days=56),
-        _pm_dispatch(),
+        _load_dispatch(),
     )
     wos, wos_available = wos_result
     merged_prs = merged_window.prs

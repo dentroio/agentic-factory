@@ -1,4 +1,4 @@
-# Agent Process — {{PROJECT_NAME}}
+# Agent Process — Dentro AI Factory
 
 > **Version:** 1.0  
 > **Template source:** [dentroio/agentic-factory](https://github.com/dentroio/agentic-factory)  
@@ -20,6 +20,8 @@ Every work order (WO) is assigned a risk tier that determines who can merge.
 | **P3** | Docs, PM files, comments, typos | Yes (`docs/` or `wo/`) | Auto-merge after CI passes (`gh pr merge --auto --squash`) |
 
 **Hotfix track:** For urgent bug fixes that don't need a full WO spec, use a `fix/` branch. See §5.
+
+**P0/P1 approval on GitHub:** GitHub will not let the PR author click Approve. If you opened the PR yourself, add the `risk-tier-approved` label instead — the Risk Tier Approval Gate treats that as the human approval. A second reviewer's Approve still works when one exists.
 
 ---
 
@@ -331,11 +333,10 @@ Every PR runs these jobs. All must pass before merge:
 | migration-check | Schema migration registry is consistent |
 | ai-review | Claude code review — fails the job on a "Review required" verdict, and on any run that produced no verdict at all |
 
-> **The AI review job is red-or-green on its own, but it is not yet enforced.** The
-> repository ruleset's `required_status_checks` currently lists only `Unit Tests`, so a
-> red AI review does not by itself prevent a merge to `main`. Until `Claude Code Review`
-> is added to that list, treat its verdict as a signal a human must act on, not as a
-> gate that acts for you.
+> **The AI review job is red-or-green on its own.** The repository ruleset's
+> `required_status_checks` should list `Unit Tests`, `Claude Code Review`, and
+> `Risk Tier Approval Gate`. Until all three are registered, treat a missing
+> check as a signal a human must act on, not as a gate that acts for you.
 
 After the AI review completes, the **Merge Advisor** (`merge-advisor.yml`) posts a synthesized recommendation comment on every P0/P1 PR. It is always the last comment before a human reviewer looks at the PR.
 

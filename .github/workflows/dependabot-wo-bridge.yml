@@ -107,13 +107,19 @@ jobs:
         id: issue
         if: steps.pr.outputs.skip != 'true' && steps.dedup.outputs.skip != 'true'
         uses: actions/github-script@v7
+        env:
+          PR_TITLE: ${{ steps.pr.outputs.pr_title }}
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          PR_BODY: ${{ steps.pr.outputs.pr_body }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         with:
           script: |
-            const prTitle = `${{ steps.pr.outputs.pr_title }}`;
-            const prUrl = `${{ steps.pr.outputs.pr_url }}`;
-            const prNumber = `${{ steps.pr.outputs.pr_number }}`;
-            const prBody = `${{ steps.pr.outputs.pr_body }}`;
-            const branch = `${{ github.event.workflow_run.head_branch }}`;
+            const prTitle = process.env.PR_TITLE;
+            const prUrl = process.env.PR_URL;
+            const prNumber = process.env.PR_NUMBER;
+            const prBody = process.env.PR_BODY;
+            const branch = process.env.HEAD_BRANCH;
 
             // Extract ecosystem and package hint from branch name
             // e.g. dependabot/npm_and_yarn/recharts-3.9.0 → npm: recharts

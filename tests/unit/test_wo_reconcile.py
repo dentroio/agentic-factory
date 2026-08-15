@@ -114,6 +114,28 @@ def test_active_dispatch_still_beats_a_merged_pr():
     assert wos[440].board_column == "in_progress"
 
 
+def test_deferred_wo_survives_a_merged_pr_that_only_names_it():
+    """The WO-484 case: a human deferred it on purpose, then PR #578 — a pure
+    "docs(wo): backfill work-order specs for WO-479/480/481/483, file WO-484"
+    commit that implemented nothing — merged and named it in passing. A title
+    mention must not silently reverse a deliberate Deferred decision."""
+    wos = {484: _spec(484, status="⏸ Deferred")}
+
+    apply_live_status(
+        wos,
+        branches=[],
+        prs=[],
+        dispatch={},
+        merged_prs=[
+            _merged_pr(
+                "docs(wo): backfill work-order specs for WO-479/480/481/483, file WO-484"
+            )
+        ],
+    )
+
+    assert wos[484].board_column == "deferred"
+
+
 def test_open_pr_with_failing_ci_is_blocked_not_done():
     wos = {449: _spec(449)}
 

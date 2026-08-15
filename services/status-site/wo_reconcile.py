@@ -289,7 +289,14 @@ def apply_live_status(
         # named it. A WO cannot be finished and awaiting review at once; the
         # open PR wins, and it must be checked before this shortcut, not after
         # the `continue` that skips it.
-        if num in merged_wo_nums and not dispatch_says_active and not pr:
+        #
+        # A spec that already says Deferred is the same problem one step
+        # further: WO-484 was deferred, then PR #578 — a pure "docs(wo):
+        # backfill work-order specs for WO-479/480/481/483, file WO-484"
+        # commit that never implemented anything — merged and named it in
+        # passing, silently flipping it to Done. A human deferred it on
+        # purpose; a title mention is not a reversal of that decision.
+        if num in merged_wo_nums and not dispatch_says_active and not pr and spec_column != "deferred":
             spec.status = "✅ Done"
             spec.merged_at = next(
                 (p.get("merged_at", "") for p in (merged_prs or [])

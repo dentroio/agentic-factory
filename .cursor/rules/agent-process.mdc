@@ -3,7 +3,7 @@ description: Agent process rules — always applied
 alwaysApply: true
 ---
 
-# Agent Process — {{PROJECT_NAME}}
+# Agent Process — Dentro AI Factory
 
 Read `AGENT_PROCESS.md` before starting any implementation task.
 
