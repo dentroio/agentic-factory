@@ -7,9 +7,10 @@ services:
     volumes:
       - vault-data:/vault/data
       - vault-keys:/vault/keys
+      - vault-orch-token:/vault/orch
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "vault", "status"]
+      test: ["CMD", "sh", "-c", "vault status && test -s /vault/orch/orchestrator_token"]
       interval: 5s
       timeout: 3s
       retries: 24
@@ -102,7 +103,7 @@ services:
       - orchestrator-data:/data
       - watchdog-data:/watchdog:ro
       - ${LOCAL_REPO_PATH}:/repos/primary
-      - vault-keys:/vault/keys:ro
+      - vault-orch-token:/vault/keys:ro
     restart: unless-stopped
     depends_on:
       vault:
@@ -114,3 +115,4 @@ volumes:
   factory-config:
   vault-data:
   vault-keys:
+  vault-orch-token:

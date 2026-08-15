@@ -53,16 +53,17 @@ up:  ## Start factory services (reads secrets from macOS Keychain if available)
 	@bash scripts/compose-with-env.sh up -d
 	@echo "Dashboard: http://localhost:8099   Orchestrator: http://localhost:8100 (localhost only)"
 
-vault-export-keys:  ## Save Vault unseal key + root token from Docker volume to macOS Keychain
-	@echo "Reading Vault keys from Docker volume..."
-	@UNSEAL_KEY=$$(docker run --rm -v agentic-factory_vault-keys:/vault/keys:ro alpine cat /vault/keys/unseal_key 2>/dev/null) && \
-	ROOT_TOKEN=$$(docker run --rm -v agentic-factory_vault-keys:/vault/keys:ro alpine cat /vault/keys/root_token 2>/dev/null) && \
-	security delete-generic-password -s "dentroio-factory" -a "VAULT_UNSEAL_KEY" 2>/dev/null || true && \
-	security add-generic-password -s "dentroio-factory" -a "VAULT_UNSEAL_KEY" -w "$$UNSEAL_KEY" && \
-	security delete-generic-password -s "dentroio-factory" -a "VAULT_ROOT_TOKEN" 2>/dev/null || true && \
-	security add-generic-password -s "dentroio-factory" -a "VAULT_ROOT_TOKEN" -w "$$ROOT_TOKEN" && \
-	echo "  Vault unseal key and root token saved to Keychain under 'dentroio-factory'." || \
-	echo "  ERROR: Could not read from vault-keys volume. Is the factory running? (make up)"
+vault-export-keys:  ## Save Vault unseal key to macOS Keychain (root token stays offline)
+	@echo "Reading Vault unseal key from Docker volume..."
+	@if docker run --rm -v agentic-factory_vault-keys:/vault/keys:ro alpine \
+		cat /vault/keys/unseal_key 2>/dev/null \
+		| $(PYTHON) scripts/keychain_set.py dentroio-factory VAULT_UNSEAL_KEY; then \
+		$(PYTHON) scripts/keychain_set.py --delete dentroio-factory VAULT_ROOT_TOKEN; \
+		echo "  Unseal key saved to Keychain. Root token was not copied (AF-10)."; \
+	else \
+		echo "  ERROR: Could not read from vault-keys volume. Is the factory running? (make up)"; \
+		exit 1; \
+	fi
 
 down:  ## Stop all factory services
 	docker compose -f docker-compose.status.yml down

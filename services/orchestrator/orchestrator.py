@@ -39,6 +39,7 @@ from wo_resolver import (
     extract_wo_from_title,
 )
 import dispatch_control
+from vault_auth import load_vault_token
 
 load_dotenv()
 
@@ -4257,11 +4258,7 @@ async def _vault_write(secrets: dict) -> None:
 async def _init_secrets() -> None:
     """Load secrets from Vault (or file fallback) into the in-memory cache."""
     global _secrets_cache, _vault_token
-    _vault_token = (
-        os.getenv("VAULT_TOKEN", "")
-        or ((_VAULT_KEYS_DIR / "root_token").read_text().strip()
-            if (_VAULT_KEYS_DIR / "root_token").exists() else "")
-    )
+    _vault_token = load_vault_token(_VAULT_KEYS_DIR)
     if VAULT_ADDR and _vault_token:
         vault_data = await _vault_read()
         if not vault_data:

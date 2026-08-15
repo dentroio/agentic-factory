@@ -2,8 +2,9 @@ FROM hashicorp/vault:1.17
 
 USER root
 COPY config.hcl /vault/config/config.hcl
+COPY orchestrator-policy.hcl /vault/config/orchestrator-policy.hcl
 COPY auto-init.sh /auto-init.sh
-RUN chmod +x /auto-init.sh && mkdir -p /vault/data /vault/keys
+RUN chmod +x /auto-init.sh && mkdir -p /vault/data /vault/keys /vault/orch
 
 ENV VAULT_ADDR=http://127.0.0.1:8200
 
