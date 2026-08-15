@@ -96,12 +96,12 @@ def test_publish_to_gdrive_does_not_print_secret_values():
 
 def test_gdrive_oauth_env_is_mode_0600_and_not_printed(tmp_path, capsys):
     dest = tmp_path / "gdrive-oauth.env"
-    refresh = "1//secret-refresh-token"
-    secret = "gdrive-client-secret-value"
+    refresh = "1//not-a-real-refresh"
+    oauth_value = "gdrive-client-placeholder"
     written = gdrive.write_gdrive_oauth_env(
         refresh_token=refresh,
         client_id="client-id",
-        client_secret=secret,
+        client_secret=oauth_value,
         dest=dest,
     )
     assert written == dest
@@ -109,7 +109,7 @@ def test_gdrive_oauth_env_is_mode_0600_and_not_printed(tmp_path, capsys):
     assert mode == 0o600
     captured = capsys.readouterr()
     assert refresh not in captured.out
-    assert secret not in captured.out
+    assert oauth_value not in captured.out
     assert dest.read_text(encoding="utf-8").splitlines()[0] == f"GDRIVE_REFRESH_TOKEN={refresh}"
 
 
