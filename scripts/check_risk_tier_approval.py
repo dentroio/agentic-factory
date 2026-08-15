@@ -14,10 +14,13 @@ Exit 0 (pass) when:
     and anything else with no declared tier are not gated by this check
   - the resolved WO's spec declares P2 or P3
   - the resolved WO's spec declares P0/P1 AND the PR has at least one
-    APPROVED review
+    APPROVED review, or the `risk-tier-approved` label (GitHub forbids
+    approving your own pull request, so a solo operator cannot satisfy
+    the review object; the label is the explicit substitute)
 
 Exit 1 (fail, blocks merge once registered as a required status check) when:
-  - the resolved WO's spec declares P0/P1 and has no APPROVED review
+  - the resolved WO's spec declares P0/P1 and has neither an APPROVED
+    review nor the `risk-tier-approved` label
 
 This intentionally trusts the spec file's own Priority field — it does not
 attempt to verify the declared tier matches the actual diff (that's a
@@ -40,6 +43,7 @@ WO_DIRS = [REPO_ROOT / "docs" / "work_orders", REPO_ROOT / "docs" / "project_man
 
 _BRANCH_RE = re.compile(r"wo/(\d+)-", re.IGNORECASE)
 _PRIORITY_RE = re.compile(r"\*\*Priority:\*\*\s*(P[0-3])", re.IGNORECASE)
+APPROVAL_LABEL = "risk-tier-approved"
 
 
 def extract_wo_number(branch: str) -> int | None:
@@ -90,6 +94,14 @@ def has_approval(repo: str, pr_number: int, token: str) -> bool:
     return "APPROVED" in latest_by_reviewer.values()
 
 
+def has_approval_label(repo: str, pr_number: int, token: str) -> bool:
+    """Solo-operator substitute for APPROVED: GitHub rejects self-approvals."""
+    labels = _api_get(f"https://api.github.com/repos/{repo}/issues/{pr_number}/labels", token)
+    if not isinstance(labels, list):
+        return False
+    return any(str(item.get("name") or "") == APPROVAL_LABEL for item in labels)
+
+
 def main() -> int:
     branch = os.environ.get("PR_HEAD_REF", "")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
@@ -129,7 +141,15 @@ def main() -> int:
         print(f"{priority} WO has at least one APPROVED review — pass.")
         return 0
 
-    print(f"::error::WO-{wo_num} is {priority} and requires human approval before merge — no APPROVED review found.")
+    if has_approval_label(repo, int(pr_number_str), token):
+        print(f"{priority} WO has the {APPROVAL_LABEL} label — pass.")
+        return 0
+
+    print(
+        f"::error::WO-{wo_num} is {priority} and requires human approval before merge — "
+        f"no APPROVED review and no `{APPROVAL_LABEL}` label. "
+        f"GitHub does not allow approving your own PR; add the `{APPROVAL_LABEL}` label instead."
+    )
     return 1
 
 
