@@ -55,6 +55,16 @@
     </div>
   </div>
 
+  {# ── No spec file: this WO exists only via a branch, PR or dispatch entry ── #}
+  {% if spec.spec_missing %}
+  <div class="glass-panel p-5 mb-4 border border-amber-500/20 bg-amber-500/5">
+    <p class="text-xs text-amber-300/90">
+      No spec file for WO-{{ spec.number }} on {{ github_repo }}'s default branch — this status is
+      derived entirely from a live branch, open PR, or dispatch entry, not a written spec.
+    </p>
+  </div>
+  {% endif %}
+
   {# ── Description / Background ────────────────────────────────────── #}
   {% if spec.description %}
   <div class="glass-panel p-5 mb-4">
@@ -76,13 +86,14 @@
   {% endfor %}
 
   {# Empty state: no content at all #}
-  {% if not spec.description and not spec.sections %}
+  {% if not spec.description and not spec.sections and not spec.spec_missing %}
   <div class="glass-panel p-5 mb-4 border border-slate-700/30">
     <p class="text-xs text-slate-500 text-center py-4">No description provided — see raw spec below.</p>
   </div>
   {% endif %}
 
   {# ── Raw spec (collapsible) ──────────────────────────────────────── #}
+  {% if not spec.spec_missing %}
   <details class="glass-panel overflow-hidden mb-4 group">
     <summary class="px-5 py-3 bg-slate-900/40 border-b border-slate-800/40 cursor-pointer flex items-center justify-between select-none hover:bg-slate-900/60 transition-colors">
       <span class="text-xs font-mono text-slate-400 uppercase tracking-widest">Raw Spec ({{ spec.raw | length }} chars)</span>
@@ -92,6 +103,7 @@
     </summary>
     <pre class="whitespace-pre-wrap text-xs text-slate-300 font-mono bg-slate-950/70 p-5 overflow-auto max-h-[500px] leading-relaxed select-all">{{ spec.raw }}</pre>
   </details>
+  {% endif %}
 
   {# ── Peer Review ──────────────────────────────────────────────────── #}
   {% if peer_review.has_reviews %}
