@@ -32,7 +32,7 @@ All credentials and tuning options are managed from **Settings → Authenticatio
 
 **Rebuild after code changes:** `make restart`
 
-**Security model:** The orchestrator port is bound to `127.0.0.1` (no LAN exposure). All write endpoints require a bearer token. Secrets are stored encrypted in Vault, not plaintext. Details in [Reliability](docs/wiki/Reliability.md).
+**Security model:** Orchestrator (`8100`) and dashboard (`8099`) bind to `127.0.0.1`. Orchestrator requests require `Authorization: Bearer <API_SECRET>` (a machine token in Keychain — not a human login). Dashboard **reads** are open on loopback; **writes** require that bearer token or a same-origin browser `Origin` (`http://127.0.0.1:8099`). Secrets are stored encrypted in Vault, not plaintext. Details in [Reliability](docs/wiki/Reliability.md).
 
 ### Agent backends
 

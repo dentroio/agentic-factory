@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
+import dashboard_auth
 import github_client as gh
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -44,7 +45,7 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
 ORCHESTRATOR_PATH = Path(os.getenv("ORCHESTRATOR_PATH", "/orchestrator/orchestrator.json"))
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
-_API_SECRET = os.getenv("API_SECRET", "")
+_API_SECRET = dashboard_auth.require_secret(os.getenv("API_SECRET", ""))
 VALIDATIONS_PATH = Path("/orchestrator/pending_validations.json")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
@@ -56,6 +57,9 @@ LOCAL_REPO_MOUNT = os.getenv("LOCAL_REPO_MOUNT", "")
 def _orch_headers() -> dict:
     """Authorization header for orchestrator write requests."""
     return {"Authorization": f"Bearer {_API_SECRET}"} if _API_SECRET else {}
+
+
+dashboard_auth.install(app, secret=_API_SECRET)
 
 
 # In-memory cache for parsed WO files — eliminates 400+ file reads on every page load.

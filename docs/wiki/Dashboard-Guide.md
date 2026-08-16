@@ -8,12 +8,13 @@ covers_wos:
   - WO-1014
   - WO-1035
   - WO-1036
+  - WO-1059
 doc_owner: factory-team
 ---
 
 # Dashboard Guide
 
-The factory dashboard runs at `http://localhost:8099`. It has six main tabs and a Settings section. The page auto-refreshes every 60 seconds.
+The factory dashboard runs at `http://127.0.0.1:8099` (loopback only). Open it in a browser — there is no login. `API_SECRET` is a machine token for the orchestrator and scripts, not something you type into the UI. Browser clicks/fetches are allowed because they are same-origin; `curl` writes without a bearer token return 401. The page auto-refreshes every 60 seconds.
 
 ## Overview
 
