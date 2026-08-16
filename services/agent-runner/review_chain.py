@@ -9,7 +9,7 @@ import httpx
 from backends import get_backend
 from config import API_SECRET
 from orchestrator_client import checkin
-from proc import GIT, GIT_FETCH, communicate as _communicate
+from proc import ASK, GIT, GIT_FETCH, communicate as _communicate
 from thread_monitor import ThreadMonitor
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
@@ -252,7 +252,7 @@ def _run_sdk_reviewer_sync(
         f"Notes: {wo_spec.get('notes', '')}\n\n"
         f"=== GIT DIFF ===\n{diff[:8000]}"
     )
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=float(ASK))
     response = client.messages.create(
         model=model,
         max_tokens=2048,
@@ -276,8 +276,11 @@ async def _run_sdk_reviewer(
 ) -> list[dict]:
     config = await _fetch_agent_config()
     model = config.get("automation_model", "claude-sonnet-5")
-    return await asyncio.to_thread(
-        _run_sdk_reviewer_sync, reviewer_name, wo_spec, diff, previous_findings, api_key, model
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            _run_sdk_reviewer_sync, reviewer_name, wo_spec, diff, previous_findings, api_key, model
+        ),
+        timeout=ASK,
     )
 
 
