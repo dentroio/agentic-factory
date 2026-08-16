@@ -52,6 +52,51 @@ def save_pause(path: Path, paused: bool, reason: str = "") -> dict:
     return payload
 
 
+def load_attempt_counts(path: Path) -> dict[str, int]:
+    """Attempt counts keyed by WO id. Survives dispatch-record deletion (AF-21)."""
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            return {}
+        out: dict[str, int] = {}
+        for key, raw in data.items():
+            try:
+                count = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if count > 0:
+                out[str(key)] = count
+        return out
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+
+
+def save_attempt_counts(path: Path, counts: dict[str, int]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(counts, indent=2, sort_keys=True) + "\n")
+    tmp.replace(path)
+
+
+def recorded_attempts(counts: dict[str, int], wo_id: str, dispatch_count: int = 0) -> int:
+    persisted = int(counts.get(wo_id, 0) or 0)
+    try:
+        from_dispatch = int(dispatch_count or 0)
+    except (TypeError, ValueError):
+        from_dispatch = 0
+    return max(persisted, from_dispatch)
+
+
+def record_attempt(counts: dict[str, int], wo_id: str, attempt: int) -> dict[str, int]:
+    counts[wo_id] = int(attempt)
+    return counts
+
+
+def clear_attempt(counts: dict[str, int], wo_id: str) -> dict[str, int]:
+    counts.pop(wo_id, None)
+    return counts
+
+
 def merge_allowed_for_priority(priority: str | None) -> bool:
     """P2/P3 may be merged by the PM tool. Unknown or P0/P1 must not."""
     return (priority or "").strip().upper() in {"P2", "P3"}

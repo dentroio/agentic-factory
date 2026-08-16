@@ -70,3 +70,40 @@ def test_run_local_sh_refuses_to_start_without_api_secret():
     assert 'if [ -z "${API_SECRET:-}" ]; then' in text
     assert "The orchestrator refuses unauthenticated calls. Refusing to start." in text
     assert "\n    exit 1\nfi\n" in text
+
+
+def test_attempt_counts_survive_missing_and_corrupt_files(tmp_path):
+    path = tmp_path / "attempt_counts.json"
+    assert m.load_attempt_counts(path) == {}
+    path.write_text("{not json")
+    assert m.load_attempt_counts(path) == {}
+    path.write_text('{"WO-1": 2, "WO-2": "nope", "WO-3": 0}')
+    assert m.load_attempt_counts(path) == {"WO-1": 2}
+
+
+def test_recorded_attempts_prefers_the_higher_count():
+    counts = {"WO-10": 2}
+    assert m.recorded_attempts(counts, "WO-10", 1) == 2
+    assert m.recorded_attempts(counts, "WO-10", 4) == 4
+    assert m.recorded_attempts({}, "WO-10", 3) == 3
+    assert m.recorded_attempts({}, "WO-11", 0) == 0
+
+
+def test_record_and_clear_attempt_round_trip(tmp_path):
+    path = tmp_path / "attempt_counts.json"
+    counts: dict[str, int] = {}
+    m.record_attempt(counts, "WO-12", 2)
+    m.save_attempt_counts(path, counts)
+    loaded = m.load_attempt_counts(path)
+    assert loaded["WO-12"] == 2
+    m.clear_attempt(loaded, "WO-12")
+    m.save_attempt_counts(path, loaded)
+    assert "WO-12" not in m.load_attempt_counts(path)
+
+
+def test_claim_and_reset_use_persisted_attempt_counts():
+    text = (REPO_ROOT / "services" / "orchestrator" / "orchestrator.py").read_text()
+    assert "ATTEMPTS_PATH" in text
+    assert "recorded_attempts(" in text
+    assert "clear_attempt(_attempt_counts, wo_id)" in text
+    assert "save_attempt_counts(ATTEMPTS_PATH, _attempt_counts)" in text
