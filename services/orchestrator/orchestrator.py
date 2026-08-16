@@ -134,6 +134,7 @@ _max_retry_notified: set[str] = set()  # wo_ids already alerted for exceeding MA
 
 HOLD_PATH = DATA_DIR / "held_wos.json"
 PAUSE_PATH = DATA_DIR / "factory_paused.json"
+ATTEMPTS_PATH = DATA_DIR / "attempt_counts.json"
 PM_MEMORY_PATH = DATA_DIR / "pm_memory.json"
 OVERRIDES_PATH = DATA_DIR / "wo_overrides.json"
 RESERVED_WOS_PATH = DATA_DIR / "reserved_wos.json"
@@ -144,6 +145,7 @@ _overrides: dict[str, dict] = {}  # WO-NNN → {"action": "no-auto-complete", ..
 _reserved: dict[str, dict[int, dict]] = {}   # repo → WO number → {reserved_by, reserved_at, title}
 
 _factory_paused: bool = False   # when True, get_next() returns null — drains gracefully
+_attempt_counts: dict[str, int] = {}  # WO id → claims; survives DELETE /api/dispatch (AF-21)
 
 # ── In-memory log buffer (replaces file-tail SSE — Docker volume mount lag) ───
 _LOG_BUFFER_MAX = 2000
@@ -152,7 +154,7 @@ _log_subscribers: list[asyncio.Queue] = []  # one Queue per active SSE client
 
 
 def _load_state() -> None:
-    global _dispatch_state, _validations, _held_wos, _factory_paused, _last_intelligence_run
+    global _dispatch_state, _validations, _held_wos, _factory_paused, _last_intelligence_run, _attempt_counts
     _init_db()
     _migrate_plan_json_to_db()
     # Load dispatch state: SQLite primary, JSON fallback (migration path)
@@ -178,6 +180,7 @@ def _load_state() -> None:
         except Exception:
             _held_wos = set()
     _factory_paused = dispatch_control.load_pause(PAUSE_PATH)["paused"]
+    _attempt_counts = dispatch_control.load_attempt_counts(ATTEMPTS_PATH)
     if INTELLIGENCE_STATE_PATH.exists():
         try:
             _last_intelligence_run = json.loads(INTELLIGENCE_STATE_PATH.read_text())
@@ -1771,7 +1774,9 @@ async def claim_wo(req: ClaimRequest):
         _dispatch_state.pop(wo_id, None)
 
     prev = _dispatch_state.get(wo_id, {})
-    attempt_count = prev.get("attempt_count", 0) + 1
+    attempt_count = dispatch_control.recorded_attempts(
+        _attempt_counts, wo_id, prev.get("attempt_count", 0)
+    ) + 1
     if attempt_count > MAX_RETRY_ATTEMPTS:
         if wo_id not in _max_retry_notified:
             _max_retry_notified.add(wo_id)
@@ -1814,6 +1819,8 @@ async def claim_wo(req: ClaimRequest):
         "first_claimed_at": prev.get("first_claimed_at", _utcnow()),
         "claim_token": claim_token,
     }
+    dispatch_control.record_attempt(_attempt_counts, wo_id, attempt_count)
+    dispatch_control.save_attempt_counts(ATTEMPTS_PATH, _attempt_counts)
     _save_dispatch()
     _db_append_step(wo_id, "claimed", agent=req.agent)
     thread_store.append_message(wo_id, thread_store.system_message(
@@ -2157,6 +2164,8 @@ async def reset_dispatch(wo_id: str, force: bool = False):
     if wo_id in _dispatch_state:
         del _dispatch_state[wo_id]
         _save_dispatch()
+    dispatch_control.clear_attempt(_attempt_counts, wo_id)
+    dispatch_control.save_attempt_counts(ATTEMPTS_PATH, _attempt_counts)
     _max_retry_notified.discard(wo_id)
     _wo_ever_approved.discard(wo_id)
     print(f"[orchestrator] {wo_id} dispatch state hard-reset (attempt counter cleared)")

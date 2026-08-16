@@ -1,6 +1,6 @@
 # Dentro AI Factory — Progress Tracker
 
-_Last updated: 2026-08-15_
+_Last updated: 2026-08-16_
 
 ---
 
@@ -19,7 +19,8 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
-| WO-1059 | Dashboard authentication (AF-08) | P0 | 🟡 In Progress | — |
+| WO-1060 | Persist retry attempts across dispatch delete | P1 | 🟡 In Progress | — |
+| WO-1059 | Dashboard authentication (AF-08) | P0 | ✅ Complete | 2026-08-16 |
 | WO-1058 | Fine-grained GitHub PAT only | P1 | ✅ Complete | 2026-08-15 |
 | WO-1057 | Scoped Vault token for the orchestrator | P1 | ✅ Complete | 2026-08-15 |
 | WO-1056 | Do not write factory secrets to disk or logs | P1 | ✅ Complete | 2026-08-15 |
