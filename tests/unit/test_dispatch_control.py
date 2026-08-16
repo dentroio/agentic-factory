@@ -107,3 +107,25 @@ def test_claim_and_reset_use_persisted_attempt_counts():
     assert "recorded_attempts(" in text
     assert "clear_attempt(_attempt_counts, wo_id)" in text
     assert "save_attempt_counts(ATTEMPTS_PATH, _attempt_counts)" in text
+
+
+def test_atomic_write_json_replaces_without_leaving_tmp(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text('{"old": true}')
+    m.atomic_write_json(path, {"new": 1})
+    assert path.read_text(encoding="utf-8").strip().startswith("{")
+    assert '"new"' in path.read_text(encoding="utf-8")
+    assert not path.with_name("state.json.tmp").exists()
+
+
+def test_dispatch_and_thread_saves_use_atomic_write():
+    orch = (REPO_ROOT / "services" / "orchestrator" / "orchestrator.py").read_text()
+    thread = (REPO_ROOT / "services" / "orchestrator" / "thread.py").read_text()
+    assert "DISPATCH_STATE_PATH.write_text" not in orch
+    assert "HOLD_PATH.write_text" not in orch
+    assert "VALIDATIONS_PATH.write_text" not in orch
+    assert "atomic_write_json(DISPATCH_STATE_PATH" in orch
+    assert "atomic_write_json(HOLD_PATH" in orch
+    assert "atomic_write_json(VALIDATIONS_PATH" in orch
+    assert "atomic_write_json(THREADS_DIR" in thread
+    assert ".write_text(json.dumps(messages" not in thread
