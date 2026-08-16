@@ -39,6 +39,7 @@ from wo_resolver import (
     extract_wo_from_title,
 )
 import dispatch_control
+from db import connect as _db_connect
 from llm_client import messages_create
 from vault_auth import load_vault_token
 
@@ -106,6 +107,10 @@ VALIDATIONS_PATH = DATA_DIR / "pending_validations.json"
 INTELLIGENCE_STATE_PATH = DATA_DIR / "intelligence_last_run.json"
 WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
 DB_PATH = DATA_DIR / "factory.db"
+
+
+def _db():
+    return _db_connect(DB_PATH)
 
 _last_summary_day: int = -1
 _last_intelligence_run: dict = {}
@@ -533,7 +538,7 @@ async def preflight_check(requires: dict) -> list[str]:
 # ── SQLite persistence ────────────────────────────────────────────────────────
 
 def _init_db() -> None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS runs (
               wo TEXT PRIMARY KEY,
@@ -634,7 +639,7 @@ def _init_db() -> None:
 
 def _db_load_all_runs() -> dict[str, dict]:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT * FROM runs").fetchall()
             return {row["wo"]: dict(row) for row in rows}
@@ -645,7 +650,7 @@ def _db_load_all_runs() -> dict[str, dict]:
 def _db_sync_dispatch() -> None:
     """Sync the in-memory _dispatch_state dict to SQLite — called from _save_dispatch()."""
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             existing = {row[0] for row in conn.execute("SELECT wo FROM runs").fetchall()}
             for wo_id in existing - set(_dispatch_state.keys()):
                 conn.execute("DELETE FROM runs WHERE wo = ?", (wo_id,))
@@ -692,7 +697,7 @@ def _db_sync_dispatch() -> None:
 
 def _db_append_step(wo_id: str, status: str, step: str = "", agent: str = "") -> None:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             conn.execute(
                 "INSERT INTO run_steps (wo, ts, status, step, agent) VALUES (?, ?, ?, ?, ?)",
                 (wo_id, _utcnow(), status, step, agent),
@@ -705,7 +710,7 @@ def _db_append_step(wo_id: str, status: str, step: str = "", agent: str = "") ->
 
 def _db_get_queue() -> list[dict]:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT * FROM queue ORDER BY position ASC, added_at ASC").fetchall()
             result = []
@@ -723,7 +728,7 @@ def _db_get_queue() -> list[dict]:
 
 def _db_get_phases() -> list[dict]:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT * FROM phases ORDER BY position ASC").fetchall()
             result = []
@@ -738,7 +743,7 @@ def _db_get_phases() -> list[dict]:
 
 def _db_get_milestones() -> list[dict]:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT * FROM milestones").fetchall()
             return [dict(r) for r in rows]
@@ -748,7 +753,7 @@ def _db_get_milestones() -> list[dict]:
 
 def _db_get_programs() -> list[dict]:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             rows = conn.execute("SELECT id, label, description, added_at FROM programs ORDER BY label").fetchall()
         return [{"id": r[0], "label": r[1], "description": r[2], "added_at": r[3]} for r in rows]
     except Exception:
@@ -756,7 +761,7 @@ def _db_get_programs() -> list[dict]:
 
 
 def _db_upsert_program(id_: str, label: str, description: str = "") -> None:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         conn.execute(
             "INSERT INTO programs (id, label, description) VALUES (?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET label=excluded.label, description=excluded.description",
@@ -766,7 +771,7 @@ def _db_upsert_program(id_: str, label: str, description: str = "") -> None:
 
 
 def _db_delete_program(id_: str) -> bool:
-    with sqlite3.connect(DB_PATH) as conn:
+    with _db() as conn:
         cur = conn.execute("DELETE FROM programs WHERE id = ?", (id_,))
         conn.commit()
     return cur.rowcount > 0
@@ -774,7 +779,7 @@ def _db_delete_program(id_: str) -> bool:
 
 def _db_get_queue_wo_ids() -> set[str]:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             rows = conn.execute("SELECT wo FROM queue").fetchall()
             return {row[0] for row in rows}
     except Exception:
@@ -793,7 +798,7 @@ def _db_remove_done_wos(done_wo_ids: set[str]) -> int:
     if not done_wo_ids:
         return 0
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             placeholders = ",".join("?" * len(done_wo_ids))
             cur = conn.execute(f"DELETE FROM queue WHERE wo IN ({placeholders})", list(done_wo_ids))
             conn.commit()
@@ -805,7 +810,7 @@ def _db_remove_done_wos(done_wo_ids: set[str]) -> int:
 
 def _db_upsert_queue_entry(entry: dict) -> None:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             max_pos = conn.execute("SELECT COALESCE(MAX(position), 0) FROM queue").fetchone()[0]
             conn.execute("""
                 INSERT INTO queue
@@ -839,7 +844,7 @@ def _db_upsert_queue_entry(entry: dict) -> None:
 
 def _db_upsert_phase(phase: dict) -> None:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             max_pos = conn.execute("SELECT COALESCE(MAX(position), 0) FROM phases").fetchone()[0]
             conn.execute("""
                 INSERT INTO phases (id, label, target_date, milestone_id, parallel, description, position)
@@ -864,7 +869,7 @@ def _db_upsert_phase(phase: dict) -> None:
 
 def _db_upsert_milestone(milestone: dict) -> None:
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             conn.execute("""
                 INSERT INTO milestones (id, label, target_date, description)
                 VALUES (?, ?, ?, ?)
@@ -906,7 +911,7 @@ def _migrate_plan_json_to_db() -> None:
         return
 
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             existing_count = conn.execute("SELECT COUNT(*) FROM queue").fetchone()[0]
             if existing_count > 0:
                 sentinel.touch()
@@ -971,7 +976,7 @@ def _migrate_plan_json_to_db() -> None:
         if wo_dir.is_dir():
             spec_wos = {f"WO-{_parse_wo_number(f.name)}" for f in wo_dir.glob("WO-*.md") if _parse_wo_number(f.name)}
             try:
-                with sqlite3.connect(DB_PATH) as conn:
+                with _db() as conn:
                     db_wos = {r[0] for r in conn.execute("SELECT wo FROM queue").fetchall()}
                 orphans = db_wos - spec_wos
                 if orphans:
@@ -2504,7 +2509,7 @@ async def get_run_history(wo_id: str):
     """Step audit log for a single WO — who did what and when."""
     wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM run_steps WHERE wo = ? ORDER BY ts",
@@ -2527,7 +2532,7 @@ async def list_queue():
 async def get_queue_entry(wo_id: str):
     wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM queue WHERE wo = ?", (wo_id,)).fetchone()
             if not row:
@@ -2566,7 +2571,7 @@ async def update_queue_entry(wo_id: str, req: QueueUpdateRequest):
     """Update metadata for a queue entry (priority, effort, phase, notes, pin, blocks_milestones)."""
     wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             row = conn.execute("SELECT * FROM queue WHERE wo = ?", (wo_id,)).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail=f"{wo_id} not in queue")
@@ -2605,7 +2610,7 @@ async def reorder_queue_entry(wo_id: str, req: QueuePositionRequest):
     """Reorder a queue entry. Pass position (absolute int) or before (WO ID to insert before)."""
     wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             if req.before:
                 before_id = req.before.upper() if req.before.upper().startswith("WO-") else f"WO-{req.before}"
                 before_pos = conn.execute("SELECT position FROM queue WHERE wo = ?", (before_id,)).fetchone()
@@ -2630,7 +2635,7 @@ async def remove_from_queue(wo_id: str):
     """Remove a WO from the dispatch queue."""
     wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             conn.execute("DELETE FROM queue WHERE wo = ?", (wo_id,))
             conn.commit()
     except Exception as e:
@@ -2648,7 +2653,7 @@ async def list_phases():
 @app.post("/api/phases")
 async def create_phase(req: PhaseRequest):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             existing = conn.execute("SELECT id FROM phases WHERE id = ?", (req.id,)).fetchone()
             if existing:
                 raise HTTPException(status_code=409, detail=f"Phase '{req.id}' already exists")
@@ -2663,7 +2668,7 @@ async def create_phase(req: PhaseRequest):
 @app.put("/api/phases/{phase_id}")
 async def update_phase(phase_id: str, req: PhaseUpdateRequest):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             row = conn.execute("SELECT * FROM phases WHERE id = ?", (phase_id,)).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail=f"Phase '{phase_id}' not found")
@@ -2693,7 +2698,7 @@ async def update_phase(phase_id: str, req: PhaseUpdateRequest):
 @app.delete("/api/phases/{phase_id}")
 async def delete_phase(phase_id: str):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             conn.execute("DELETE FROM phases WHERE id = ?", (phase_id,))
             conn.commit()
     except Exception as e:
@@ -2711,7 +2716,7 @@ async def list_milestones():
 @app.post("/api/milestones")
 async def create_milestone(req: MilestoneRequest):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             existing = conn.execute("SELECT id FROM milestones WHERE id = ?", (req.id,)).fetchone()
             if existing:
                 raise HTTPException(status_code=409, detail=f"Milestone '{req.id}' already exists")
@@ -2726,7 +2731,7 @@ async def create_milestone(req: MilestoneRequest):
 @app.put("/api/milestones/{milestone_id}")
 async def update_milestone(milestone_id: str, req: MilestoneUpdateRequest):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             row = conn.execute("SELECT * FROM milestones WHERE id = ?", (milestone_id,)).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail=f"Milestone '{milestone_id}' not found")
@@ -2752,7 +2757,7 @@ async def update_milestone(milestone_id: str, req: MilestoneUpdateRequest):
 @app.delete("/api/milestones/{milestone_id}")
 async def delete_milestone(milestone_id: str):
     try:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _db() as conn:
             conn.execute("DELETE FROM milestones WHERE id = ?", (milestone_id,))
             conn.commit()
     except Exception as e:
@@ -3822,7 +3827,7 @@ async def poll() -> None:
             # board the way phase/pin/position are, so they must stay in sync
             # — previously frozen at whatever they were on first registration,
             # silently going stale if a WO's spec changed later.
-            with sqlite3.connect(DB_PATH) as _conn:
+            with _db() as _conn:
                 _conn.execute(
                     "UPDATE queue SET priority=?, title=?, effort=?, depends_on=?, files_likely_changed=? WHERE wo=?",
                     (entry["priority"], entry["title"], entry["effort"],
@@ -5230,7 +5235,7 @@ async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
     if tool_name == "delete_phase":
         try:
             id_ = str(tool_input.get("id", "")).strip()
-            with sqlite3.connect(DB_PATH) as conn:
+            with _db() as conn:
                 cur = conn.execute("DELETE FROM phases WHERE id = ?", (id_,))
                 conn.commit()
             return f"✅ Phase deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Phase '{id_}' not found"
@@ -5251,7 +5256,7 @@ async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
     if tool_name == "delete_milestone":
         try:
             id_ = str(tool_input.get("id", "")).strip()
-            with sqlite3.connect(DB_PATH) as conn:
+            with _db() as conn:
                 cur = conn.execute("DELETE FROM milestones WHERE id = ?", (id_,))
                 conn.commit()
             return f"✅ Milestone deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Milestone '{id_}' not found"
@@ -5860,13 +5865,13 @@ async def pm_chat(req: PMChatRequest):
                 plan_action_results.append(f"✅ Program deleted: {id_}" if ok else f"⚠️ Program '{id_}' not found")
             elif action == "DELETE_PHASE":
                 id_ = args[0].strip()
-                with sqlite3.connect(DB_PATH) as conn:
+                with _db() as conn:
                     cur = conn.execute("DELETE FROM phases WHERE id = ?", (id_,))
                     conn.commit()
                 plan_action_results.append(f"✅ Phase deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Phase '{id_}' not found")
             elif action == "DELETE_MILESTONE":
                 id_ = args[0].strip()
-                with sqlite3.connect(DB_PATH) as conn:
+                with _db() as conn:
                     cur = conn.execute("DELETE FROM milestones WHERE id = ?", (id_,))
                     conn.commit()
                 plan_action_results.append(f"✅ Milestone deleted: {id_}" if cur.rowcount > 0 else f"⚠️ Milestone '{id_}' not found")
