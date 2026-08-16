@@ -12,6 +12,11 @@
 # Re-runs on every review submission and on label changes, so approving a PR
 # (or adding `risk-tier-approved`, which GitHub allows on your own PR) flips
 # this check green without needing a new commit.
+#
+# Do not cancel in-progress runs. GitHub required checks treat CANCELLED as
+# blocking, so an opened+labeled race (PR #224) left merge BLOCKED even though
+# the surviving run was green. Both runs must be allowed to finish; the script
+# retries the label lookup so `opened` absorbs create-then-label.
 # =============================================================================
 
 name: Risk Tier Approval Gate
@@ -29,7 +34,7 @@ permissions:
 
 concurrency:
   group: risk-tier-approval-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   check:

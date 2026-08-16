@@ -35,6 +35,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -44,6 +45,8 @@ WO_DIRS = [REPO_ROOT / "docs" / "work_orders", REPO_ROOT / "docs" / "project_man
 _BRANCH_RE = re.compile(r"wo/(\d+)-", re.IGNORECASE)
 _PRIORITY_RE = re.compile(r"\*\*Priority:\*\*\s*(P[0-3])", re.IGNORECASE)
 APPROVAL_LABEL = "risk-tier-approved"
+_DEFAULT_LABEL_WAIT = 30.0
+_DEFAULT_LABEL_POLL = 2.0
 
 
 def extract_wo_number(branch: str) -> int | None:
@@ -102,6 +105,30 @@ def has_approval_label(repo: str, pr_number: int, token: str) -> bool:
     return any(str(item.get("name") or "") == APPROVAL_LABEL for item in labels)
 
 
+def _wait_seconds() -> float:
+    raw = os.environ.get("RISK_TIER_LABEL_WAIT_SECONDS")
+    return float(raw) if raw is not None else _DEFAULT_LABEL_WAIT
+
+
+def _poll_seconds() -> float:
+    raw = os.environ.get("RISK_TIER_LABEL_WAIT_POLL")
+    return float(raw) if raw is not None else _DEFAULT_LABEL_POLL
+
+
+def wait_for_human_approval(repo: str, pr_number: int, token: str) -> str | None:
+    """Return 'review' or 'label' once present. Retry so opened absorbs create-then-label."""
+    deadline = time.monotonic() + _wait_seconds()
+    while True:
+        if has_approval(repo, pr_number, token):
+            return "review"
+        if has_approval_label(repo, pr_number, token):
+            return "label"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        time.sleep(min(_poll_seconds(), remaining))
+
+
 def main() -> int:
     branch = os.environ.get("PR_HEAD_REF", "")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
@@ -137,11 +164,11 @@ def main() -> int:
         print("::error::P0/P1 WO but PR_NUMBER/GITHUB_REPOSITORY/GITHUB_TOKEN not available to check reviews.")
         return 1
 
-    if has_approval(repo, int(pr_number_str), token):
+    found = wait_for_human_approval(repo, int(pr_number_str), token)
+    if found == "review":
         print(f"{priority} WO has at least one APPROVED review — pass.")
         return 0
-
-    if has_approval_label(repo, int(pr_number_str), token):
+    if found == "label":
         print(f"{priority} WO has the {APPROVAL_LABEL} label — pass.")
         return 0
 
