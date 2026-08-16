@@ -60,3 +60,16 @@ def test_runner_has_no_bare_communicate():
         assert ".communicate(" not in text, f"unbounded communicate in {path.name}"
         assert "from proc import" in text
         assert "communicate" in text
+
+
+def test_parallel_sdk_review_is_bounded():
+    text = (RUNNER / "review_chain.py").read_text(encoding="utf-8")
+    sync_start = text.index("def _run_sdk_reviewer_sync")
+    async_start = text.index("async def _run_sdk_reviewer")
+    async_end = text.index("# Config", async_start)
+    sync_body = text[sync_start:async_start]
+    async_body = text[async_start:async_end]
+    assert "timeout=" in sync_body
+    assert "Anthropic(" in sync_body
+    assert "wait_for" in async_body
+    assert "timeout=ASK" in async_body
