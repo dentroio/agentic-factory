@@ -109,12 +109,21 @@ def test_pre_pr_check_target_points_at_the_real_script():
 def test_the_gate_has_no_failure_bypasses():
     """`|| true` in the gate is the one thing every doc says it must not have.
 
-    The exit-5 tolerance ci.yml carries is not a bypass — pytest returns 5 for
-    "no tests collected", which is not a test failure — but it is the only
-    tolerated non-zero, and it has to be spelled out rather than blanket-true.
+    Pytest exit 5 (no tests collected) must fail the gate. An empty or
+    renamed tests/unit/ is not a pass.
     """
     for target in ("ci-local", "test", "pre-pr-check"):
         recipe = _recipe(target)
         assert "|| true" not in recipe, f"{target} swallows failures with || true"
         for match in re.findall(r"\|\|\s*\{([^}]*)\}", recipe):
             assert "exit" in match, f"{target} has a || branch that never exits: {match}"
+            assert "eq 5" not in match, f"{target} still treats an empty suite as green: {match}"
+
+
+def test_ci_does_not_treat_an_empty_suite_as_green():
+    ci = CI_WORKFLOW.read_text()
+    makefile_test = _recipe("test")
+    assert "eq 5" not in ci
+    assert "eq 5" not in makefile_test
+    assert "-ge 20" in ci
+    assert "-ge 20" in makefile_test
