@@ -39,7 +39,7 @@ from wo_resolver import (
     extract_wo_from_title,
 )
 import dispatch_control
-from db import connect as _db_connect
+from db import connect as _db_connect, remember_runs as _db_remember_runs, sync_runs as _db_sync_runs
 from llm_client import messages_create
 from vault_auth import load_vault_token
 
@@ -167,6 +167,7 @@ def _load_state() -> None:
     db_runs = _db_load_all_runs()
     if db_runs:
         _dispatch_state = db_runs
+        _db_remember_runs(_dispatch_state)
         print(f"[orchestrator] loaded {len(db_runs)} dispatch entries from SQLite")
     elif DISPATCH_STATE_PATH.exists():
         try:
@@ -649,50 +650,7 @@ def _db_load_all_runs() -> dict[str, dict]:
 
 def _db_sync_dispatch() -> None:
     """Sync the in-memory _dispatch_state dict to SQLite — called from _save_dispatch()."""
-    try:
-        with _db() as conn:
-            existing = {row[0] for row in conn.execute("SELECT wo FROM runs").fetchall()}
-            for wo_id in existing - set(_dispatch_state.keys()):
-                conn.execute("DELETE FROM runs WHERE wo = ?", (wo_id,))
-            for wo_id, record in _dispatch_state.items():
-                conn.execute("""
-                    INSERT INTO runs
-                      (wo, slug, agent, backend, workstation, claimed_at, status,
-                       step, last_seen, completed_at, pr_url, pr_number,
-                       attempt_count, first_claimed_at, retried_at, stuck, stuck_since)
-                    VALUES
-                      (:wo, :slug, :agent, :backend, :workstation, :claimed_at, :status,
-                       :step, :last_seen, :completed_at, :pr_url, :pr_number,
-                       :attempt_count, :first_claimed_at, :retried_at, :stuck, :stuck_since)
-                    ON CONFLICT(wo) DO UPDATE SET
-                      slug=excluded.slug, agent=excluded.agent, backend=excluded.backend,
-                      workstation=excluded.workstation, claimed_at=excluded.claimed_at,
-                      status=excluded.status, step=excluded.step,
-                      last_seen=excluded.last_seen, completed_at=excluded.completed_at,
-                      pr_url=excluded.pr_url, pr_number=excluded.pr_number,
-                      attempt_count=excluded.attempt_count, first_claimed_at=excluded.first_claimed_at,
-                      retried_at=excluded.retried_at, stuck=excluded.stuck, stuck_since=excluded.stuck_since
-                """, {
-                    "wo": wo_id,
-                    "slug": record.get("slug", ""),
-                    "agent": record.get("agent", ""),
-                    "backend": record.get("backend", ""),
-                    "workstation": record.get("workstation", ""),
-                    "claimed_at": record.get("claimed_at"),
-                    "status": record.get("status", "claimed"),
-                    "step": record.get("step", ""),
-                    "last_seen": record.get("last_seen"),
-                    "completed_at": record.get("completed_at"),
-                    "pr_url": record.get("pr_url", ""),
-                    "pr_number": record.get("pr_number"),
-                    "attempt_count": record.get("attempt_count", 0),
-                    "first_claimed_at": record.get("first_claimed_at"),
-                    "retried_at": record.get("retried_at"),
-                    "stuck": int(bool(record.get("stuck", False))),
-                    "stuck_since": record.get("stuck_since"),
-                })
-    except Exception as e:
-        print(f"[db] sync_dispatch failed: {e}")
+    _db_sync_runs(DB_PATH, _dispatch_state)
 
 
 def _db_append_step(wo_id: str, status: str, step: str = "", agent: str = "") -> None:
