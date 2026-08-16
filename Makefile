@@ -6,7 +6,7 @@ PYTHON ?= python3
 
 .PHONY: help \
         agent-setup \
-        test pre-pr-check ci-local \
+        test pre-pr-check secrets ci-local \
         up down logs restart \
         agent-install agent-remove agent-start agent-stop agent-logs agent-status agent-once \
         docs-check docs-check-strict docs-gdrive \
@@ -27,11 +27,8 @@ agent-setup:  ## First-time setup — stores secrets in macOS Keychain
 # instructions it failed with "No rule to make target".
 #
 # The template's version composes lint/test/check-migrations/build. This repo's
-# CI enforces exactly one thing — the unit tests — so composing steps CI does
-# not run would break the promise in the other direction: a gate that fails
-# locally on code GitHub would accept is a gate people learn to skip. Add a
-# step here only when ci.yml grows one; tests/unit/test_ci_local_mirrors_ci.py
-# fails if the two drift apart.
+# CI enforces unit tests plus Gitleaks. Add a step here only when ci.yml grows
+# one; tests/unit/test_ci_local_mirrors_ci.py fails if the two drift apart.
 
 test:  ## Run unit tests — must stay identical to the Unit Tests job in ci.yml
 	@$(PYTHON) -c "import pytest" 2>/dev/null || { \
@@ -44,9 +41,17 @@ test:  ## Run unit tests — must stay identical to the Unit Tests job in ci.yml
 pre-pr-check:  ## Static pre-PR check — the patterns the AI reviewer flags, no API call
 	$(PYTHON) scripts/pre_pr_check.py
 
+secrets:  ## Scan committed git history for secrets — must stay identical to the Gitleaks job in ci.yml
+	@command -v gitleaks >/dev/null || { \
+	  echo "gitleaks is not installed for this machine."; \
+	  echo "Install it the same way CI does conceptually:  brew install gitleaks"; \
+	  exit 1; }
+	gitleaks detect --source . --redact --exit-code 1
+
 ci-local:  ## Full PR gate locally — run this before every PR
 	$(MAKE) test
 	$(MAKE) pre-pr-check
+	$(MAKE) secrets
 
 # ── Docker Compose (dashboard + orchestrator + watchdog) ─────────────────────
 

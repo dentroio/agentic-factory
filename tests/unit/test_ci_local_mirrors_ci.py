@@ -89,6 +89,16 @@ def test_ci_local_runs_the_unit_tests_and_the_pre_pr_check():
 
     assert "test" in called
     assert "pre-pr-check" in called
+    assert "secrets" in called
+
+
+def test_ci_has_gitleaks_job_and_local_secrets_target():
+    ci = CI_WORKFLOW.read_text()
+    assert "name: Secret Detection (Gitleaks)" in ci
+    assert "gitleaks/gitleaks-action@" in ci
+    recipe = _recipe("secrets")
+    assert "gitleaks detect" in recipe
+    assert "|| true" not in recipe
 
 
 def test_make_test_matches_the_pytest_invocation_in_ci():
@@ -112,7 +122,7 @@ def test_the_gate_has_no_failure_bypasses():
     Pytest exit 5 (no tests collected) must fail the gate. An empty or
     renamed tests/unit/ is not a pass.
     """
-    for target in ("ci-local", "test", "pre-pr-check"):
+    for target in ("ci-local", "test", "pre-pr-check", "secrets"):
         recipe = _recipe(target)
         assert "|| true" not in recipe, f"{target} swallows failures with || true"
         for match in re.findall(r"\|\|\s*\{([^}]*)\}", recipe):
