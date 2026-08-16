@@ -19,7 +19,8 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
-| WO-1066 | Stale sweep must not abort poll | P1 | 🟡 In Progress | — |
+| WO-1067 | LLM calls must not block the orchestrator event loop | P1 | 🟡 In Progress | — |
+| WO-1066 | Stale sweep must not abort poll | P1 | ✅ Complete | 2026-08-16 |
 | WO-1065 | Atomic JSON writes for in-flight factory state | P1 | ✅ Complete | 2026-08-16 |
 | WO-1064 | Empty unit-test suite must fail CI | P1 | ✅ Complete | 2026-08-16 |
 | WO-1063 | Remaining workflow injection (AF-13) | P0 | ✅ Complete | 2026-08-16 |

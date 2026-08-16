@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Callable
 
 import httpx
+from llm_client import messages_create
 from wo_resolver import resolve_wo_for_pr  # noqa: F401 — available for callers
 
 FAILURE_THRESHOLD_MINUTES = 90
@@ -215,7 +216,8 @@ async def _llm_diagnose_ci_failure(
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=anthropic_key)
-        msg = client.messages.create(
+        msg = await messages_create(
+            client,
             model=_current_automation_model(),
             max_tokens=512,
             system=system,
@@ -253,7 +255,8 @@ async def _llm_describe_conflict(
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=anthropic_key)
-        msg = client.messages.create(
+        msg = await messages_create(
+            client,
             model="claude-haiku-4-5-20251001",
             max_tokens=150,
             system=system,
