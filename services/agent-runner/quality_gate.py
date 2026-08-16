@@ -5,6 +5,8 @@ import os
 import re
 from pathlib import Path
 
+from proc import communicate as _communicate
+
 
 async def _run(cmd: list[str], cwd: str, timeout: int, env: dict | None = None) -> tuple[int, str]:
     try:
@@ -15,7 +17,7 @@ async def _run(cmd: list[str], cwd: str, timeout: int, env: dict | None = None) 
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        stdout, _ = await _communicate(proc, timeout=timeout)
         output = stdout.decode("utf-8", errors="replace") if stdout else ""
         return proc.returncode or 0, output
     except asyncio.TimeoutError:

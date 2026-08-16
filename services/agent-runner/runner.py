@@ -70,6 +70,7 @@ from prompt_builder import (
     update_memory_after_completion, update_memory_after_failure,
 )
 from quality_gate import run_container_rebuild, run_quality_gate, _ci_env
+from proc import GH, GIT, GIT_PUSH, WO_START, communicate as _communicate
 from review_chain import get_worktree_diff, run_review_chain
 from thread_monitor import ThreadMonitor, _is_question
 
@@ -127,7 +128,7 @@ async def _generate_validation_steps(wo_id: str, title: str, pr_url: str, worktr
             cwd=worktree,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )
-        out, _ = await proc.communicate()
+        out, _ = await _communicate(proc, timeout=GIT)
         changed = out.decode(errors="replace").strip().splitlines()
     except Exception:
         changed = []
@@ -309,7 +310,7 @@ async def _setup_worktree(wo_number: str | int, title: str) -> str:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            await proc.communicate()
+            await _communicate(proc, timeout=GIT)
             _log(f"Worktree clean (stashed, not discarded) — resuming at {worktree_dir}")
             return worktree_dir
         _log(f"Creating worktree via wo_start.sh: wo-{num}-{title_slug}")
@@ -319,7 +320,10 @@ async def _setup_worktree(wo_number: str | int, title: str) -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        out, _ = await proc.communicate()
+        try:
+            out, _ = await _communicate(proc, timeout=WO_START)
+        except asyncio.TimeoutError:
+            raise RuntimeError(f"wo_start.sh timed out after {WO_START}s") from None
         if proc.returncode != 0:
             raise RuntimeError(f"wo_start.sh failed:\n{out.decode(errors='replace')[:600]}")
         _log(f"Worktree ready: {worktree_dir}")
@@ -338,7 +342,7 @@ async def _build_change_summary(worktree: str) -> str:
         cwd=worktree,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
     )
-    out, _ = await proc.communicate()
+    out, _ = await _communicate(proc, timeout=GIT)
     lines = out.decode(errors="replace").strip().splitlines()
     if not lines:
         return "No committed changes vs main."
@@ -366,13 +370,16 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
 
     push_env = _ci_env(worktree)
 
-    async def _git(*args, env=None) -> tuple[int, str]:
+    async def _git(*args, env=None, timeout=GIT) -> tuple[int, str]:
         proc = await asyncio.create_subprocess_exec(
             "git", *args, cwd=worktree,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             env=env,
         )
-        out, _ = await proc.communicate()
+        try:
+            out, _ = await _communicate(proc, timeout=timeout)
+        except asyncio.TimeoutError:
+            return 1, f"git {' '.join(args)} timed out after {timeout}s"
         return proc.returncode, out.decode(errors="replace").strip()
 
     # Discard auto-generated help docs before checking status — the doc-writer
@@ -399,7 +406,7 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
     _log(f"{wo_id} committed: {out.splitlines()[0] if out else '(no output)'}")
 
     # Push — pass venv-enriched PATH so the pre-push hook finds black/ruff
-    rc, out = await _git("push", "-u", "origin", branch, env=push_env)
+    rc, out = await _git("push", "-u", "origin", branch, env=push_env, timeout=GIT_PUSH)
     if rc != 0:
         _log(f"{wo_id} git push failed: {out[:200]}")
         await monitor.post(f"⚠️ Git push failed:\n```\n{out[:400]}\n```\nBranch: `{branch}`")
@@ -417,7 +424,11 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
         cwd=worktree,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
     )
-    pr_out, _ = await pr_proc.communicate()
+    try:
+        pr_out, _ = await _communicate(pr_proc, timeout=GH)
+    except asyncio.TimeoutError:
+        pr_out = b""
+        _log(f"{wo_id} gh pr create timed out after {GH}s — checking if it actually landed")
     pr_url = pr_out.decode(errors="replace").strip()
     if pr_proc.returncode == 0:
         _log(f"{wo_id} PR created: {pr_url}")
@@ -437,7 +448,11 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
         cwd=worktree,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
     )
-    check_out, _ = await check_proc.communicate()
+    try:
+        check_out, _ = await _communicate(check_proc, timeout=GH)
+    except asyncio.TimeoutError:
+        check_out = b"[]"
+        _log(f"{wo_id} gh pr list timed out after {GH}s")
     try:
         existing = json.loads(check_out.decode(errors="replace").strip() or "[]")
     except Exception as e:

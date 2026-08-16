@@ -4,6 +4,7 @@ import shutil
 from typing import AsyncIterator
 
 from backends.base import AgentBackend, BackendHangError, QuotaExceededError
+from proc import ASK, communicate as _communicate
 
 _FIRST_OUTPUT_TIMEOUT = 45  # seconds before we declare the backend hung
 
@@ -94,7 +95,10 @@ class CodexBackend(AgentBackend):
             stderr=asyncio.subprocess.DEVNULL,
         )
         assert proc.stdout is not None
-        out, _ = await proc.communicate()
+        try:
+            out, _ = await _communicate(proc, timeout=ASK)
+        except asyncio.TimeoutError:
+            return f"[codex timed out after {ASK}s]"
         text = out.decode("utf-8", errors="replace").strip()
         if _QUOTA_RE.search(text):
             raise QuotaExceededError(f"codex quota exhausted: {text[:120]}")
