@@ -39,6 +39,7 @@ from wo_resolver import (
     extract_wo_from_title,
 )
 import dispatch_control
+from llm_client import messages_create
 from vault_auth import load_vault_token
 
 load_dotenv()
@@ -4722,7 +4723,8 @@ async def plan_draft(req: DraftRequest):
             hint_block = ("\n\nUser-provided hints (respect these in your output):\n" + "\n".join(hints)) if hints else ""
             draft_system = _build_draft_system(_pm_situational_brief())
             model = _get_model()
-            msg = client.messages.create(
+            msg = await messages_create(
+                client,
                 model=model,
                 max_tokens=1024,
                 system=draft_system,
@@ -5659,7 +5661,8 @@ async def pm_chat(req: PMChatRequest):
                     *[{"type": "image", "source": {"type": "base64", "media_type": img.get("media_type", "image/png"), "data": img["data"]}} for img in req.images],
                     *([] if not user_message else [{"type": "text", "text": user_message}]),
                 ]})
-                _amsg = _aclient.messages.create(
+                _amsg = await messages_create(
+                    _aclient,
                     model=_model,
                     max_tokens=4096,
                     system=system,
@@ -5679,7 +5682,8 @@ async def pm_chat(req: PMChatRequest):
                         result = await _execute_pm_tool(tc.name, tc.input)
                         tool_results.append({"type": "tool_result", "tool_use_id": tc.id, "content": result})
                     tool_messages.append({"role": "user", "content": tool_results})
-                    _amsg = _aclient.messages.create(
+                    _amsg = await messages_create(
+                        _aclient,
                         model=_model,
                         max_tokens=4096,
                         system=system,
