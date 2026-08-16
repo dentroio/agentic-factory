@@ -35,7 +35,7 @@ target for Oryntra's artifacts.
 
 | Surface | Endpoint | Notes |
 |---------|----------|-------|
-| Post message/screenshot to WO thread | `POST {status-site}/api/proxy/thread/{wo}/messages` | No auth needed; accepts `image_data` base64; orchestrator saves and returns `image_url` |
+| Post message/screenshot to WO thread | `POST {status-site}/api/proxy/thread/{wo}/messages` | Requires `Authorization: Bearer <API_SECRET>` (or a same-origin browser Origin); accepts `image_data` base64; orchestrator saves and returns `image_url` |
 | Read WO thread | `GET {status-site}/api/thread/{wo}/messages?since=` | Polling path used by thread UI |
 | Active WO detection | `GET {status-site}/api/factory/dispatch` | Flat map `{wo_id: {status, claimed_at, ...}}`; active = `claimed` / `in_progress` / `awaiting_human` |
 | Create factory WO | `POST {status-site}/api/factory/wos` | Auto-assigns next number from spec files; writes spec file + PLAN entry via GitHub |
