@@ -19,6 +19,7 @@ from pathlib import Path
 import httpx
 
 from backends.claude import _subscription_env
+from prompt_builder import wrap_untrusted
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8100")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
@@ -34,6 +35,14 @@ _AUTH = {"Authorization": f"Bearer {_API_SECRET}"} if _API_SECRET else {}
 # tier doesn't have credits for) — this subprocess runs with no cwd inside a repo
 # that would otherwise override it, so it's exposed to that ambient default.
 REVIEW_MODEL = os.getenv("REVIEWER_MODEL", "claude-sonnet-5")
+
+
+def may_auto_approve(priority: str | None, has_ui: bool, has_api_surface: bool) -> bool:
+    """Human validation stays human for P0/P1 and for any UI or API-surface change (AF-17)."""
+    if has_ui or has_api_surface:
+        return False
+    return (priority or "").strip().upper() in {"P2", "P3"}
+
 
 # Files under these paths count as direct UI changes
 UI_PATHS = ("frontend/src/",)
@@ -183,7 +192,7 @@ Review for:
 {extra}
 
 Diff (first 14 000 chars):
-{diff[:14000]}
+{wrap_untrusted("pull request diff", diff[:14000])}
 
 Reply with exactly one of:
   APPROVE: <one sentence why this is ready to merge>
@@ -382,6 +391,7 @@ async def review_one(v: dict) -> None:
 
     has_ui, has_api_surface, _, services = _classify(diff)
     title = await _wo_title(wo)
+    wo_spec = await _fetch_wo_spec(wo)
     pr_num = _pr_number(pr_url)
 
     # --- Code review -------------------------------------------------------
@@ -399,48 +409,44 @@ async def review_one(v: dict) -> None:
         return
 
     # --- Determine if human verification is needed -------------------------
-    needs_human = has_ui or has_api_surface
-
-    if has_api_surface and not has_ui:
-        _log(f"{wo}: API surface changed — rebuilding {services} and smoke-testing")
-        await _post_thread(
-            wo,
-            f"✅ **Code review passed**\n\n"
-            f"API routes or schemas changed — rebuilding the affected containers and running "
-            f"smoke tests to confirm nothing broke before asking for your review...\n\n"
-            f"Services being rebuilt: `{'`, `'.join(services)}`"
-        )
-
-        repo = LOCAL_REPO_PATH
-        if services and repo:
-            build_ok, build_out = await asyncio.get_event_loop().run_in_executor(
-                None, _rebuild_and_smoke, repo, services
-            )
-            if not build_ok:
-                # Extract just the first meaningful error line from raw output
-                error_lines = [l for l in build_out.splitlines() if l.strip() and
-                               any(w in l.lower() for w in ("error", "failed", "exception", "traceback"))]
-                error_summary = "\n".join(error_lines[:5]) if error_lines else build_out[-400:]
-                msg = (
-                    f"🔴 **Container build failed** — rejecting until the agent fixes this.\n\n"
-                    f"**Error:**\n```\n{error_summary}\n```\n\n"
-                    f"Services that failed to rebuild: `{'`, `'.join(services)}`"
-                )
-                await _post_thread(wo, msg)
-                await _reject(wo, f"Container rebuild failed: {error_summary[:300]}")
-                return
+    if not may_auto_approve(wo_spec.get("priority"), has_ui, has_api_surface):
+        if has_api_surface and not has_ui:
+            _log(f"{wo}: API surface changed — rebuilding {services} and smoke-testing")
             await _post_thread(
                 wo,
-                f"✅ **Containers rebuilt and smoke tests passed** — "
-                f"`{'`, `'.join(services)}` are healthy."
+                f"✅ **Code review passed**\n\n"
+                f"API routes or schemas changed — rebuilding the affected containers and running "
+                f"smoke tests to confirm nothing broke before asking for your review...\n\n"
+                f"Services being rebuilt: `{'`, `'.join(services)}`"
             )
-        else:
-            _log(f"{wo}: LOCAL_REPO_PATH not set — skipping rebuild; routing to human anyway")
 
-    if needs_human:
-        wo_spec = await _fetch_wo_spec(wo)
+            repo = LOCAL_REPO_PATH
+            if services and repo:
+                build_ok, build_out = await asyncio.get_event_loop().run_in_executor(
+                    None, _rebuild_and_smoke, repo, services
+                )
+                if not build_ok:
+                    error_lines = [l for l in build_out.splitlines() if l.strip() and
+                                   any(w in l.lower() for w in ("error", "failed", "exception", "traceback"))]
+                    error_summary = "\n".join(error_lines[:5]) if error_lines else build_out[-400:]
+                    msg = (
+                        f"🔴 **Container build failed** — rejecting until the agent fixes this.\n\n"
+                        f"**Error:**\n```\n{error_summary}\n```\n\n"
+                        f"Services that failed to rebuild: `{'`, `'.join(services)}`"
+                    )
+                    await _post_thread(wo, msg)
+                    await _reject(wo, f"Container rebuild failed: {error_summary[:300]}")
+                    return
+                await _post_thread(
+                    wo,
+                    f"✅ **Containers rebuilt and smoke tests passed** — "
+                    f"`{'`, `'.join(services)}` are healthy."
+                )
+            else:
+                _log(f"{wo}: LOCAL_REPO_PATH not set — skipping rebuild; routing to human anyway")
+
         guide = _generate_verification_guide(wo, title, pr_url, pr_num, diff, wo_spec)
-        _log(f"{wo}: code OK — requesting human visual verification")
+        _log(f"{wo}: code OK — requesting human sign-off (priority={wo_spec.get('priority') or 'unknown'})")
         await _post_thread(
             wo,
             f"✅ **Code review passed** — ready for your sign-off.\n\n"
@@ -451,7 +457,7 @@ async def review_one(v: dict) -> None:
         )
         return
 
-    # Pure backend with no API surface changes — auto-approve
+    # P2/P3 backend-only with no API surface — auto-approve
     _log(f"{wo}: APPROVE (backend-only, no API surface changes) — {notes[:120]}")
     await _post_thread(
         wo,
