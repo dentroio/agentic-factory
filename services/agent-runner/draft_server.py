@@ -18,6 +18,9 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 
+from config import API_SECRET
+from draft_auth import is_authorized
+
 # Wake event + pending dispatch — set by POST /dispatch, consumed by runner.py
 _wake_event = threading.Event()
 _dispatch_lock = threading.Lock()
@@ -190,7 +193,15 @@ class _ThreadedServer(ThreadingMixIn, HTTPServer):
 
 
 class _DraftHandler(BaseHTTPRequestHandler):
+    def _require_auth(self) -> bool:
+        if is_authorized(API_SECRET, self.headers.get("Authorization", "")):
+            return True
+        self._json(401, {"error": "Unauthorized"})
+        return False
+
     def do_GET(self):
+        if not self._require_auth():
+            return
         if self.path == "/health":
             try:
                 import backends.quota_state as _qs
@@ -204,6 +215,8 @@ class _DraftHandler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        if not self._require_auth():
+            return
         if self.path == "/dispatch":
             self._handle_dispatch()
             return
@@ -364,6 +377,8 @@ class _DraftHandler(BaseHTTPRequestHandler):
         self._json(200, {"agents": agents})
 
     def do_PUT(self):
+        if not self._require_auth():
+            return
         if self.path.startswith("/api/agents/"):
             parts = self.path.split("/")
             if len(parts) == 4:
@@ -374,6 +389,8 @@ class _DraftHandler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def do_DELETE(self):
+        if not self._require_auth():
+            return
         if self.path.startswith("/api/agents/"):
             parts = self.path.split("/")
             if len(parts) == 4:
@@ -542,12 +559,8 @@ class _DraftHandler(BaseHTTPRequestHandler):
 
 
 def start() -> None:
-    # Was 0.0.0.0 with no auth anywhere in _DraftHandler — anyone on the same
-    # network (office wifi, hotel, café) could POST /dispatch to start
-    # autonomous code execution as this user, or PUT /api/agents/{name} to
-    # plant an attacker-controlled API key and restart the daemon. Loopback
-    # binding is the actual fix; a bearer token would be defense in depth on
-    # top of it but isn't added here since nothing currently reads one.
+    # Loopback binding (AF-07) plus a bearer token so a local process cannot
+    # POST /dispatch or rewrite LaunchAgent plists without API_SECRET.
     server = _ThreadedServer(("127.0.0.1", DRAFT_PORT), _DraftHandler)
     print(f"[draft-server] Listening on 127.0.0.1:{DRAFT_PORT}", flush=True)
     server.serve_forever()

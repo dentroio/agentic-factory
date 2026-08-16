@@ -4308,6 +4308,10 @@ _AGENT_RUNNER_CANDIDATES = [
 AGENT_RUNNER_URL = _AGENT_RUNNER_ENV_OVERRIDE or _AGENT_RUNNER_CANDIDATES[0]
 
 
+def _runner_headers() -> dict:
+    return {"Authorization": f"Bearer {API_SECRET}"}
+
+
 async def _refresh_agent_runner_url() -> None:
     """Probe candidate runner ports and point AGENT_RUNNER_URL at whichever
     responds — runs on a schedule so a runner restarting onto a different
@@ -4319,7 +4323,7 @@ async def _refresh_agent_runner_url() -> None:
     async with httpx.AsyncClient(timeout=3) as client:
         for candidate in _AGENT_RUNNER_CANDIDATES:
             try:
-                r = await client.get(f"{candidate}/health")
+                r = await client.get(f"{candidate}/health", headers=_runner_headers())
                 if r.status_code == 200:
                     AGENT_RUNNER_URL = candidate
                     return
@@ -4584,7 +4588,7 @@ async def get_backends():
     }
     try:
         async with httpx.AsyncClient(timeout=3) as client:
-            r = await client.get(f"{AGENT_RUNNER_URL}/health")
+            r = await client.get(f"{AGENT_RUNNER_URL}/health", headers=_runner_headers())
             if r.status_code == 200:
                 data = r.json()
                 result["agent_runner_online"] = True
@@ -4601,7 +4605,7 @@ async def get_runner_agents():
     """Proxy agent daemon status from the host runner (launchctl + plist state)."""
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{AGENT_RUNNER_URL}/api/agents")
+            r = await client.get(f"{AGENT_RUNNER_URL}/api/agents", headers=_runner_headers())
             if r.status_code == 200:
                 return r.json()
     except Exception:
@@ -4619,7 +4623,7 @@ async def configure_runner_agent(name: str, request: Request):
         pass
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.put(f"{AGENT_RUNNER_URL}/api/agents/{name}", json=body)
+            r = await client.put(f"{AGENT_RUNNER_URL}/api/agents/{name}", json=body, headers=_runner_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Agent runner unreachable: {e}")
@@ -4630,7 +4634,7 @@ async def remove_runner_agent(name: str):
     """Stop and uninstall an agent daemon (bootout + delete plist)."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.delete(f"{AGENT_RUNNER_URL}/api/agents/{name}")
+            r = await client.delete(f"{AGENT_RUNNER_URL}/api/agents/{name}", headers=_runner_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Agent runner unreachable: {e}")
@@ -4641,7 +4645,7 @@ async def start_runner_agent(name: str):
     """Bootstrap an agent LaunchAgent daemon via the host runner."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(f"{AGENT_RUNNER_URL}/api/agents/{name}/start")
+            r = await client.post(f"{AGENT_RUNNER_URL}/api/agents/{name}/start", headers=_runner_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Agent runner unreachable: {e}")
@@ -4652,7 +4656,7 @@ async def stop_runner_agent(name: str):
     """Bootout an agent LaunchAgent daemon via the host runner."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(f"{AGENT_RUNNER_URL}/api/agents/{name}/stop")
+            r = await client.post(f"{AGENT_RUNNER_URL}/api/agents/{name}/stop", headers=_runner_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Agent runner unreachable: {e}")
@@ -4713,6 +4717,7 @@ async def plan_draft(req: DraftRequest):
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(
                 f"{AGENT_RUNNER_URL}/api/draft",
+                headers=_runner_headers(),
                 json={
                     "description": req.description,
                     "next_wo_num": req.next_wo_num,
@@ -5042,6 +5047,7 @@ async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
                     await _dc.post(
                         f"{AGENT_RUNNER_URL}/dispatch",
                         json={"wo": wo_id, "backend": backend},
+                        headers=_runner_headers(),
                         timeout=3,
                     )
                     runner_woke = True
@@ -5676,6 +5682,7 @@ async def pm_chat(req: PMChatRequest):
             async with httpx.AsyncClient(timeout=180) as _c:
                 _r = await _c.post(
                     f"{AGENT_RUNNER_URL}/api/chat",
+                    headers=_runner_headers(),
                     json={"system": system, "message": user_message, "history": req.history,
                           "backend": req.backend if req.backend != "claude-api" else None},
                 )
