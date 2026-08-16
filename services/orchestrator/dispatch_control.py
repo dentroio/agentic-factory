@@ -17,6 +17,15 @@ import secrets
 from pathlib import Path
 
 
+def atomic_write_json(path: Path, payload) -> None:
+    """Write JSON via a sibling .tmp file then replace, so a crash cannot truncate the live file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
 def issue_claim_token() -> str:
     return secrets.token_urlsafe(32)
 
@@ -45,10 +54,7 @@ def load_pause(path: Path) -> dict:
 
 def save_pause(path: Path, paused: bool, reason: str = "") -> dict:
     payload = {"paused": bool(paused), "reason": str(reason or "")}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2) + "\n")
-    tmp.replace(path)
+    atomic_write_json(path, payload)
     return payload
 
 
@@ -72,10 +78,7 @@ def load_attempt_counts(path: Path) -> dict[str, int]:
 
 
 def save_attempt_counts(path: Path, counts: dict[str, int]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(counts, indent=2, sort_keys=True) + "\n")
-    tmp.replace(path)
+    atomic_write_json(path, counts)
 
 
 def recorded_attempts(counts: dict[str, int], wo_id: str, dispatch_count: int = 0) -> int:

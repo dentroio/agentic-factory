@@ -366,18 +366,18 @@ def _pm_memory_summary() -> str:
 def _save_dispatch() -> None:
     # JSON backup for other processes that may read the volume directly
     try:
-        DISPATCH_STATE_PATH.write_text(json.dumps(_dispatch_state, indent=2))
+        dispatch_control.atomic_write_json(DISPATCH_STATE_PATH, _dispatch_state)
     except Exception as e:
         print(f"[orchestrator] dispatch JSON backup failed: {e}")
     _db_sync_dispatch()
 
 
 def _save_held() -> None:
-    HOLD_PATH.write_text(json.dumps(sorted(_held_wos), indent=2))
+    dispatch_control.atomic_write_json(HOLD_PATH, sorted(_held_wos))
 
 
 def _save_validations() -> None:
-    VALIDATIONS_PATH.write_text(json.dumps(_validations, indent=2))
+    dispatch_control.atomic_write_json(VALIDATIONS_PATH, _validations)
 
 
 def _utcnow() -> str:

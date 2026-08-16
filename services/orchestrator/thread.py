@@ -4,6 +4,8 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+import dispatch_control
+
 THREADS_DIR = Path("/data/threads")
 _counter = 0  # monotonic sub-millisecond tie-breaker
 
@@ -26,7 +28,7 @@ def load_thread(wo_id: str) -> list[dict]:
 
 def save_thread(wo_id: str, messages: list[dict]) -> None:
     THREADS_DIR.mkdir(parents=True, exist_ok=True)
-    (THREADS_DIR / f"{wo_id}.json").write_text(json.dumps(messages, indent=2))
+    dispatch_control.atomic_write_json(THREADS_DIR / f"{wo_id}.json", messages)
 
 
 def append_message(wo_id: str, msg: dict) -> dict:

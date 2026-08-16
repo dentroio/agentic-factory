@@ -19,7 +19,8 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
-| WO-1064 | Empty unit-test suite must fail CI | P1 | 🟡 In Progress | — |
+| WO-1065 | Atomic JSON writes for in-flight factory state | P1 | 🟡 In Progress | — |
+| WO-1064 | Empty unit-test suite must fail CI | P1 | ✅ Complete | 2026-08-16 |
 | WO-1063 | Remaining workflow injection (AF-13) | P0 | ✅ Complete | 2026-08-16 |
 | WO-1062 | CI AI review treats the PR diff as data | P1 | ✅ Complete | 2026-08-16 |
 | WO-1061 | AI reviewer cannot satisfy the human validation gate | P1 | ✅ Complete | 2026-08-16 |
