@@ -129,3 +129,28 @@ def test_dispatch_and_thread_saves_use_atomic_write():
     assert "atomic_write_json(VALIDATIONS_PATH" in orch
     assert "atomic_write_json(THREADS_DIR" in thread
     assert ".write_text(json.dumps(messages" not in thread
+
+
+def test_live_claim_skips_vanished_and_finished_entries():
+    state = {
+        "WO-1": {"status": "claimed", "agent": "a"},
+        "WO-2": {"status": "in_progress", "agent": "b"},
+        "WO-3": {"status": "complete", "agent": "c"},
+        "WO-4": "not a dict",
+    }
+    assert m.live_claim(state, "WO-1") is state["WO-1"]
+    assert m.live_claim(state, "WO-2") is state["WO-2"]
+    assert m.live_claim(state, "WO-3") is None
+    assert m.live_claim(state, "WO-4") is None
+    assert m.live_claim(state, "WO-missing") is None
+    del state["WO-1"]
+    assert m.live_claim(state, "WO-1") is None
+
+
+def test_stale_sweep_re_reads_before_mutating():
+    orch = (REPO_ROOT / "services" / "orchestrator" / "orchestrator.py").read_text()
+    assert "live_claim(_dispatch_state, wo_id)" in orch
+    assert '_dispatch_state[wo_id]["status"] = "stale"' not in orch
+    assert '_dispatch_state[wo_id]["status"] = "awaiting_human"' not in orch
+    assert "stale-sweep {wo_id} failed" in orch
+    assert "_preflight_held.get(wo_id)" in orch

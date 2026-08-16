@@ -3584,54 +3584,60 @@ async def poll() -> None:
     stale_released = []
     recovered = []
     for wo_id, entry, age_min in stale_candidates:
-        agent_name = entry.get("agent", "unknown")
         try:
-            wo_num = int(wo_id.replace("WO-", ""))
-        except ValueError:
-            wo_num = None
-        pr = pr_by_wo.get(wo_num) if wo_num is not None else None
+            live = dispatch_control.live_claim(_dispatch_state, wo_id)
+            if live is None:
+                continue
+            agent_name = live.get("agent", "unknown")
+            try:
+                wo_num = int(wo_id.replace("WO-", ""))
+            except ValueError:
+                wo_num = None
+            pr = pr_by_wo.get(wo_num) if wo_num is not None else None
 
-        if pr:
-            pr_url = pr.get("html_url", "")
-            print(f"[orchestrator] {wo_id} claim looked stale ({age_min}m) but PR #{pr.get('number')} already exists — recovering instead of discarding")
-            _dispatch_state[wo_id]["status"] = "awaiting_human"
-            _dispatch_state[wo_id]["pr_url"] = pr_url
-            _dispatch_state[wo_id]["pr_number"] = pr.get("number")
-            recovered.append((wo_id, agent_name, age_min, pr_url))
-            thread_store.append_message(wo_id, thread_store.system_message(
-                f"⚠️ Claim went quiet for {age_min} minutes, but PR already exists — "
-                f"the agent finished, it just didn't check back in. Recovered to awaiting human review: {pr_url}"
-            ))
-            continue
+            if pr:
+                pr_url = pr.get("html_url", "")
+                print(f"[orchestrator] {wo_id} claim looked stale ({age_min}m) but PR #{pr.get('number')} already exists — recovering instead of discarding")
+                live["status"] = "awaiting_human"
+                live["pr_url"] = pr_url
+                live["pr_number"] = pr.get("number")
+                recovered.append((wo_id, agent_name, age_min, pr_url))
+                thread_store.append_message(wo_id, thread_store.system_message(
+                    f"⚠️ Claim went quiet for {age_min} minutes, but PR already exists — "
+                    f"the agent finished, it just didn't check back in. Recovered to awaiting human review: {pr_url}"
+                ))
+                continue
 
-        print(f"[orchestrator] {wo_id} stale claim ({age_min}m, agent={agent_name}) — releasing")
-        _dispatch_state[wo_id]["status"] = "stale"
-        _dispatch_state[wo_id]["stale_at"] = _utcnow()
-        stale_released.append((wo_id, agent_name, age_min))
-        thread_store.append_message(wo_id, thread_store.system_message(
-            f"⚠️ Claim expired after {age_min} minutes — agent `{agent_name}` appears dead. Re-queuing."
-        ))
-        # This sweep doesn't touch attempt_count — it's only ever incremented
-        # in /api/claim — but if the claim that just went stale was already
-        # the last allowed attempt, /api/next will now permanently skip this
-        # WO (see the comment there) and nothing will ever call /api/claim or
-        # /api/dispatch/{wo}/retry for it again. Same exhaustion gap as
-        # /retry, different trigger (timeout instead of an explicit failure).
-        stale_attempt_count = _dispatch_state[wo_id].get("attempt_count", 0)
-        if stale_attempt_count >= MAX_RETRY_ATTEMPTS and wo_id not in _max_retry_notified:
-            _max_retry_notified.add(wo_id)
+            print(f"[orchestrator] {wo_id} stale claim ({age_min}m, agent={agent_name}) — releasing")
+            live["status"] = "stale"
+            live["stale_at"] = _utcnow()
+            stale_released.append((wo_id, agent_name, age_min))
             thread_store.append_message(wo_id, thread_store.system_message(
-                f"🛑 {wo_id} exhausted all {MAX_RETRY_ATTEMPTS} attempts (last one timed out) — "
-                f"blocked from further claims until manually reset."
+                f"⚠️ Claim expired after {age_min} minutes — agent `{agent_name}` appears dead. Re-queuing."
             ))
-            asyncio.create_task(notify_factory_alert(
-                title=f"{wo_id} needs manual reset",
-                body=f"Its last attempt timed out (agent went quiet) and it has now failed all "
-                     f"{MAX_RETRY_ATTEMPTS} attempts. POST /api/dispatch/{wo_id}/reset to clear and retry.",
-                level="urgent",
-                source="max-retry-gate",
-                secrets=_load_secrets(),
-            ))
+            # This sweep doesn't touch attempt_count — it's only ever incremented
+            # in /api/claim — but if the claim that just went stale was already
+            # the last allowed attempt, /api/next will now permanently skip this
+            # WO (see the comment there) and nothing will ever call /api/claim or
+            # /api/dispatch/{wo}/retry for it again. Same exhaustion gap as
+            # /retry, different trigger (timeout instead of an explicit failure).
+            stale_attempt_count = live.get("attempt_count", 0)
+            if stale_attempt_count >= MAX_RETRY_ATTEMPTS and wo_id not in _max_retry_notified:
+                _max_retry_notified.add(wo_id)
+                thread_store.append_message(wo_id, thread_store.system_message(
+                    f"🛑 {wo_id} exhausted all {MAX_RETRY_ATTEMPTS} attempts (last one timed out) — "
+                    f"blocked from further claims until manually reset."
+                ))
+                asyncio.create_task(notify_factory_alert(
+                    title=f"{wo_id} needs manual reset",
+                    body=f"Its last attempt timed out (agent went quiet) and it has now failed all "
+                         f"{MAX_RETRY_ATTEMPTS} attempts. POST /api/dispatch/{wo_id}/reset to clear and retry.",
+                    level="urgent",
+                    source="max-retry-gate",
+                    secrets=_load_secrets(),
+                ))
+        except Exception as e:
+            print(f"[orchestrator] stale-sweep {wo_id} failed: {e}")
     if recovered:
         _save_dispatch()
         for wo_id, agent_name, age_min, pr_url in recovered:
@@ -3655,43 +3661,49 @@ async def poll() -> None:
 
     # Preflight retry sweep: re-check WOs held for unmet environment requirements.
     for wo_id, pf in list(_preflight_held.items()):
-        last_checked = pf.get("last_checked", pf.get("held_at", ""))
         try:
-            age = (datetime.now(UTC) - datetime.fromisoformat(last_checked.replace("Z", "+00:00"))).total_seconds()
-        except Exception:
-            continue
-        if age < PREFLIGHT_RETRY_SECONDS:
-            continue  # not time to re-check yet
-        requires = pf.get("requires", {})
-        if not requires:
-            # No requires data — can't re-check, remove from held and let it dispatch
-            del _preflight_held[wo_id]
-            _dispatch_state.pop(wo_id, None)
-            continue
-        new_failures = await preflight_check(requires)
-        pf["last_checked"] = _utcnow()
-        if not new_failures:
-            # Requirements now met — release from hold
-            print(f"[orchestrator] {wo_id} preflight requirements met — re-queuing")
-            del _preflight_held[wo_id]
-            _dispatch_state.pop(wo_id, None)
-            _save_dispatch()
-            thread_store.append_message(wo_id, thread_store.system_message(
-                f"✅ {wo_id} environment requirements now met — re-queuing for dispatch"
-            ))
-            asyncio.create_task(notify_factory_alert(
-                title=f"{wo_id} re-queued — environment ready",
-                body=f"{wo_id} held WO automatically re-queued: all preflight requirements now met.",
-                level="info",
-                source="preflight-retry",
-                secrets=_load_secrets(),
-            ))
-        else:
-            pf["hold_reason"] = new_failures
-            if wo_id in _dispatch_state:
-                _dispatch_state[wo_id]["hold_reason"] = new_failures
-                _dispatch_state[wo_id]["last_checked"] = _utcnow()
-            print(f"[orchestrator] {wo_id} preflight still failing: {'; '.join(new_failures)}")
+            last_checked = pf.get("last_checked", pf.get("held_at", ""))
+            try:
+                age = (datetime.now(UTC) - datetime.fromisoformat(last_checked.replace("Z", "+00:00"))).total_seconds()
+            except Exception:
+                continue
+            if age < PREFLIGHT_RETRY_SECONDS:
+                continue  # not time to re-check yet
+            requires = pf.get("requires", {})
+            if not requires:
+                # No requires data — can't re-check, remove from held and let it dispatch
+                _preflight_held.pop(wo_id, None)
+                _dispatch_state.pop(wo_id, None)
+                continue
+            new_failures = await preflight_check(requires)
+            pf = _preflight_held.get(wo_id)
+            if pf is None:
+                continue
+            pf["last_checked"] = _utcnow()
+            if not new_failures:
+                # Requirements now met — release from hold
+                print(f"[orchestrator] {wo_id} preflight requirements met — re-queuing")
+                _preflight_held.pop(wo_id, None)
+                _dispatch_state.pop(wo_id, None)
+                _save_dispatch()
+                thread_store.append_message(wo_id, thread_store.system_message(
+                    f"✅ {wo_id} environment requirements now met — re-queuing for dispatch"
+                ))
+                asyncio.create_task(notify_factory_alert(
+                    title=f"{wo_id} re-queued — environment ready",
+                    body=f"{wo_id} held WO automatically re-queued: all preflight requirements now met.",
+                    level="info",
+                    source="preflight-retry",
+                    secrets=_load_secrets(),
+                ))
+            else:
+                pf["hold_reason"] = new_failures
+                if wo_id in _dispatch_state:
+                    _dispatch_state[wo_id]["hold_reason"] = new_failures
+                    _dispatch_state[wo_id]["last_checked"] = _utcnow()
+                print(f"[orchestrator] {wo_id} preflight still failing: {'; '.join(new_failures)}")
+        except Exception as e:
+            print(f"[orchestrator] preflight-retry {wo_id} failed: {e}")
 
     # Auto-reconcile: merged PRs → complete dispatch entries.
     # Creates stub entries for WOs that were merged without going through the
