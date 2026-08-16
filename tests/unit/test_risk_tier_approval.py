@@ -115,6 +115,7 @@ def test_main_fails_p0_without_approval(monkeypatch, tmp_path):
     monkeypatch.setattr(m, "WO_DIRS", [wo_dir])
     monkeypatch.setattr(m, "has_approval", lambda repo, num, token: False)
     monkeypatch.setattr(m, "has_approval_label", lambda repo, num, token: False)
+    monkeypatch.setenv("RISK_TIER_LABEL_WAIT_SECONDS", "0")
 
     monkeypatch.setenv("PR_HEAD_REF", "wo/500-critical")
     monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
@@ -163,3 +164,25 @@ def test_main_passes_p2_without_approval(monkeypatch, tmp_path):
     monkeypatch.setenv("PR_NUMBER", "1")
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
     assert m.main() == 0
+
+
+def test_wait_for_human_approval_sees_label_on_retry(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_label(repo, num, token):
+        calls["n"] += 1
+        return calls["n"] >= 2
+
+    monkeypatch.setattr(m, "has_approval", lambda repo, num, token: False)
+    monkeypatch.setattr(m, "has_approval_label", fake_label)
+    monkeypatch.setattr(m.time, "sleep", lambda s: None)
+    monkeypatch.setenv("RISK_TIER_LABEL_WAIT_SECONDS", "10")
+    monkeypatch.setenv("RISK_TIER_LABEL_WAIT_POLL", "1")
+    assert m.wait_for_human_approval("owner/repo", 1, "tok") == "label"
+    assert calls["n"] >= 2
+
+
+def test_workflow_does_not_cancel_in_progress():
+    text = (REPO_ROOT / ".github" / "workflows" / "risk-tier-approval.yml").read_text()
+    assert "cancel-in-progress: false" in text
+    assert "cancel-in-progress: true" not in text
