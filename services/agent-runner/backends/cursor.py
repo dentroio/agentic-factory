@@ -6,6 +6,7 @@ from typing import AsyncIterator
 
 from backends.base import AgentBackend
 from backends.claude import AGENT_MODEL, _subscription_env
+from proc import ASK, communicate as _communicate
 
 _RECONNECT_RE = re.compile(r"connection lost|reconnecting to|connecting to.*cursor\.sh", re.I)
 _MAX_CONN_FAILURES = 5
@@ -115,7 +116,10 @@ class CursorBackend(AgentBackend):
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 assert proc.stdout is not None
-                out, _ = await proc.communicate()
+                try:
+                    out, _ = await _communicate(proc, timeout=ASK)
+                except asyncio.TimeoutError:
+                    out = b""
                 text = out.decode("utf-8", errors="replace").strip()
                 if text:
                     return text
@@ -133,7 +137,10 @@ class CursorBackend(AgentBackend):
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 assert proc.stdout is not None
-                out, _ = await proc.communicate()
+                try:
+                    out, _ = await _communicate(proc, timeout=ASK)
+                except asyncio.TimeoutError:
+                    return f"[claude timed out after {ASK}s]"
                 return out.decode("utf-8", errors="replace").strip()
             except Exception:
                 pass

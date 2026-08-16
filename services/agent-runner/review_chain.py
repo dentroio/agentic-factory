@@ -9,6 +9,7 @@ import httpx
 from backends import get_backend
 from config import API_SECRET
 from orchestrator_client import checkin
+from proc import GIT, GIT_FETCH, communicate as _communicate
 from thread_monitor import ThreadMonitor
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8100")
@@ -440,14 +441,15 @@ async def get_worktree_diff(worktree: str) -> str:
             "git", *args, cwd=worktree,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )
-        out, _ = await proc.communicate()
+        out, _ = await _communicate(proc, timeout=GIT)
         return out.decode("utf-8", errors="replace")
 
     try:
-        await asyncio.create_subprocess_exec(
+        fetch = await asyncio.create_subprocess_exec(
             "git", "fetch", "origin", "main", cwd=worktree,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         )
+        await _communicate(fetch, timeout=GIT_FETCH)
         base = (await _git("merge-base", "HEAD", "origin/main")).strip()
         if base:
             diff = await _git("diff", base, "HEAD", "--")

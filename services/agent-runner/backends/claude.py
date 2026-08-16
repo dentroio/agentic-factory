@@ -5,6 +5,7 @@ import shutil
 from typing import AsyncIterator
 
 from backends.base import AgentBackend, QuotaExceededError
+from proc import ASK, communicate as _communicate
 
 # Claude Code emits these when the subscription usage cap is hit. Missing a
 # wording variant here isn't cosmetic — it's a wasted attempt: the run() loop
@@ -93,7 +94,10 @@ class ClaudeBackend(AgentBackend):
             stderr=asyncio.subprocess.DEVNULL,
         )
         assert proc.stdout is not None
-        out, _ = await proc.communicate()
+        try:
+            out, _ = await _communicate(proc, timeout=ASK)
+        except asyncio.TimeoutError:
+            return f"[claude timed out after {ASK}s]"
         text = out.decode("utf-8", errors="replace").strip()
         if _QUOTA_RE.search(text):
             raise QuotaExceededError(f"claude quota exhausted: {text[:120]}")
