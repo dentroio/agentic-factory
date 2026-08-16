@@ -206,33 +206,38 @@ jobs:
 
       - name: Commit and push applied suggestions
         if: steps.check.outputs.skip != 'true' && steps.write_files.outputs.applied == 'true'
+        env:
+          APPLY_SUMMARY: ${{ steps.write_files.outputs.summary }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
           git diff --staged --quiet && echo "No changes to commit" && exit 0
-          git commit -m "refactor(ai-review): apply review suggestions [ai-review-apply]
-
-          ${{ steps.write_files.outputs.summary }}
-
-          Auto-applied by ai-review-applier.yml — AI review will re-run."
+          git commit -m "refactor(ai-review): apply review suggestions [ai-review-apply]" \
+            -m "$APPLY_SUMMARY" \
+            -m "Auto-applied by ai-review-applier.yml — AI review will re-run."
           git push
 
       - name: Post applied comment on PR
         if: steps.check.outputs.skip != 'true' && steps.write_files.outputs.applied == 'true'
         uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.check.outputs.pr_number }}
+          APPLY_SUMMARY: ${{ steps.write_files.outputs.summary }}
         with:
           script: |
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const applySummary = process.env.APPLY_SUMMARY;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: parseInt('${{ steps.check.outputs.pr_number }}'),
+              issue_number: prNumber,
               body: [
                 '## 🤖 AI Review Suggestions Applied',
                 '',
                 'I applied the suggestions from the AI code review. The review is re-running on the updated code.',
                 '',
-                `**Changes:** ${{ steps.write_files.outputs.summary }}`,
+                `**Changes:** ${applySummary}`,
                 '',
                 'If the new review verdict is LGTM, auto-merge will fire. If there are remaining issues, they will appear in the next review comment.',
                 '',
@@ -244,13 +249,17 @@ jobs:
       - name: Post skip comment if suggestions could not be applied
         if: steps.check.outputs.skip != 'true' && steps.write_files.outputs.applied == 'false'
         uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.check.outputs.pr_number }}
+          APPLY_REASON: ${{ steps.write_files.outputs.reason }}
         with:
           script: |
-            const reason = '${{ steps.write_files.outputs.reason }}' || 'Suggestions require human judgment';
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const reason = process.env.APPLY_REASON || 'Suggestions require human judgment';
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: parseInt('${{ steps.check.outputs.pr_number }}'),
+              issue_number: prNumber,
               body: [
                 '## 🤖 AI Review Suggestions — Manual Review Needed',
                 '',

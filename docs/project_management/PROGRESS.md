@@ -19,7 +19,8 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
-| WO-1061 | AI reviewer cannot satisfy the human validation gate | P1 | 🟡 In Progress | — |
+| WO-1063 | Remaining workflow injection (AF-13) | P0 | 🟡 In Progress | — |
+| WO-1061 | AI reviewer cannot satisfy the human validation gate | P1 | ✅ Complete | 2026-08-16 |
 | WO-1060 | Persist retry attempts across dispatch delete | P1 | ✅ Complete | 2026-08-16 |
 | WO-1059 | Dashboard authentication (AF-08) | P0 | ✅ Complete | 2026-08-16 |
 | WO-1058 | Fine-grained GitHub PAT only | P1 | ✅ Complete | 2026-08-15 |

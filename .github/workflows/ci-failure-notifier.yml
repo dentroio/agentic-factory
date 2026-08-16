@@ -160,12 +160,19 @@ jobs:
       - name: Post failure comment on PR
         if: steps.pr.outputs.skip != 'true'
         uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          RUN_URL: ${{ steps.failures.outputs.run_url }}
+          SUMMARY: ${{ steps.failures.outputs.summary }}
+          LOG_EXCERPT: ${{ steps.logs.outputs.log_excerpt }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         with:
           script: |
-            const prNumber = parseInt('${{ steps.pr.outputs.pr_number }}');
-            const runUrl = '${{ steps.failures.outputs.run_url }}';
-            const summary = `${{ steps.failures.outputs.summary }}`;
-            const logExcerpt = `${{ steps.logs.outputs.log_excerpt }}`;
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const runUrl = process.env.RUN_URL;
+            const summary = process.env.SUMMARY;
+            const logExcerpt = process.env.LOG_EXCERPT;
+            const headBranch = process.env.HEAD_BRANCH;
 
             const body = [
               '## ⚠️ CI Failure — Action Required',
@@ -180,7 +187,7 @@ jobs:
               `**Full run:** ${runUrl}`,
               '',
               '---',
-              `*To fix: read the errors above, update the code on branch \`${{ github.event.workflow_run.head_branch }}\`, and push. Do not open a new PR.*`,
+              `*To fix: read the errors above, update the code on branch \`${headBranch}\`, and push. Do not open a new PR.*`,
             ].join('\n');
 
             await github.rest.issues.createComment({

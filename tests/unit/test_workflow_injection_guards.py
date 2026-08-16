@@ -45,3 +45,45 @@ def test_dependabot_bridge_does_not_interpolate_pr_fields_into_js_templates():
     assert "const prTitle = `${{ steps.pr.outputs.pr_title }}`" not in text
     assert "PR_TITLE: ${{ steps.pr.outputs.pr_title }}" in text
     assert "const prTitle = process.env.PR_TITLE;" in text
+
+
+# Attacker-controlled or LLM-produced strings. Allowed in `env:`; forbidden inside
+# `run:` / github-script `script:` where they become shell or JavaScript source.
+_UNTRUSTED_IN_RUN_OR_SCRIPT = (
+    "github.event.issue.title",
+    "github.event.issue.body",
+    "github.event.pull_request.title",
+    "github.event.pull_request.body",
+    "outputs.log_excerpt",
+    "outputs.fix_summary",
+    "outputs.claude_reason",
+    "write_files.outputs.summary",
+    "write_files.outputs.reason",
+    "failures.outputs.summary",
+)
+
+
+def _run_and_script_bodies(text: str) -> list[str]:
+    bodies: list[str] = []
+    for marker in ("run: |", "script: |"):
+        parts = text.split(marker)
+        for block in parts[1:]:
+            bodies.append(block.split("\n      - ")[0])
+    return bodies
+
+
+def test_untrusted_fields_are_not_interpolated_into_run_or_script():
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        text = path.read_text(encoding="utf-8")
+        for body in _run_and_script_bodies(text):
+            for needle in _UNTRUSTED_IN_RUN_OR_SCRIPT:
+                assert needle not in body, (
+                    f"{path.name} interpolates {needle} into a run/script block"
+                )
+
+
+def test_verifier_passes_pr_title_through_env():
+    text = (WORKFLOWS / "verifier.yml").read_text(encoding="utf-8")
+    assert 'PR_TITLE: ${{ github.event.pull_request.title }}' in text
+    assert '--pr-title "$PR_TITLE"' in text
+    assert "const prTitle = process.env.PR_TITLE;" in text
