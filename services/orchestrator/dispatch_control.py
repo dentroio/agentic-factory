@@ -103,3 +103,21 @@ def clear_attempt(counts: dict[str, int], wo_id: str) -> dict[str, int]:
 def merge_allowed_for_priority(priority: str | None) -> bool:
     """P2/P3 may be merged by the PM tool. Unknown or P0/P1 must not."""
     return (priority or "").strip().upper() in {"P2", "P3"}
+
+
+_LIVE_CLAIM_STATUSES = frozenset({"claimed", "in_progress"})
+
+
+def live_claim(state: dict, wo_id: str) -> dict | None:
+    """Return the live dispatch entry if this WO is still a claim.
+
+    After an await, DELETE /api/dispatch or a checkin can remove or finish the
+    key. Callers must use this instead of `state[wo_id]` so a vanished claim
+    cannot KeyError the rest of poll().
+    """
+    entry = state.get(wo_id)
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("status") not in _LIVE_CLAIM_STATUSES:
+        return None
+    return entry
