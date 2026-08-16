@@ -18,6 +18,7 @@
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
+- [agent-runner-blocking-calls-need-double-timeout](auto_wo1075.md) — All blocking/thread-offloaded calls in agent-runner (subprocess, SDK/HTTP clients) must be bounded by both a client-level timeout and an outer asyncio.wait_for using the shared ASK budget.
 
 Auto-extracted by `memory_agent.py` after merges — one lesson per PR, written but never indexed here until 2026-08-05 (the gap itself was AF-38 in the 2026-08 engineering assessment). Two entries below are marked superseded where a later fix changed the behavior they describe.
 
