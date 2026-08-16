@@ -15,6 +15,7 @@
 <!-- Format: [Decision title](decision_NAME.md) — what was decided and why -->
 
 ## Feedback & Working Style
+- [gha-workflows-no-direct-interpolation-untrusted-fields](auto_wo1063.md) — GitHub Actions workflows must pass untrusted fields (PR/issue titles, bodies, LLM/CI outputs) through env vars, never interpolate directly into run/script blocks
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
