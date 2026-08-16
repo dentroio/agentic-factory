@@ -19,7 +19,8 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
-| WO-1072 | CI must scan for committed secrets | P1 | 🟡 In Progress | — |
+| WO-1073 | Activate Dependabot | P1 | 🟡 In Progress | — |
+| WO-1072 | CI must scan for committed secrets | P1 | ✅ Complete | 2026-08-16 |
 | WO-1071 | Risk Tier gate must not cancel in-progress runs | P1 | ✅ Complete | 2026-08-16 |
 | WO-1070 | Targeted dispatch upserts, no swallowed SQLite writes | P1 | ✅ Complete | 2026-08-16 |
 | WO-1069 | Bound runner subprocess communicate | P1 | ✅ Complete | 2026-08-16 |
