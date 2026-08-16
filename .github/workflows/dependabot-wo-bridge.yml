@@ -33,6 +33,10 @@ permissions:
   issues: write
   actions: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
 jobs:
   bridge:
     name: Convert failing Dependabot PR to WO issue

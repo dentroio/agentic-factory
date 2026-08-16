@@ -17,6 +17,10 @@ on:
       - "docs/wiki/**"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   sync:
     name: Push to GitHub Wiki

@@ -26,6 +26,10 @@ on:
     - cron: "0 12 * * *"    # once daily
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   canary:
     name: API Canary
