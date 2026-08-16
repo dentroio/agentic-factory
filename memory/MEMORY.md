@@ -18,6 +18,7 @@
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
+- [ai-review-untrusted-data-wrapping](auto_wo1062.md) — scripts/ai_review.py must wrap any attacker-controlled text (PR diff, description, etc.) with wrap_untrusted(), never raw markdown fences
 
 Auto-extracted by `memory_agent.py` after merges — one lesson per PR, written but never indexed here until 2026-08-05 (the gap itself was AF-38 in the 2026-08 engineering assessment). Two entries below are marked superseded where a later fix changed the behavior they describe.
 
