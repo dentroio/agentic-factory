@@ -5037,30 +5037,28 @@ async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
         backend = str(tool_input.get("backend", "")).strip()
         wo_id = raw_wo if raw_wo.startswith("WO-") else f"WO-{raw_wo}"
         try:
-            async with httpx.AsyncClient(timeout=10) as _dc:
-                await _dc.post(
-                    f"http://localhost:{API_PORT}/api/pm/dispatch",
-                    params={"wo": wo_id, "backend": backend},
-                )
-                runner_woke = False
-                try:
+            await pm_dispatch_wo(wo=wo_id, backend=backend)
+            runner_woke = False
+            try:
+                async with httpx.AsyncClient(timeout=3) as _dc:
                     await _dc.post(
                         f"{AGENT_RUNNER_URL}/dispatch",
                         json={"wo": wo_id, "backend": backend},
                         headers=_runner_headers(),
-                        timeout=3,
                     )
                     runner_woke = True
-                except Exception:
-                    pass
-                from datetime import UTC as _UTC, datetime as _dt
-                _pm_memory.setdefault("dispatched", []).append({
-                    "wo": wo_id, "backend": backend,
-                    "date": _dt.now(_UTC).date().isoformat(),
-                })
-                _pm_memory["dispatched"] = _pm_memory["dispatched"][-50:]
-                _save_pm_memory()
-                return f"✅ {wo_id} dispatched to {backend} — {'runner woke up' if runner_woke else 'runner picks it up on next poll'}"
+            except Exception:
+                pass
+            from datetime import UTC as _UTC, datetime as _dt
+            _pm_memory.setdefault("dispatched", []).append({
+                "wo": wo_id, "backend": backend,
+                "date": _dt.now(_UTC).date().isoformat(),
+            })
+            _pm_memory["dispatched"] = _pm_memory["dispatched"][-50:]
+            _save_pm_memory()
+            return f"✅ {wo_id} dispatched to {backend} — {'runner woke up' if runner_woke else 'runner picks it up on next poll'}"
+        except HTTPException as exc:
+            return f"⚠️ Dispatch of {wo_id} failed: {exc.detail}"
         except Exception as exc:
             return f"⚠️ Dispatch of {wo_id} failed: {exc}"
 
@@ -5068,14 +5066,12 @@ async def _execute_pm_tool(tool_name: str, tool_input: dict) -> str:
         raw_wo = str(tool_input.get("wo", "")).strip()
         wo_id = raw_wo if raw_wo.startswith("WO-") else f"WO-{raw_wo}"
         try:
-            async with httpx.AsyncClient(timeout=10) as _rc:
-                resp = await _rc.post(f"http://localhost:{API_PORT}/api/dispatch/{wo_id}/reset")
-                if resp.status_code == 200:
-                    return f"✅ {wo_id} reset — attempt counter cleared, claimable again."
-                elif resp.status_code == 409:
-                    return f"⚠️ {wo_id} not reset: {resp.json().get('detail', 'blocked')}"
-                else:
-                    return f"⚠️ Reset of {wo_id} failed ({resp.status_code}): {resp.text[:200]}"
+            await reset_dispatch(wo_id)
+            return f"✅ {wo_id} reset — attempt counter cleared, claimable again."
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                return f"⚠️ {wo_id} not reset: {exc.detail}"
+            return f"⚠️ Reset of {wo_id} failed ({exc.status_code}): {exc.detail}"
         except Exception as exc:
             return f"⚠️ Reset of {wo_id} failed: {exc}"
 
@@ -5510,13 +5506,10 @@ async def pm_chat(req: PMChatRequest):
         ctx_parts.append("Active WOs: none (runner is idle)")
 
     try:
-        async with httpx.AsyncClient(timeout=3) as _c:
-            _br = await _c.get(f"http://localhost:{API_PORT}/api/backends")
-            if _br.status_code == 200:
-                _b = _br.json()
-                online = [k for k, v in _b.items() if v and k not in ("agent_runner_online",)]
-                ctx_parts.append(f"Available AI backends: {', '.join(online) or 'none'}")
-                ctx_parts.append(f"Agent runner: {'online' if _b.get('agent_runner_online') else 'offline'}")
+        _b = await get_backends()
+        online = [k for k, v in _b.items() if v and k not in ("agent_runner_online",)]
+        ctx_parts.append(f"Available AI backends: {', '.join(online) or 'none'}")
+        ctx_parts.append(f"Agent runner: {'online' if _b.get('agent_runner_online') else 'offline'}")
     except Exception:
         pass
 
