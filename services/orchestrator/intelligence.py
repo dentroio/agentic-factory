@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Callable
 
 import httpx
+
+import dispatch_control
 from llm_client import messages_create
 from wo_resolver import resolve_wo_for_pr  # noqa: F401 — available for callers
 
@@ -51,8 +53,7 @@ def _load_acted_on() -> None:
 
 def _flush_acted_on() -> None:
     try:
-        _DATA_DIR.mkdir(parents=True, exist_ok=True)
-        _ACTED_ON_PATH.write_text(json.dumps(_acted_on, indent=2), encoding="utf-8")
+        dispatch_control.atomic_write_json(_ACTED_ON_PATH, _acted_on)
     except Exception:
         pass
 
