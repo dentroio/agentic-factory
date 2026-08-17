@@ -127,7 +127,8 @@ def test_dispatch_and_thread_saves_use_atomic_write():
     assert "atomic_write_json(DISPATCH_STATE_PATH" in orch
     assert "atomic_write_json(HOLD_PATH" in orch
     assert "atomic_write_json(VALIDATIONS_PATH" in orch
-    assert "atomic_write_json(THREADS_DIR" in thread
+    assert "atomic_write_json(" in thread
+    assert "contained_path(THREADS_DIR" in thread
     assert ".write_text(json.dumps(messages" not in thread
 
 

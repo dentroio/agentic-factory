@@ -19,7 +19,8 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
-| WO-1077 | Stop unauthenticated self-HTTP in the orchestrator | P1 | 🟡 In Progress | — |
+| WO-1078 | Reject path traversal in thread storage | P1 | 🟡 In Progress | — |
+| WO-1077 | Stop unauthenticated self-HTTP in the orchestrator | P1 | ✅ Complete | 2026-08-16 |
 | WO-1076 | Draft server requires a bearer token | P0 | ✅ Complete | 2026-08-16 |
 | WO-1075 | Bound the parallel SDK review path | P1 | ✅ Complete | 2026-08-16 |
 | WO-1074 | Workflow concurrency groups | P1 | ✅ Complete | 2026-08-16 |

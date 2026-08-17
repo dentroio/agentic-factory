@@ -1,5 +1,6 @@
 """Per-WO persistent thread storage."""
 import json
+import re
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,6 +10,39 @@ import dispatch_control
 THREADS_DIR = Path("/data/threads")
 _counter = 0  # monotonic sub-millisecond tie-breaker
 
+_WO_ID = re.compile(r"^WO-\d+$", re.IGNORECASE)
+_IMAGE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+class UnsafePath(ValueError):
+    """A WO id or filename is not a single safe path segment."""
+
+
+def require_wo_id(wo: str) -> str:
+    wo = (wo or "").strip()
+    if not _WO_ID.fullmatch(wo):
+        raise UnsafePath("invalid wo id")
+    return f"WO-{wo.split('-', 1)[1]}"
+
+
+def require_image_filename(name: str) -> str:
+    name = (name or "").strip()
+    if name in {".", ".."} or not _IMAGE_NAME.fullmatch(name):
+        raise UnsafePath("invalid filename")
+    return name
+
+
+def contained_path(root: Path, *parts: str) -> Path:
+    """Join parts under root; raise if any segment is unsafe or the result escapes (AF-28)."""
+    for part in parts:
+        if not part or part in {".", ".."} or "/" in part or "\\" in part or "\x00" in part:
+            raise UnsafePath("invalid path segment")
+    root = Path(root).resolve()
+    path = root.joinpath(*parts).resolve()
+    if not path.is_relative_to(root):
+        raise UnsafePath("path escapes root")
+    return path
+
 
 def _msg_id() -> str:
     global _counter
@@ -17,7 +51,8 @@ def _msg_id() -> str:
 
 
 def load_thread(wo_id: str) -> list[dict]:
-    path = THREADS_DIR / f"{wo_id}.json"
+    wo_id = require_wo_id(wo_id)
+    path = contained_path(THREADS_DIR, f"{wo_id}.json")
     if not path.exists():
         return []
     try:
@@ -27,8 +62,9 @@ def load_thread(wo_id: str) -> list[dict]:
 
 
 def save_thread(wo_id: str, messages: list[dict]) -> None:
+    wo_id = require_wo_id(wo_id)
     THREADS_DIR.mkdir(parents=True, exist_ok=True)
-    dispatch_control.atomic_write_json(THREADS_DIR / f"{wo_id}.json", messages)
+    dispatch_control.atomic_write_json(contained_path(THREADS_DIR, f"{wo_id}.json"), messages)
 
 
 def append_message(wo_id: str, msg: dict) -> dict:
