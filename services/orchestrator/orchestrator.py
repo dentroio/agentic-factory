@@ -48,6 +48,7 @@ from db import (
 from agent_config_policy import AgentConfigError, apply_agent_config_updates
 from git_https import git_fetch_env, github_https_url, redact_secret
 from llm_client import messages_create
+from runner_agents import RunnerAgentError, parse_configure_body, require_runner_agent
 from secrets_policy import SecretPolicyError, apply_secret_updates
 from vault_auth import load_vault_token
 
@@ -4657,11 +4658,16 @@ async def get_runner_agents():
 @app.put("/api/runner/agents/{name}")
 async def configure_runner_agent(name: str, request: Request):
     """Create/update agent plist (API key, domain filter) and optionally start it."""
-    body = {}
     try:
-        body = await request.json()
+        require_runner_agent(name)
+        incoming = await request.json()
+        body = parse_configure_body(incoming)
+    except RunnerAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception:
-        pass
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if body.get("start"):
+        _refuse_if_paused()
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             r = await client.put(f"{AGENT_RUNNER_URL}/api/agents/{name}", json=body, headers=_runner_headers())
@@ -4674,6 +4680,10 @@ async def configure_runner_agent(name: str, request: Request):
 async def remove_runner_agent(name: str):
     """Stop and uninstall an agent daemon (bootout + delete plist)."""
     try:
+        require_runner_agent(name)
+    except RunnerAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.delete(f"{AGENT_RUNNER_URL}/api/agents/{name}", headers=_runner_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
@@ -4685,6 +4695,11 @@ async def remove_runner_agent(name: str):
 async def start_runner_agent(name: str):
     """Bootstrap an agent LaunchAgent daemon via the host runner."""
     try:
+        require_runner_agent(name)
+    except RunnerAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _refuse_if_paused()
+    try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(f"{AGENT_RUNNER_URL}/api/agents/{name}/start", headers=_runner_headers())
             return JSONResponse(content=r.json(), status_code=r.status_code)
@@ -4695,6 +4710,10 @@ async def start_runner_agent(name: str):
 @app.post("/api/runner/agents/{name}/stop")
 async def stop_runner_agent(name: str):
     """Bootout an agent LaunchAgent daemon via the host runner."""
+    try:
+        require_runner_agent(name)
+    except RunnerAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(f"{AGENT_RUNNER_URL}/api/agents/{name}/stop", headers=_runner_headers())
