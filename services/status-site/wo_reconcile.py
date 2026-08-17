@@ -18,7 +18,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-from wo_parser import WOSpec, resolve_all_wos_for_pr
+from wo_parser import WOSpec, resolve_all_wos_for_pr, wos_completed_by_merged_pr
 
 # Canonical dispatch-status buckets. "Running" on every page means exactly
 # IN_PROGRESS_STATUSES — the orchestrator has this WO claimed by an agent right
@@ -216,15 +216,19 @@ def apply_live_status(
         if pr["wo_number"]:
             pr_wo_map[pr["wo_number"]] = pr
 
-    # Build set of WO numbers with merged PRs — authoritative "done" signal.
-    # Use resolve_all_wos_for_pr, not resolve_wo_for_pr: conflict-resolution/
-    # follow-up PRs routinely mention two WOs in one title (e.g. "WO-1035:
-    # Resolve conflict: PR #455 — WO-417: ..."), and both are genuinely done
-    # by that merge — crediting only the first left the second stuck looking
-    # unfinished indefinitely.
+    # Build set of WO numbers with merged PRs — authoritative "done" signal
+    # only when the PR actually implemented the WO (wo/NNN- branch or WO-NNN:
+    # / mark-done title). resolve_all_wos_for_pr is the wrong function here:
+    # it credits every mention, including spec-filing and program-scope docs.
     merged_wo_nums: set[int] = set()
     for p in (merged_prs or []):
-        merged_wo_nums.update(resolve_all_wos_for_pr(p))
+        # wos_completed_by_merged_pr, not resolve_all_wos_for_pr: a docs
+        # filing PR ('docs(wo): file WO-508') or a program-scope title
+        # ('docs(pm): … WO-449–456') names WOs it did not implement.
+        # Treating every mention as Done is how the dashboard Open count
+        # dropped below the real backlog while shipped WOs with no
+        # 'WO-NNN:' title (WO-490) stayed Open.
+        merged_wo_nums.update(wos_completed_by_merged_pr(p))
 
     # Dispatch keyed by WO number, so we can mark active WOs even when the
     # branch hasn't been pushed to GitHub yet (which is the normal case during
@@ -239,10 +243,9 @@ def apply_live_status(
     # disagreed about how much work was in flight. Give them a placeholder and
     # let the loop below status them like any other WO.
     #
-    # Merged PRs are deliberately not a trigger here. merged_wo_nums scrapes
-    # every WO-NNN mentioned across 56 days of merged titles, most of them
-    # passing references to long-finished or other-repo work; synthesizing
-    # those would bury the Done column in numbers that never existed.
+    # Merged PRs are deliberately not a trigger here. Even the tighter
+    # wos_completed_by_merged_pr set includes WOs whose spec was never
+    # filed in this repo; synthesizing those would bury the Done column.
     live_nums = set(pr_wo_map) | set(branch_wo_map)
     live_nums |= {n for n, e in dispatch_map.items() if e.get("status") not in (None, "complete")}
     synthesized: list[int] = []

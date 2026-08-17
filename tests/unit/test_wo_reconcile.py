@@ -136,6 +136,67 @@ def test_deferred_wo_survives_a_merged_pr_that_only_names_it():
     assert wos[484].board_column == "deferred"
 
 
+def test_filing_pr_does_not_complete_an_open_wo():
+    """WO-482 / WO-508: 'docs(wo): file WO-N' on a wo/N- branch is the spec
+    landing, not the implementation. The board used to stamp those Done."""
+    wos = {482: _spec(482, status="🔲 Open (filed 2026-08-12)")}
+
+    apply_live_status(
+        wos,
+        branches=[],
+        prs=[],
+        dispatch={},
+        merged_prs=[
+            _merged_pr(
+                "docs(wo): file WO-482 — Neo4j connect_devices() silent write loss",
+                branch="wo/482-neo4j-write-loss",
+            )
+        ],
+    )
+
+    assert wos[482].board_column == "open"
+
+
+def test_program_scope_docs_pr_does_not_complete_named_wos():
+    """'docs(pm): Identity Quality Loop (WO-494–498)' scoped the work; it
+    did not ship WO-495–498. Range mentions must not flip them to Done."""
+    wos = {495: _spec(495, status="🔲 Open — spec written 2026-08-15")}
+
+    apply_live_status(
+        wos,
+        branches=[],
+        prs=[],
+        dispatch={},
+        merged_prs=[
+            _merged_pr(
+                "docs(pm): Identity Quality Loop (WO-494–498) and audit canvas",
+                branch="docs/identity-quality-loop-wos",
+            )
+        ],
+    )
+
+    assert wos[495].board_column == "open"
+
+
+def test_implementation_title_still_marks_done():
+    wos = {488: _spec(488, status="🔲 Open (filed 2026-08-14)")}
+
+    apply_live_status(
+        wos,
+        branches=[],
+        prs=[],
+        dispatch={},
+        merged_prs=[
+            _merged_pr(
+                "WO-488: Fix AP uplink graph edge + capture AP switching mode via RESTCONF",
+                branch="wo/488-ap-switching-mode-topology",
+            )
+        ],
+    )
+
+    assert wos[488].board_column == "done"
+
+
 def test_open_pr_with_failing_ci_is_blocked_not_done():
     wos = {449: _spec(449)}
 

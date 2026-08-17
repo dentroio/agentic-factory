@@ -37,6 +37,8 @@ from wo_resolver import (
     resolve_all_wos_for_pr,
     extract_wo_from_branch,
     extract_wo_from_title,
+    classify_wo_status,
+    wos_completed_by_merged_pr,
 )
 import dispatch_control
 from db import (
@@ -2991,13 +2993,9 @@ def _parse_files_likely_changed(content: str) -> list[str]:
 def _is_done(status: str) -> bool:
     # Match on status PREFIX only — substring matching causes "conflict advisor v1 done"
     # or "deferred to WO-226" to incorrectly mark a WO as done/deferred.
-    # Strip markdown bold markers (**) that some legacy spec files use as a prefix.
-    s = status.strip().lstrip("*").strip()
-    sl = s.lower()
-    return (
-        s.startswith("✅") or s.startswith("⏸")
-        or sl.startswith(("done", "complete", "completed", "deferred", "superseded", "abandoned"))
-    )
+    # classify_wo_status strips leading emoji so "⛔ Superseded" / "❌ Cancelled"
+    # are terminal rather than lingering in Open.
+    return classify_wo_status(status) in ("done", "deferred")
 
 
 def _is_ready(status: str) -> bool:
@@ -3017,8 +3015,23 @@ def _is_ready(status: str) -> bool:
 
 
 def _is_blocked(status: str) -> bool:
-    s = status.strip()
-    return s.startswith(("🔴", "❌")) or s.lower().startswith("blocked")
+    return classify_wo_status(status) == "blocked"
+
+
+def _trust_dispatch_complete(num: int, entry: dict, specs: dict[int, dict]) -> bool:
+    """Whether a dispatch 'complete' row may hide a WO from Open.
+
+    A real agent completion (F-01) wins over a spec that has not been
+    rewritten yet. A back-fill stub (agent unknown/empty) from a filing PR
+    must not hide work whose spec is still Planned/Open.
+    """
+    spec = specs.get(num)
+    if spec is None:
+        return True
+    if _is_done(spec.get("status", "")):
+        return True
+    agent = (entry.get("agent") or "").strip().lower()
+    return bool(agent) and agent != "unknown"
 
 
 # ── GitHub data fetchers ──────────────────────────────────────────────────────
@@ -3267,19 +3280,22 @@ async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient) -> int:
 
 
 async def _fetch_recently_merged_wo_prs(client: httpx.AsyncClient) -> dict[int, str]:
-    """Return {wo_number: pr_html_url} for WO PRs merged in the last 90 days."""
+    """Return {wo_number: pr_html_url} for WO PRs merged in the last 90 days.
+
+    Uses wos_completed_by_merged_pr so a docs filing PR on a wo/NNN- branch
+    (e.g. 'docs(wo): file WO-482') does not auto-complete the WO, and a
+    'WO-NNN:' title still counts when the branch is docs/.
+    """
     since = (datetime.now(UTC) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         prs = await _cached_get(client, f"/repos/{GITHUB_REPO}/pulls",
-                                 {"state": "closed", "per_page": 50, "sort": "updated", "direction": "desc"},
+                                 {"state": "closed", "per_page": 100, "sort": "updated", "direction": "desc"},
                                  ttl=300)
         result: dict[int, str] = {}
         for p in prs:
             if p.get("merged_at") and p["merged_at"] >= since:
-                head_ref = p.get("head", {}).get("ref", "")
-                n = extract_wo_from_branch(head_ref)
-                if n is not None:
-                    result[n] = p.get("html_url", "")
+                for n in wos_completed_by_merged_pr(p):
+                    result.setdefault(n, p.get("html_url", ""))
         return result
     except Exception:
         return {}
@@ -3351,7 +3367,7 @@ def _resolve_dependencies(
     claimed_wos: set[int] = set()
     if dispatch_state:
         for wo_id, entry in dispatch_state.items():
-            if entry.get("status") in ("claimed", "complete", "rejected", "pending_approval", "preflight_held"):
+            if entry.get("status") in ("claimed", "rejected", "pending_approval", "preflight_held"):
                 try:
                     claimed_wos.add(int(wo_id.replace("WO-", "")))
                 except ValueError:
@@ -3742,6 +3758,22 @@ async def poll() -> None:
             _dispatch_state[wo_id] = entry
             _db_append_step(wo_id, "complete", step="PR merged (auto-reconcile)")
             reconciled += 1
+    # Spec files that already say Done/Deferred/Superseded must close a
+    # leftover in_progress claim — otherwise dashboard apply_live_status
+    # treats dispatch as live and refuses to honor the merged PR.
+    for num, spec in primary_specs.items():
+        if not _is_done(spec.get("status", "")):
+            continue
+        wo_id = f"WO-{num}"
+        entry = _dispatch_state.get(wo_id)
+        if entry is None or entry.get("status") in ("complete", "rejected"):
+            continue
+        entry["status"] = "complete"
+        entry["completed_at"] = _utcnow()
+        entry["step"] = entry.get("step") or "spec marked done"
+        _dispatch_state[wo_id] = entry
+        _db_append_step(wo_id, "complete", step="spec marked done (auto-reconcile)")
+        reconciled += 1
     if reconciled:
         _save_dispatch()
         print(f"[orchestrator] poll: auto-completed {reconciled} WO(s) from merged PRs")
@@ -3762,6 +3794,7 @@ async def poll() -> None:
     dispatch_done = {
         int(k[3:]) for k, v in _dispatch_state.items()
         if k.startswith("WO-") and k[3:].isdigit() and v.get("status") == "complete"
+        and _trust_dispatch_complete(int(k[3:]), v, specs)
     }
     done_wos = {num for num, s in specs.items() if _is_done(s["status"])} | dispatch_done
     in_progress_wos = active_branch_wos - pr_wos - done_wos
