@@ -2337,13 +2337,32 @@ async def slack_reconnect():
 
 # ── Thread API ────────────────────────────────────────────────────────────────
 
+def _thread_wo(wo: str) -> str:
+    try:
+        return thread_store.require_wo_id(wo)
+    except thread_store.UnsafePath:
+        raise HTTPException(status_code=400, detail="invalid wo id")
+
+
+def _thread_image_filename(name: str) -> str:
+    try:
+        return thread_store.require_image_filename(name)
+    except thread_store.UnsafePath:
+        raise HTTPException(status_code=400, detail="invalid filename")
+
+
 @app.post("/api/thread/{wo}/messages")
 async def post_thread_message(wo: str, msg: ThreadMessage):
     """Post a message to a WO's thread (agent or human)."""
+    wo = _thread_wo(wo)
     image_url = msg.image_url
 
     if msg.image_data:
-        images_dir = DATA_DIR / "threads" / "images" / wo
+        images_root = DATA_DIR / "threads" / "images"
+        try:
+            images_dir = thread_store.contained_path(images_root, wo)
+        except thread_store.UnsafePath:
+            raise HTTPException(status_code=400, detail="invalid wo id")
         images_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
         filename = f"{ts}.png"
@@ -2368,7 +2387,12 @@ async def post_thread_message(wo: str, msg: ThreadMessage):
 @app.get("/api/thread/{wo}/images/{filename}")
 async def get_thread_image(wo: str, filename: str):
     """Serve a screenshot image stored by the thread message handler."""
-    path = DATA_DIR / "threads" / "images" / wo / filename
+    wo = _thread_wo(wo)
+    filename = _thread_image_filename(filename)
+    try:
+        path = thread_store.contained_path(DATA_DIR / "threads" / "images", wo, filename)
+    except thread_store.UnsafePath:
+        raise HTTPException(status_code=400, detail="invalid path")
     if not path.exists():
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(str(path), media_type="image/png")
@@ -2377,6 +2401,7 @@ async def get_thread_image(wo: str, filename: str):
 @app.get("/api/thread/{wo}/messages")
 async def get_thread_messages(wo: str, since: str = ""):
     """Return all messages for a WO, or only those after `since` (message id)."""
+    wo = _thread_wo(wo)
     messages = thread_store.load_thread(wo)
     if since:
         messages = [m for m in messages if m.get("id", "") > since]
@@ -2386,6 +2411,7 @@ async def get_thread_messages(wo: str, since: str = ""):
 @app.get("/api/thread/{wo}/stream")
 async def stream_thread(wo: str, since: str = ""):
     """SSE stream — sends new thread messages as they arrive (2 s poll)."""
+    wo = _thread_wo(wo)
     async def generate():
         last_id = since
         try:
