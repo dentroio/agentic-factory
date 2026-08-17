@@ -174,7 +174,12 @@ def check_ruleset() -> bool:
                 ctx = item.get("context")
                 if ctx:
                     contexts.append(ctx)
-        required = ["Unit Tests", "Claude Code Review", "Risk Tier Approval Gate"]
+        required = [
+            "Unit Tests",
+            "Claude Code Review",
+            "Risk Tier Approval Gate",
+            "Secret Detection (Gitleaks)",
+        ]
         missing = [c for c in required if c not in contexts]
         return check(
             "required status checks",

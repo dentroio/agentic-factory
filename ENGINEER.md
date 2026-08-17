@@ -140,7 +140,7 @@ Look for a ruleset named `Protect main` or `main-protection`.
 Settings:
 - Name: `Protect main` (or `main-protection`)
 - Target: `main`
-- Required status checks (add each): `Claude Code Review`, `Risk Tier Approval Gate`, `Unit Tests`
+- Required status checks (add each): `Claude Code Review`, `Risk Tier Approval Gate`, `Unit Tests`, `Secret Detection (Gitleaks)`
 - These names must exactly match the job `name:` fields in `ci.yml`, `ai-review.yml`, and `risk-tier-approval.yml`
 
 Alternatively, create it via API (use `gh api -X POST repos/OWNER/REPO/rulesets` with the correct payload).
