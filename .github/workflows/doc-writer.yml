@@ -107,10 +107,20 @@ jobs:
             exit 0
           fi
 
+          # frontend/public/help/ is a committed mirror of wiki/docs/ (rsync --delete,
+          # regenerated on every `npm run build` via a prebuild hook). Re-sync and commit
+          # it in the SAME commit as the wiki update so it never drifts — otherwise any
+          # WO worktree that pulls main and runs a routine frontend build silently
+          # regenerates it locally, showing up as an unrelated uncommitted diff in
+          # whatever unrelated WO that worktree happens to be working on (clarion WO-512).
+          bash frontend/scripts/sync_in_app_help.sh
+          git add frontend/public/help/
+
           CHANGED=$(git diff --cached --name-only | grep "^wiki/docs/" | sed 's|wiki/docs/||' | tr '\n' ', ' | sed 's/,$//')
           git commit -m "docs(wiki): auto-update ${CHANGED} [doc-writer-agent]
 
           Updated by the AI Factory doc-writer agent.
+          Includes the frontend/public/help/ mirror so it never drifts from wiki/docs/.
           Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ vars.CLARION_REPO || 'dentroio/clarion' }}.git HEAD:main
