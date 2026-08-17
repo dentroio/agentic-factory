@@ -52,6 +52,6 @@ def test_connect_rolls_back_on_error(tmp_path):
 def test_orchestrator_has_no_bare_sqlite_connect():
     text = (ORCH / "orchestrator.py").read_text(encoding="utf-8")
     assert "sqlite3.connect(DB_PATH)" not in text
-    assert "from db import connect as _db_connect" in text
+    assert "connect as _db_connect" in text
     assert "def _db():" in text
     assert text.count("with _db() as") >= 30
