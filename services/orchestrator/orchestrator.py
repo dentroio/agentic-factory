@@ -46,6 +46,7 @@ from db import (
     sync_runs as _db_sync_runs,
 )
 from llm_client import messages_create
+from secrets_policy import SecretPolicyError, apply_secret_updates
 from vault_auth import load_vault_token
 
 load_dotenv()
@@ -4317,16 +4318,14 @@ async def put_secrets(request: Request):
         incoming = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
-    secrets = dict(_secrets_cache)
-    for k, v in incoming.items():
-        if v:
-            secrets[k] = str(v)
-        elif k in secrets:
-            del secrets[k]
+    try:
+        secrets = apply_secret_updates(_secrets_cache, incoming)
+    except SecretPolicyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if VAULT_ADDR and _vault_token:
         await _vault_write(secrets)
     else:
-        SECRETS_PATH.write_text(json.dumps(secrets, indent=2))
+        dispatch_control.atomic_write_json(SECRETS_PATH, secrets)
     _secrets_cache = secrets
     return {k: bool(v) for k, v in secrets.items()}
 
