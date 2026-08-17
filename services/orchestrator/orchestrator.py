@@ -45,6 +45,7 @@ from db import (
     schedule_sync_runs as _db_schedule_sync_runs,
     sync_runs as _db_sync_runs,
 )
+from git_https import git_fetch_env, github_https_url, redact_secret
 from llm_client import messages_create
 from secrets_policy import SecretPolicyError, apply_secret_updates
 from vault_auth import load_vault_token
@@ -3474,7 +3475,7 @@ async def _sync_local_repo() -> None:
     token = _get_github_token()
     if not token or not GITHUB_REPO:
         return
-    https_url = f"https://x-access-token:{token}@github.com/{GITHUB_REPO}.git"
+    https_url = github_https_url(GITHUB_REPO)
     try:
         proc = await asyncio.create_subprocess_exec(
             "git", "fetch", "--prune", https_url,
@@ -3482,11 +3483,12 @@ async def _sync_local_repo() -> None:
             "+refs/heads/wo/*:refs/remotes/origin/wo/*",
             cwd=LOCAL_REPO_MOUNT,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            env=git_fetch_env(token),
         )
         _, err = await asyncio.wait_for(proc.communicate(), timeout=60)
         if proc.returncode != 0:
-            print(f"[orchestrator] git fetch failed: {err.decode(errors='replace').strip()[:200]}")
+            msg = redact_secret(err.decode(errors="replace"), token).strip()[:200]
+            print(f"[orchestrator] git fetch failed: {msg}")
             return
         proc2 = await asyncio.create_subprocess_exec(
             "git", "merge", "--ff-only", "refs/remotes/origin/main",
@@ -3499,7 +3501,7 @@ async def _sync_local_repo() -> None:
             if "Already up to date" not in msg:
                 print(f"[orchestrator] local repo synced: {msg}")
     except Exception as e:
-        print(f"[orchestrator] git pull error: {e}")
+        print(f"[orchestrator] git pull error: {redact_secret(str(e), token)}")
 
 
 async def poll() -> None:
