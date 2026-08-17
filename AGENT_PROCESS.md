@@ -334,9 +334,10 @@ Every PR runs these jobs. All must pass before merge:
 | ai-review | Claude code review — fails the job on a "Review required" verdict, and on any run that produced no verdict at all |
 
 > **The AI review job is red-or-green on its own.** The repository ruleset's
-> `required_status_checks` should list `Unit Tests`, `Claude Code Review`, and
-> `Risk Tier Approval Gate`. Until all three are registered, treat a missing
-> check as a signal a human must act on, not as a gate that acts for you.
+> `required_status_checks` should list `Unit Tests`, `Claude Code Review`,
+> `Risk Tier Approval Gate`, and `Secret Detection (Gitleaks)`. Until all four
+> are registered, treat a missing check as a signal a human must act on, not as
+> a gate that acts for you.
 
 After the AI review completes, the **Merge Advisor** (`merge-advisor.yml`) posts a synthesized recommendation comment on every P0/P1 PR. It is always the last comment before a human reviewer looks at the PR.
 
