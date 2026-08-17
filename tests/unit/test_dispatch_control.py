@@ -132,6 +132,33 @@ def test_dispatch_and_thread_saves_use_atomic_write():
     assert ".write_text(json.dumps(messages" not in thread
 
 
+def test_remaining_data_json_saves_use_atomic_write():
+    orch = (REPO_ROOT / "services" / "orchestrator" / "orchestrator.py").read_text()
+    intel = (REPO_ROOT / "services" / "orchestrator" / "intelligence.py").read_text()
+    slack = (REPO_ROOT / "services" / "orchestrator" / "slack_bot.py").read_text()
+    for needle in (
+        "OVERRIDES_PATH.write_text",
+        "RESERVED_WOS_PATH.write_text",
+        "PM_MEMORY_PATH.write_text",
+        "INTELLIGENCE_STATE_PATH.write_text",
+        "OUTPUT_PATH.write_text",
+        "ANTHROPIC_USAGE_PATH.write_text",
+        "USAGE_PATH.write_text",
+    ):
+        assert needle not in orch
+    assert "atomic_write_json(OVERRIDES_PATH" in orch
+    assert "atomic_write_json(RESERVED_WOS_PATH" in orch
+    assert "atomic_write_json(PM_MEMORY_PATH" in orch
+    assert "atomic_write_json(INTELLIGENCE_STATE_PATH" in orch
+    assert "atomic_write_json(OUTPUT_PATH" in orch
+    assert "atomic_write_json(ANTHROPIC_USAGE_PATH" in orch
+    assert "atomic_write_json(USAGE_PATH" in orch
+    assert "_ACTED_ON_PATH.write_text" not in intel
+    assert "atomic_write_json(_ACTED_ON_PATH" in intel
+    assert "_STATE_PATH.write_text" not in slack
+    assert "atomic_write_json(_STATE_PATH" in slack
+
+
 def test_live_claim_skips_vanished_and_finished_entries():
     state = {
         "WO-1": {"status": "claimed", "agent": "a"},

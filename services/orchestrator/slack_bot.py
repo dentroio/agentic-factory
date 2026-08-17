@@ -9,6 +9,8 @@ from pathlib import Path
 
 import httpx
 
+import dispatch_control
+
 logger = logging.getLogger(__name__)
 
 ORCHESTRATOR_URL = os.getenv("ORCHESTRATOR_URL", "http://localhost:8100")
@@ -41,8 +43,7 @@ def _save_state() -> None:
                 k: v[-_MAX_TURNS:] for k, v in list(_history.items())[-_MAX_THREADS:]
             }
             data = {"history": history_trimmed, "active_threads": threads}
-        _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _STATE_PATH.write_text(json.dumps(data))
+        dispatch_control.atomic_write_json(_STATE_PATH, data)
     except Exception as e:
         logger.warning("[slack_bot] state save failed: %s", e)
 

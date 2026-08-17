@@ -217,7 +217,7 @@ def _load_overrides() -> None:
 
 def _save_overrides() -> None:
     try:
-        OVERRIDES_PATH.write_text(json.dumps(_overrides, indent=2))
+        dispatch_control.atomic_write_json(OVERRIDES_PATH, _overrides)
     except Exception as e:
         print(f"[orchestrator] overrides save failed: {e}")
 
@@ -248,12 +248,8 @@ def _load_reserved() -> None:
 
 def _save_reserved() -> None:
     try:
-        RESERVED_WOS_PATH.write_text(
-            json.dumps(
-                {repo: {str(k): v for k, v in bucket.items()} for repo, bucket in _reserved.items()},
-                indent=2,
-            )
-        )
+        payload = {repo: {str(k): v for k, v in bucket.items()} for repo, bucket in _reserved.items()}
+        dispatch_control.atomic_write_json(RESERVED_WOS_PATH, payload)
     except Exception as e:
         print(f"[orchestrator] reserved_wos save failed: {e}")
 
@@ -351,7 +347,7 @@ def _load_pm_memory() -> None:
 
 def _save_pm_memory() -> None:
     try:
-        PM_MEMORY_PATH.write_text(json.dumps(_pm_memory, indent=2))
+        dispatch_control.atomic_write_json(PM_MEMORY_PATH, _pm_memory)
     except Exception as e:
         print(f"[orchestrator] pm_memory save failed: {e}")
 
@@ -1165,7 +1161,7 @@ async def _intelligence_job() -> None:
         )
         _last_intelligence_run = result
         try:
-            INTELLIGENCE_STATE_PATH.write_text(json.dumps(result, indent=2))
+            dispatch_control.atomic_write_json(INTELLIGENCE_STATE_PATH, result)
         except Exception:
             pass
         if result.get("actions_taken"):
@@ -1175,7 +1171,7 @@ async def _intelligence_job() -> None:
     except Exception as e:
         _last_intelligence_run = {"error": str(e), "started_at": datetime.now(UTC).isoformat()}
         try:
-            INTELLIGENCE_STATE_PATH.write_text(json.dumps(_last_intelligence_run, indent=2))
+            dispatch_control.atomic_write_json(INTELLIGENCE_STATE_PATH, _last_intelligence_run)
         except Exception:
             pass
         print(f"[intelligence] pass failed: {e}")
@@ -3975,7 +3971,7 @@ async def poll() -> None:
     }
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(json.dumps(_orchestrator_output, indent=2))
+    dispatch_control.atomic_write_json(OUTPUT_PATH, _orchestrator_output)
     print(f"[orchestrator] {now_str} — {len(specs)} WOs, {len(dispatch_queue)} dispatchable, "
           f"{len(in_progress_wos)} in-progress, {len(pending_validations)} awaiting validation")
 
@@ -4066,7 +4062,7 @@ def _record_anthropic_usage(model: str, input_tokens: int, output_tokens: int, e
         })
         if len(records) > 2000:
             records = records[-2000:]
-        ANTHROPIC_USAGE_PATH.write_text(json.dumps(records))
+        dispatch_control.atomic_write_json(ANTHROPIC_USAGE_PATH, records)
     except Exception:
         pass
 
@@ -4204,7 +4200,7 @@ async def post_usage(record: UsageRecord):
     records.append(record.model_dump())
     if len(records) > 500:
         records = records[-500:]
-    USAGE_PATH.write_text(json.dumps(records, indent=2))
+    dispatch_control.atomic_write_json(USAGE_PATH, records)
     return {"ok": True}
 
 
