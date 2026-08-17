@@ -39,7 +39,12 @@ from wo_resolver import (
     extract_wo_from_title,
 )
 import dispatch_control
-from db import connect as _db_connect, remember_runs as _db_remember_runs, sync_runs as _db_sync_runs
+from db import (
+    connect as _db_connect,
+    remember_runs as _db_remember_runs,
+    schedule_sync_runs as _db_schedule_sync_runs,
+    sync_runs as _db_sync_runs,
+)
 from llm_client import messages_create
 from vault_auth import load_vault_token
 
@@ -649,8 +654,17 @@ def _db_load_all_runs() -> dict[str, dict]:
 
 
 def _db_sync_dispatch() -> None:
-    """Sync the in-memory _dispatch_state dict to SQLite — called from _save_dispatch()."""
-    _db_sync_runs(DB_PATH, _dispatch_state)
+    """Snapshot dispatch state and persist it. Off the event loop when one is running."""
+    snapshot = {
+        wo_id: dict(record) if isinstance(record, dict) else record
+        for wo_id, record in _dispatch_state.items()
+    }
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        _db_sync_runs(DB_PATH, snapshot)
+        return
+    _db_schedule_sync_runs(DB_PATH, snapshot)
 
 
 def _db_append_step(wo_id: str, status: str, step: str = "", agent: str = "") -> None:
