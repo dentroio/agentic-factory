@@ -149,3 +149,56 @@ def test_title_only_does_not_count_as_branch():
     pr = {"title": "Fix regression from WO-410", "head": {"ref": "fix/regression"}}
     num, src = resolve_wo_for_pr_with_source(pr)
     assert src == "title"  # must NOT be "branch"
+
+
+def test_wos_completed_by_merged_pr_ignores_filing_titles():
+    from wo_resolver import wos_completed_by_merged_pr
+
+    assert wos_completed_by_merged_pr({
+        "title": "docs(wo): file WO-482 — Neo4j silent write loss",
+        "head": {"ref": "wo/482-neo4j-write-loss"},
+    }) == []
+    assert wos_completed_by_merged_pr({
+        "title": "docs: file WO-508 and WO-509 follow-up specs from WO-507",
+        "head": {"ref": "docs/wo-508-509-followup-specs"},
+    }) == []
+    assert wos_completed_by_merged_pr({
+        "title": "docs(pm): Identity Quality Loop (WO-494–498) and audit canvas",
+        "head": {"ref": "docs/identity-quality-loop-wos"},
+    }) == []
+
+
+def test_wos_completed_by_merged_pr_counts_implementation():
+    from wo_resolver import wos_completed_by_merged_pr
+
+    assert wos_completed_by_merged_pr({
+        "title": "WO-488: Fix AP uplink graph edge",
+        "head": {"ref": "wo/488-ap-switching-mode-topology"},
+    }) == [488]
+    assert wos_completed_by_merged_pr({
+        "title": "WO-1035: Resolve conflict: PR #455 — WO-417: Coverage Consolidation",
+        "head": {"ref": "wo/1035-resolve-conflict"},
+    }) == [417, 1035]
+    assert wos_completed_by_merged_pr({
+        "title": "docs(pm): mark WO-499 and WO-504 done",
+        "head": {"ref": "docs/mark-499-504-done"},
+    }) == [499, 504]
+    assert wos_completed_by_merged_pr({
+        "title": "WO-493: Backfill WO-489 spec doc; document abandoned WO-491",
+        "head": {"ref": "wo/493-backfill-wo489-wo491-docs"},
+    }) == []
+
+
+def test_classify_wo_status_strips_leading_emoji():
+    from wo_resolver import classify_wo_status
+
+    assert classify_wo_status("⛔ Superseded (2026-08-05) — by WO-405") == "done"
+    assert classify_wo_status("❌ Cancelled — belongs in agentic-factory") == "done"
+    assert classify_wo_status("⚠️ Shipped 2026-08-09 with one AC unverified") == "done"
+    assert classify_wo_status("⏸ Deferred — session timeline paused") == "deferred"
+    assert classify_wo_status("🔲 Open — spec written 2026-08-15") == "open"
+    assert classify_wo_status("📋 Open") == "open"
+    assert classify_wo_status("Planned") == "open"
+    assert classify_wo_status("🟡 In progress — fix implemented") == "in_progress"
+    assert classify_wo_status("👀 In review (PR #584)") == "review"
+    assert classify_wo_status("🔴 Blocked on WO-450") == "blocked"

@@ -105,3 +105,74 @@ def test_multi_wo_case_actually_returns_both():
     }
     for name, impl in IMPLEMENTATIONS:
         assert impl.resolve_all_wos_for_pr(pr) == [417, 1035], f"{name} returned wrong set"
+
+
+COMPLETION_CASES = [
+    (
+        "implementation branch+title",
+        {"head": {"ref": "wo/488-slug"}, "title": "WO-488: Fix AP uplink"},
+        [488],
+    ),
+    (
+        "filing title on wo/ branch is not completion",
+        {"head": {"ref": "wo/482-neo4j-write-loss"}, "title": "docs(wo): file WO-482 — silent write loss"},
+        [],
+    ),
+    (
+        "program-scope docs title is not completion",
+        {"head": {"ref": "docs/identity-quality-loop-wos"}, "title": "docs(pm): Identity Quality Loop (WO-494–498)"},
+        [],
+    ),
+    (
+        "conflict PR with two WO-N: labels",
+        {
+            "head": {"ref": "wo/1035-resolve-conflict"},
+            "title": "WO-1035: Resolve conflict: PR #455 — WO-417: Coverage Consolidation",
+        },
+        [417, 1035],
+    ),
+    (
+        "mark-done docs PR",
+        {"head": {"ref": "docs/mark-499-504-done"}, "title": "docs(pm): mark WO-499 and WO-504 done"},
+        [499, 504],
+    ),
+    (
+        "WO-N: Backfill is not implementation",
+        {"head": {"ref": "wo/493-backfill-wo489-wo491-docs"}, "title": "WO-493: Backfill WO-489 spec doc; document abandoned WO-491"},
+        [],
+    ),
+]
+
+
+@pytest.mark.parametrize("description,pr,expected", COMPLETION_CASES)
+def test_wos_completed_by_merged_pr_agrees_across_all_three(description, pr, expected):
+    results = {name: impl.wos_completed_by_merged_pr(pr) for name, impl in IMPLEMENTATIONS}
+    values = {tuple(v) for v in results.values()}
+    assert len(values) == 1, (
+        f"wos_completed_by_merged_pr disagrees on case {description!r}: {results}"
+    )
+    assert next(iter(values)) == tuple(expected)
+
+
+CLASSIFY_CASES = [
+    ("⛔ Superseded — by WO-405", "done"),
+    ("❌ Cancelled — belongs in agentic-factory", "done"),
+    ("⚠️ Shipped with one AC unverified", "done"),
+    ("⏸ Deferred — paused", "deferred"),
+    ("🔲 Open — spec written", "open"),
+    ("Planned", "open"),
+    ("🟡 In progress — fix implemented", "in_progress"),
+    ("👀 In review (PR #584)", "review"),
+    ("🔴 Blocked on WO-450", "blocked"),
+    ("✅ Complete (2026-08-16)", "done"),
+]
+
+
+@pytest.mark.parametrize("status,expected", CLASSIFY_CASES)
+def test_classify_wo_status_agrees_across_all_three(status, expected):
+    results = {name: impl.classify_wo_status(status) for name, impl in IMPLEMENTATIONS}
+    values = set(results.values())
+    assert len(values) == 1, (
+        f"classify_wo_status disagrees on {status!r}: {results}"
+    )
+    assert next(iter(values)) == expected

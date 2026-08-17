@@ -15,7 +15,10 @@ Algorithm (from WO-358 spec):
 
 from __future__ import annotations
 
-_EXCLUDE_STATUSES = {"done", "deferred", "claimed", "in_progress", "review"}
+_EXCLUDE_STATUSES = {
+    "done", "deferred", "claimed", "in_progress", "review",
+    "superseded", "abandoned", "cancelled", "canceled",
+}
 
 _PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 _EFFORT_ORDER = {"S": 0, "M": 1, "L": 2, "XL": 3}

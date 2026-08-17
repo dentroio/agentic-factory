@@ -1,6 +1,6 @@
 # Dentro AI Factory — Capability Status
 
-_Last updated: 2026-08-15_
+_Last updated: 2026-08-17_
 
 A living registry of what the system can do, at what fidelity, and what's still open.
 
@@ -40,6 +40,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Stalled board column | ✅ | Retry-queued or stale claims, and pushed branches with no dispatch entry | fix/dashboard-wo-source-of-truth |
 | Velocity measured in work orders, not pull requests | ✅ | `wo_reconcile.wo_completion_times()`; each WO counted once, in the week of its first merge; PR rate shown beside it under its own label | fix/dashboard-wo-source-of-truth |
 | Merged-PR window reports its own completeness | ✅ | Search API `merged:>=` paged against `total_count`; short or failed fetches render as "no data", not as zero, and are excluded from the average | fix/dashboard-wo-source-of-truth |
+| Open/Done/Deferred matches shipped work | ✅ | `classify_wo_status` strips leading emoji; `wos_completed_by_merged_pr` ignores spec-filing titles; untrusted dispatch complete stubs cannot hide a still-Open spec | fix/wo-status-board-truth |
 
 ## Dimension 2: PR Watchdog (pr-watchdog)
 

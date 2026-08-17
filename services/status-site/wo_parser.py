@@ -34,29 +34,9 @@ class WOSpec:
 
     @property
     def board_column(self) -> str:
-        # Match on what the status STARTS WITH, not substrings anywhere in the text.
-        # Strip markdown bold markers (**) that some legacy spec files use as a prefix.
-        s = self.status.strip().lstrip("*").strip()
-        sl = s.lower()
-        if s.startswith("✅") or sl.startswith(("done", "complete", "completed")):
-            return "done"
-        if s.startswith("⏸") or sl.startswith("deferred"):
-            return "deferred"
-        if s.startswith(("👀", "⏳")) or sl.startswith(("review", "in review", "awaiting")):
-            return "review"
-        if s.startswith("🔄") or sl.startswith(("in progress", "progress")):
-            return "in_progress"
-        if s.startswith(("🔴", "❌")) or sl.startswith("blocked"):
-            return "blocked"
-        # Started, then abandoned: a branch or a dead claim exists but no agent
-        # is dispatched. Distinct from "open" (never started) and from
-        # "in_progress" (an agent is on it right now) — collapsing it into
-        # either one is how leftover branches used to read as live work.
-        if s.startswith("⚠") or sl.startswith("stalled"):
-            return "stalled"
         # "Planned" is acknowledged backlog — visible as open on the board.
         # Dispatch eligibility (Ready vs Planned) is enforced by the orchestrator separately.
-        return "open"
+        return classify_wo_status(self.status)
 
     @property
     def description(self) -> str:
@@ -168,4 +148,65 @@ def resolve_all_wos_for_pr(pr: dict) -> list[int]:
     branch_n = extract_wo_number_from_branch(head_ref)
     if branch_n is not None:
         nums.add(branch_n)
+    return sorted(nums)
+
+
+_STATUS_EMOJI_RE = re.compile(
+    r"^(?:✅|⏸|⛔|❌|🔴|🟡|🔄|👀|⏳|⚠(?:️)?|🔲|📋)\s*"
+)
+_FILING_TITLE_RE = re.compile(
+    r"(?i)^(?:(?:docs|chore)(?:\([^)]+\))?:\s*(?:file|backfill|scope)\b"
+    r"|WO-\d+\s*[:—]\s*backfill\b)"
+)
+
+
+def classify_wo_status(status: str) -> str:
+    """Map a spec Status: line to a board column.
+
+    Leading emoji is stripped before keyword checks so '⛔ Superseded'
+    and '❌ Cancelled' are terminal (done), not Open/Blocked.
+    """
+    s = (status or "").strip().lstrip("*").strip()
+    sl = s.lower()
+    core = _STATUS_EMOJI_RE.sub("", sl).strip()
+    if s.startswith("✅") or core.startswith((
+        "done", "complete", "completed", "superseded", "abandoned",
+        "cancelled", "canceled", "shipped",
+    )):
+        return "done"
+    if s.startswith("⏸") or core.startswith("deferred"):
+        return "deferred"
+    if s.startswith(("👀", "⏳")) or core.startswith(("review", "in review", "awaiting")):
+        return "review"
+    if s.startswith("🔄") or core.startswith("in progress"):
+        return "in_progress"
+    if s.startswith(("🔴", "❌")) or core.startswith("blocked"):
+        return "blocked"
+    if s.startswith("⚠") or core.startswith("stalled"):
+        return "stalled"
+    return "open"
+
+
+def wos_completed_by_merged_pr(pr: dict) -> list[int]:
+    """WO numbers this merged PR actually completed.
+
+    A title mention is not completion: 'docs(wo): file WO-508' and
+    'docs(pm): program — WO-449–456' name WOs they did not implement.
+    Completion requires a wo/NNN- branch or a 'WO-NNN:' / mark-done title.
+    Spec-filing titles never complete, even on a wo/NNN- branch.
+    """
+    title = (pr.get("title") or "").strip()
+    head_ref = (pr.get("head") or {}).get("ref", "") or ""
+    if _FILING_TITLE_RE.match(title):
+        return []
+    nums: set[int] = set()
+    branch_n = extract_wo_number_from_branch(head_ref)
+    if branch_n is not None:
+        nums.add(branch_n)
+    for m in re.finditer(r"(?i)\bWO-(\d+)\s*[:—]", title):
+        nums.add(int(m.group(1)))
+    if re.search(r"(?i)\bmark(?:ed)?\b", title) and re.search(
+        r"(?i)\b(?:complete|done)\b", title
+    ):
+        nums.update(int(x) for x in re.findall(r"(?i)\bWO-(\d+)\b", title))
     return sorted(nums)
