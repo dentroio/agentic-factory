@@ -45,6 +45,7 @@ from db import (
     schedule_sync_runs as _db_schedule_sync_runs,
     sync_runs as _db_sync_runs,
 )
+from agent_config_policy import AgentConfigError, apply_agent_config_updates
 from git_https import git_fetch_env, github_https_url, redact_secret
 from llm_client import messages_create
 from secrets_policy import SecretPolicyError, apply_secret_updates
@@ -4024,12 +4025,11 @@ async def put_agent_config(request: Request):
         incoming = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
-    existing = _load_agent_config()
-    if "reviewers" in incoming and isinstance(incoming["reviewers"], dict):
-        existing["reviewers"] = {**existing.get("reviewers", {}), **incoming["reviewers"]}
-        incoming = {k: v for k, v in incoming.items() if k != "reviewers"}
-    merged = {**existing, **incoming}
-    AGENT_CONFIG_PATH.write_text(json.dumps(merged, indent=2))
+    try:
+        merged = apply_agent_config_updates(_load_agent_config(), incoming)
+    except AgentConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    dispatch_control.atomic_write_json(AGENT_CONFIG_PATH, merged)
     return merged
 
 

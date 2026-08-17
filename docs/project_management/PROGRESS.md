@@ -19,7 +19,8 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
-| WO-1081 | Do not put the GitHub token in git argv | P0 | 🟡 In Progress | — |
+| WO-1082 | Allowlist keys on PUT /api/config | P1 | 🟡 In Progress | — |
+| WO-1081 | Do not put the GitHub token in git argv | P0 | ✅ Complete | 2026-08-16 |
 | WO-1080 | Allowlist keys on PUT /api/secrets | P0 | ✅ Complete | 2026-08-16 |
 | WO-1079 | Dispatch SQLite sync off the event loop | P1 | ✅ Complete | 2026-08-16 |
 | WO-1078 | Reject path traversal in thread storage | P1 | ✅ Complete | 2026-08-16 |
