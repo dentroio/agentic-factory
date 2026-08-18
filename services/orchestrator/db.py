@@ -24,17 +24,20 @@ _RUN_KEYS = (
     "retried_at",
     "stuck",
     "stuck_since",
+    "claim_token",
 )
 
 _UPSERT_SQL = """
 INSERT INTO runs
   (wo, slug, agent, backend, workstation, claimed_at, status,
    step, last_seen, completed_at, pr_url, pr_number,
-   attempt_count, first_claimed_at, retried_at, stuck, stuck_since)
+   attempt_count, first_claimed_at, retried_at, stuck, stuck_since,
+   claim_token)
 VALUES
   (:wo, :slug, :agent, :backend, :workstation, :claimed_at, :status,
    :step, :last_seen, :completed_at, :pr_url, :pr_number,
-   :attempt_count, :first_claimed_at, :retried_at, :stuck, :stuck_since)
+   :attempt_count, :first_claimed_at, :retried_at, :stuck, :stuck_since,
+   :claim_token)
 ON CONFLICT(wo) DO UPDATE SET
   slug=excluded.slug, agent=excluded.agent, backend=excluded.backend,
   workstation=excluded.workstation, claimed_at=excluded.claimed_at,
@@ -42,7 +45,8 @@ ON CONFLICT(wo) DO UPDATE SET
   last_seen=excluded.last_seen, completed_at=excluded.completed_at,
   pr_url=excluded.pr_url, pr_number=excluded.pr_number,
   attempt_count=excluded.attempt_count, first_claimed_at=excluded.first_claimed_at,
-  retried_at=excluded.retried_at, stuck=excluded.stuck, stuck_since=excluded.stuck_since
+  retried_at=excluded.retried_at, stuck=excluded.stuck, stuck_since=excluded.stuck_since,
+  claim_token=excluded.claim_token
 """
 
 _synced: dict[str, tuple] = {}
@@ -90,6 +94,7 @@ def _row(wo_id: str, record: dict) -> dict:
         "retried_at": record.get("retried_at"),
         "stuck": int(bool(record.get("stuck", False))),
         "stuck_since": record.get("stuck_since"),
+        "claim_token": record.get("claim_token") or "",
     }
 
 

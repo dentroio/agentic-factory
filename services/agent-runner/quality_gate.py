@@ -16,6 +16,7 @@ async def _run(cmd: list[str], cwd: str, timeout: int, env: dict | None = None) 
             env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
         stdout, _ = await _communicate(proc, timeout=timeout)
         output = stdout.decode("utf-8", errors="replace") if stdout else ""
@@ -77,7 +78,8 @@ async def _changed_files(worktree: str, extensions: tuple[str, ...]) -> list[str
 
 
 _CI_LOCK_PATH = Path("/tmp/factory-ci-local.lock")
-_CI_LOCK_TIMEOUT = 900  # seconds to wait for the lock
+_CI_LOCK_TIMEOUT = 1800  # wait at least as long as one ci-local run
+_CI_RUN_TIMEOUT = 1800  # Clarion frontend tsc routinely exceeds 900s under load
 _COMPOSE_LOCK_TIMEOUT = 600  # seconds to wait for a per-service compose lock
 
 
@@ -173,7 +175,7 @@ async def run_ci(worktree: str) -> tuple[bool, str]:
             waited += 5
 
     try:
-        rc, out = await _run(["make", "ci-local"], worktree, timeout=900, env=env)
+        rc, out = await _run(["make", "ci-local"], worktree, timeout=_CI_RUN_TIMEOUT, env=env)
     finally:
         try:
             _CI_LOCK_PATH.unlink(missing_ok=True)

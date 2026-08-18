@@ -96,10 +96,9 @@ QUALITY_MANDATE = """
 
 Before calling POST {orchestrator_url}/api/validate you MUST:
 
-1. Run `make ci-local` — zero lint errors, zero type errors, all tests pass.
-   CI failure is BLOCKING. Fix all errors before calling /api/validate.
-   NOTE: black and ruff are auto-fixed by the quality gate before CI runs,
-   so formatting-only failures will be fixed automatically. Focus on real errors.
+1. Do NOT run `make ci-local` in this session. The runner quality gate runs it
+   once after you finish, under a lock so two WOs cannot compile at once.
+   A second copy on this machine causes timeouts that look like test failures.
 
 2. SECURITY — your implementation MUST NOT contain:
    - Hardcoded secrets, API keys, or passwords in code
@@ -164,15 +163,14 @@ PROCESS_SECTION = """
 3.  If backend files changed: make build-svc SVC=<service>
 4.  make wait-healthy
 5.  make smoke-test
-6.  make ci-local   ← MUST PASS before proceeding
-7.  Fix any CI failures, then re-run step 6
-8.  git add <specific files you changed> && git commit  (do NOT use git add -A)
-9.  git push -u origin <branch>
-10. gh pr create — get the PR URL from the output
-11. Call POST /api/validate with ci_passed=true, security_passed=true, AND pr_url=<PR URL>
-    The orchestrator REJECTS validation without a pr_url. Steps 8-10 are mandatory first.
-12. After human approval: for P2 run gh pr merge --auto --squash
-13. Call POST /api/complete after merge
+6.  Do not run make ci-local yourself — the runner quality gate runs it after this session
+7.  git add <specific files you changed> && git commit  (do NOT use git add -A)
+8.  git push -u origin <branch>
+9.  gh pr create — get the PR URL from the output
+10. Call POST /api/validate with ci_passed=true, security_passed=true, AND pr_url=<PR URL>
+    The orchestrator REJECTS validation without a pr_url. Steps 7-9 are mandatory first.
+11. After human approval: for P2 run gh pr merge --auto --squash
+12. Call POST /api/complete after merge
 
 ## Frontend dependency rule
 If you edit frontend/package.json, you MUST also regenerate the lock file:
@@ -253,7 +251,8 @@ def format_prior_context(rejections: list[dict], thread_msgs: list[dict]) -> str
 
 def build_prompt(wo_spec: dict, wo_markdown: str, worktree_path: str, agent_name: str,
                  prior_context: str = "") -> str:
-    wo_id = f"WO-{wo_spec['wo']}" if "wo" in wo_spec else f"WO-{wo_spec.get('number', '?')}"
+    raw = str(wo_spec.get("wo") or wo_spec.get("number") or "?")
+    wo_id = raw if raw.upper().startswith("WO-") else f"WO-{raw}"
     title = wo_spec.get("title", "Unknown")
     priority = wo_spec.get("priority", "P2")
     effort = wo_spec.get("effort", "M")

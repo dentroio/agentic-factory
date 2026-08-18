@@ -180,6 +180,10 @@ def _load_state() -> None:
         _dispatch_state = db_runs
         _db_remember_runs(_dispatch_state)
         print(f"[orchestrator] loaded {len(db_runs)} dispatch entries from SQLite")
+        # runs SQLite historically omitted claim_token. Recreating the
+        # container then 409'd every heartbeat and the runner stopped
+        # checkins, so the stale-claim sweep would reap a still-live agent.
+        _restore_claim_tokens_from_json()
     elif DISPATCH_STATE_PATH.exists():
         try:
             _dispatch_state = json.loads(DISPATCH_STATE_PATH.read_text())
@@ -375,6 +379,26 @@ def _pm_memory_summary() -> str:
         for dec in decisions[-3:]:
             lines.append(f"  {dec['decision']}")
     return "\n".join(lines[:10])
+
+
+def _restore_claim_tokens_from_json() -> None:
+    """Copy claim_token from the JSON backup when SQLite loaded without one."""
+    if not DISPATCH_STATE_PATH.exists():
+        return
+    try:
+        json_state = json.loads(DISPATCH_STATE_PATH.read_text())
+    except Exception:
+        return
+    restored = 0
+    for wo_id, entry in _dispatch_state.items():
+        if entry.get("claim_token"):
+            continue
+        token = (json_state.get(wo_id) or {}).get("claim_token")
+        if token:
+            entry["claim_token"] = token
+            restored += 1
+    if restored:
+        print(f"[orchestrator] restored {restored} claim token(s) from JSON backup")
 
 
 def _save_dispatch() -> None:
@@ -638,6 +662,7 @@ def _init_db() -> None:
             ("retried_at", "ALTER TABLE runs ADD COLUMN retried_at TEXT"),
             ("stuck", "ALTER TABLE runs ADD COLUMN stuck INTEGER DEFAULT 0"),
             ("stuck_since", "ALTER TABLE runs ADD COLUMN stuck_since TEXT"),
+            ("claim_token", "ALTER TABLE runs ADD COLUMN claim_token TEXT DEFAULT ''"),
         ):
             try:
                 conn.execute(_ddl)
@@ -1419,7 +1444,7 @@ async def get_next(domain: str = ""):
         if _is_done(wo.get("status", "")):
             continue
         claim = _dispatch_state.get(wo_id, {})
-        if claim.get("status") in active_statuses:
+        if _claim_blocks_next(wo_id, claim, _specs_cache or {}):
             continue
         # A WO that already exceeded MAX_RETRY_ATTEMPTS will always 429 on
         # claim (see /api/claim below) — without this check it stays the
@@ -1433,8 +1458,11 @@ async def get_next(domain: str = ""):
         # depends_on holds bare WO numbers (ints); _dispatch_state is keyed by
         # "WO-{n}" strings — without the f-string below every lookup misses and
         # every WO with a declared dependency is held forever, complete or not.
+        # Spec-done (or a trusted complete stub) counts; an unknown-agent
+        # complete stub for the *dependency* must not unblock, and a missing
+        # dispatch row must not block a spec that is already marked done.
         deps = wo.get("depends_on") or []
-        unmet = [d for d in deps if _dispatch_state.get(f"WO-{d}", {}).get("status") != "complete"]
+        unmet = [d for d in deps if not _dependency_satisfied(d, _specs_cache or {}, _dispatch_state)]
         if unmet:
             continue
         # File-overlap guard — skip WOs whose declared scope collides with a
@@ -3032,6 +3060,39 @@ def _trust_dispatch_complete(num: int, entry: dict, specs: dict[int, dict]) -> b
         return True
     agent = (entry.get("agent") or "").strip().lower()
     return bool(agent) and agent != "unknown"
+
+
+def _claim_blocks_next(wo_id: str, claim: dict, specs: dict[int, dict]) -> bool:
+    """Whether /api/next should skip this WO because of dispatch_state.
+
+    Untrusted complete stubs (agent empty/unknown, spec still open) must not
+    hide work — same rule as _trust_dispatch_complete / F-01. pending_approval
+    and preflight_held are unclaimable until a human or preflight clears them,
+    so skip them or every runner poll sticks on the same 423.
+    """
+    status = claim.get("status")
+    if status in ("claimed", "in_progress", "awaiting_human", "awaiting_commit",
+                  "pending_approval", "preflight_held"):
+        return True
+    if status != "complete":
+        return False
+    try:
+        num = int(str(wo_id).replace("WO-", ""))
+    except ValueError:
+        return True
+    return _trust_dispatch_complete(num, claim, specs)
+
+
+def _dependency_satisfied(dep_num: int, specs: dict[int, dict],
+                          dispatch_state: dict) -> bool:
+    """True when a depends_on target is actually done (spec or trusted complete)."""
+    spec = specs.get(dep_num) or {}
+    if spec and _is_done(spec.get("status", "")):
+        return True
+    entry = dispatch_state.get(f"WO-{dep_num}", {})
+    return entry.get("status") == "complete" and _trust_dispatch_complete(
+        dep_num, entry, specs
+    )
 
 
 # ── GitHub data fetchers ──────────────────────────────────────────────────────

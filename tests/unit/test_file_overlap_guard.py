@@ -176,3 +176,74 @@ def test_wo_with_no_declared_files_never_blocks_or_is_blocked():
     assert in_flight == set()
     overlap = set(files_by_wo["WO-999"]) & in_flight
     assert overlap == set()
+
+
+# ── /api/next claim skip (mirrors orchestrator._claim_blocks_next) ───────────
+# Keep in sync with orchestrator.py. Untrusted complete stubs must not hide
+# still-open specs; pending_approval must not pin every poll on a 423.
+
+
+def _is_done_status(status: str) -> bool:
+    sl = status.lower()
+    return any(k in sl for k in ("done", "complete", "merged", "closed", "superseded",
+                                 "cancelled", "canceled", "abandoned", "shipped"))
+
+
+def _trust_dispatch_complete(num: int, entry: dict, specs: dict) -> bool:
+    spec = specs.get(num)
+    if spec is None:
+        return True
+    if _is_done_status(spec.get("status", "")):
+        return True
+    agent = (entry.get("agent") or "").strip().lower()
+    return bool(agent) and agent != "unknown"
+
+
+def _claim_blocks_next(wo_id: str, claim: dict, specs: dict) -> bool:
+    status = claim.get("status")
+    if status in ("claimed", "in_progress", "awaiting_human", "awaiting_commit",
+                  "pending_approval", "preflight_held"):
+        return True
+    if status != "complete":
+        return False
+    num = int(str(wo_id).replace("WO-", ""))
+    return _trust_dispatch_complete(num, claim, specs)
+
+
+def _dependency_satisfied(dep_num: int, specs: dict, dispatch_state: dict) -> bool:
+    spec = specs.get(dep_num) or {}
+    if spec and _is_done_status(spec.get("status", "")):
+        return True
+    entry = dispatch_state.get(f"WO-{dep_num}", {})
+    return entry.get("status") == "complete" and _trust_dispatch_complete(
+        dep_num, entry, specs
+    )
+
+
+def test_unknown_complete_stub_does_not_block_open_spec():
+    specs = {493: {"status": "📋 Ready"}}
+    claim = {"status": "complete", "agent": "unknown"}
+    assert _claim_blocks_next("WO-493", claim, specs) is False
+
+
+def test_real_agent_complete_blocks_even_if_spec_still_open():
+    specs = {493: {"status": "📋 Ready"}}
+    claim = {"status": "complete", "agent": "claude-runner"}
+    assert _claim_blocks_next("WO-493", claim, specs) is True
+
+
+def test_pending_approval_blocks_next_so_queue_can_advance():
+    specs = {505: {"status": "📋 Ready"}}
+    claim = {"status": "pending_approval", "agent": "claude-runner"}
+    assert _claim_blocks_next("WO-505", claim, specs) is True
+
+
+def test_spec_done_dependency_counts_without_dispatch_complete():
+    specs = {499: {"status": "✅ Done"}}
+    assert _dependency_satisfied(499, specs, {}) is True
+
+
+def test_unknown_complete_stub_does_not_satisfy_dependency():
+    specs = {470: {"status": "📋 Ready"}}
+    dispatch = {"WO-470": {"status": "complete", "agent": "unknown"}}
+    assert _dependency_satisfied(470, specs, dispatch) is False

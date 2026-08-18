@@ -49,7 +49,11 @@ async def claim(wo_id: str, slug: str = "", backend: str = "") -> bool:
                 "slug": slug,
             })
             if resp.status_code == 423:
-                print(f"[runner] {wo_id} claim refused — factory paused")
+                try:
+                    detail = resp.json().get("detail", "")
+                except Exception:
+                    detail = ""
+                print(f"[runner] {wo_id} claim refused — {detail or 'locked (423)'}")
                 return False
             if resp.status_code == 429:
                 # Distinct from a routine 409 (someone else has it) — this WO is

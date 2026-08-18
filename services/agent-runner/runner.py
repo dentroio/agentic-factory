@@ -289,29 +289,12 @@ async def _setup_worktree(wo_number: str | int, title: str) -> str:
     if LOCAL_REPO_PATH:
         worktree_dir = str(Path(LOCAL_REPO_PATH) / ".worktrees" / f"wo-{num}-{title_slug}")
         if Path(worktree_dir).exists():
-            # Worktree exists from a previous agent run. Clear uncommitted changes so
-            # this agent starts clean — stale edits from a failed/interrupted agent
-            # must not bleed into a new agent's implementation.
-            # We keep commits (agent 1 may have pushed real work) but clear dirty state.
-            #
-            # Stash rather than hard-discard (git checkout . && git clean -fd): the
-            # "previous agent" here is usually the same WO reclaimed after the
-            # stale-claim sweep reaped it, and that sweep's 10min timeout can fire
-            # while the agent is still genuinely alive and mid-implementation (e.g.
-            # a slow quality-gate step with no heartbeat — see _checkin_loop). In
-            # that case a hard discard destroys real, uncommitted work with no way
-            # to get it back. A stash is recoverable via `git stash list` /
-            # `git stash pop` and costs nothing when there's nothing to save.
-            _log(f"Worktree exists — stashing uncommitted state before re-entry: {worktree_dir}")
-            proc = await asyncio.create_subprocess_exec(
-                "git", "stash", "push", "--include-untracked",
-                "-m", f"agent-runner: pre-empted uncommitted work for WO-{num} at {datetime.now(UTC).isoformat()}",
-                cwd=worktree_dir,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await _communicate(proc, timeout=GIT)
-            _log(f"Worktree clean (stashed, not discarded) — resuming at {worktree_dir}")
+            # Same WO reclaimed after a timeout, lease loss, or retry. Keep
+            # uncommitted files in the tree — stashing hid the implementation
+            # from the next agent (WO-482) and a hard reset destroyed it
+            # (WO-440 / WO-445). Commits are already kept; dirty state is the
+            # work in progress.
+            _log(f"Worktree exists — keeping uncommitted state for re-entry: {worktree_dir}")
             return worktree_dir
         _log(f"Creating worktree via wo_start.sh: wo-{num}-{title_slug}")
         proc = await asyncio.create_subprocess_exec(
@@ -319,6 +302,7 @@ async def _setup_worktree(wo_number: str | int, title: str) -> str:
             cwd=LOCAL_REPO_PATH,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
         try:
             out, _ = await _communicate(proc, timeout=WO_START)
