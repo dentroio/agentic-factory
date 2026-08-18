@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -45,6 +46,40 @@ async def test_communicate_kills_on_timeout():
     assert child.returncode is not None
 
 
+async def test_communicate_kills_grandchild_on_timeout(tmp_path):
+    """Timeout must kill make's children (npx tsc), not only make itself."""
+    proc_mod = _load_proc()
+    pid_file = tmp_path / "grand.pid"
+    child = await asyncio.create_subprocess_exec(
+        sys.executable, "-c",
+        (
+            "import os, time, pathlib\n"
+            f"path = pathlib.Path({str(pid_file)!r})\n"
+            "pid = os.fork()\n"
+            "if pid == 0:\n"
+            "    time.sleep(60)\n"
+            "else:\n"
+            "    path.write_text(str(pid))\n"
+            "    time.sleep(60)\n"
+        ),
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    grand = None
+    for _ in range(50):
+        if pid_file.exists() and pid_file.read_text().strip().isdigit():
+            grand = int(pid_file.read_text().strip())
+            break
+        await asyncio.sleep(0.05)
+    assert grand is not None
+    with pytest.raises(asyncio.TimeoutError):
+        await proc_mod.communicate(child, timeout=0.4)
+    assert child.returncode is not None
+    await asyncio.sleep(0.2)
+    with pytest.raises(OSError):
+        os.kill(grand, 0)
+
+
 def test_runner_has_no_bare_communicate():
     files = [
         RUNNER / "runner.py",
@@ -60,6 +95,23 @@ def test_runner_has_no_bare_communicate():
         assert ".communicate(" not in text, f"unbounded communicate in {path.name}"
         assert "from proc import" in text
         assert "communicate" in text
+
+
+def test_quality_gate_ci_is_isolated_and_budgeted():
+    text = (RUNNER / "quality_gate.py").read_text(encoding="utf-8")
+    run_fn = text.split("async def _run")[1].split("async def ")[0]
+    assert "start_new_session=True" in run_fn
+    assert "_CI_RUN_TIMEOUT = 1800" in text
+    assert "_CI_LOCK_TIMEOUT = 1800" in text
+    assert "timeout=_CI_RUN_TIMEOUT" in text
+
+
+def test_reentry_keeps_uncommitted_worktree_state():
+    setup = (RUNNER / "runner.py").read_text(encoding="utf-8").split(
+        "async def _setup_worktree"
+    )[1].split("async def ")[0]
+    assert "git stash" not in setup
+    assert "keeping uncommitted state for re-entry" in setup
 
 
 def test_parallel_sdk_review_is_bounded():

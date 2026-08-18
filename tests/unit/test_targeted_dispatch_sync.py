@@ -30,7 +30,8 @@ CREATE TABLE runs (
   first_claimed_at TEXT,
   retried_at TEXT,
   stuck INTEGER DEFAULT 0,
-  stuck_since TEXT
+  stuck_since TEXT,
+  claim_token TEXT DEFAULT ''
 )
 """
 
