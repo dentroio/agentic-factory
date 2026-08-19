@@ -78,8 +78,17 @@ async def _changed_files(worktree: str, extensions: tuple[str, ...]) -> list[str
 
 
 _CI_LOCK_PATH = Path("/tmp/factory-ci-local.lock")
-_CI_LOCK_TIMEOUT = 1800  # wait at least as long as one ci-local run
-_CI_RUN_TIMEOUT = 1800  # Clarion frontend tsc routinely exceeds 900s under load
+_CI_LOCK_TIMEOUT = 2700  # wait at least as long as one ci-local run
+# 1800s was already 2x the worst historically observed `make ci-local` run
+# (frontend tsc under load) and still wasn't enough: WO-443 hit exactly this
+# wall clock twice in a row (both attempts logged "make timed out after
+# 1800s") during a period of genuine host contention — several agents/
+# worktrees rebuilding containers concurrently pushed load average past 45.
+# Bumping for headroom against that recurring condition. The real fix is
+# concurrency control on how many heavy builds run at once (tracked
+# separately, see occupancy.py) — this alone won't help if contention keeps
+# growing unbounded, it just buys more room before the next WO hits it too.
+_CI_RUN_TIMEOUT = 2700
 _COMPOSE_LOCK_TIMEOUT = 600  # seconds to wait for a per-service compose lock
 # scripts/wait_healthy.sh's own retry loop already waits up to 300s (its default
 # timeout) before giving up — under real host load with several agents rebuilding
