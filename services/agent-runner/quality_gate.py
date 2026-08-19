@@ -81,6 +81,15 @@ _CI_LOCK_PATH = Path("/tmp/factory-ci-local.lock")
 _CI_LOCK_TIMEOUT = 1800  # wait at least as long as one ci-local run
 _CI_RUN_TIMEOUT = 1800  # Clarion frontend tsc routinely exceeds 900s under load
 _COMPOSE_LOCK_TIMEOUT = 600  # seconds to wait for a per-service compose lock
+# scripts/wait_healthy.sh's own retry loop already waits up to 300s (its default
+# timeout) before giving up — under real host load with several agents rebuilding
+# containers concurrently this has been observed taking 143s+. A shorter external
+# wrapper timeout kills the subprocess mid-retry and reports a false "CI tests
+# failed" before wait_healthy.sh's own timeout ever gets to fire, which was the
+# root cause behind several WOs (496, 497, 500, 443, 513, 495) parking on a
+# spurious gate failure despite the underlying code being correct.
+_WAIT_HEALTHY_TIMEOUT = 330  # wait_healthy.sh's 300s default + buffer
+_SMOKE_TEST_TIMEOUT = 240  # ~60s gateway wait + up to a dozen 10s per-check timeouts under load
 
 
 async def _with_compose_lock(svc: str, timeout: int = _COMPOSE_LOCK_TIMEOUT):
@@ -513,11 +522,11 @@ async def run_container_rebuild(worktree: str) -> dict:
                     pass
 
     # Wait for containers to be healthy
-    rc, out = await _run(["make", "wait-healthy"], worktree, timeout=120, env=env)
+    rc, out = await _run(["make", "wait-healthy"], worktree, timeout=_WAIT_HEALTHY_TIMEOUT, env=env)
     output_lines.append(f"\nwait-healthy: {'ok' if rc == 0 else 'FAILED'}\n{out[-500:]}")
 
     # Smoke test
-    rc, smoke_out = await _run(["make", "smoke-test"], worktree, timeout=120, env=env)
+    rc, smoke_out = await _run(["make", "smoke-test"], worktree, timeout=_SMOKE_TEST_TIMEOUT, env=env)
     smoke_passed = rc == 0
     output_lines.append(f"\nsmoke-test: {'✅' if smoke_passed else '❌'}\n{smoke_out[-1000:]}")
 
