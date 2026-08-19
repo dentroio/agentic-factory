@@ -15,6 +15,7 @@
 <!-- Format: [Decision title](decision_NAME.md) — what was decided and why -->
 
 ## Feedback & Working Style
+- [subprocess-wrapper-timeouts-must-exceed-inner-script-timeouts](auto_wo496.md) — External asyncio timeouts wrapping shell scripts must exceed the script's own internal retry/timeout budget, not just cover the "happy path" duration
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
