@@ -45,3 +45,18 @@ def test_smoke_test_timeout_has_real_headroom():
     g = _load_quality_gate()
     # 60s gateway wait + several 10s per-endpoint checks under load
     assert g._SMOKE_TEST_TIMEOUT >= 180
+
+
+def test_ci_run_timeout_has_headroom_beyond_the_original_1800s_ceiling():
+    # WO-443 hit `make timed out after 1800s` twice in a row under genuine
+    # host contention (load average 45+, several agents rebuilding
+    # concurrently) even though 1800s was already documented as 2x the
+    # worst historically observed run. Guard against silently shrinking
+    # this back down.
+    g = _load_quality_gate()
+    assert g._CI_RUN_TIMEOUT > 1800
+
+
+def test_ci_lock_timeout_stays_at_least_as_long_as_one_ci_run():
+    g = _load_quality_gate()
+    assert g._CI_LOCK_TIMEOUT >= g._CI_RUN_TIMEOUT

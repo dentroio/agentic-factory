@@ -101,8 +101,8 @@ def test_quality_gate_ci_is_isolated_and_budgeted():
     text = (RUNNER / "quality_gate.py").read_text(encoding="utf-8")
     run_fn = text.split("async def _run")[1].split("async def ")[0]
     assert "start_new_session=True" in run_fn
-    assert "_CI_RUN_TIMEOUT = 1800" in text
-    assert "_CI_LOCK_TIMEOUT = 1800" in text
+    assert "_CI_RUN_TIMEOUT = 2700" in text
+    assert "_CI_LOCK_TIMEOUT = 2700" in text
     assert "timeout=_CI_RUN_TIMEOUT" in text
 
 
