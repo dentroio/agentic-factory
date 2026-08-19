@@ -1,6 +1,7 @@
 """Guards: git fetch must not put the GitHub token in argv (AF-12)."""
 from __future__ import annotations
 
+import base64
 import importlib.util
 import sys
 from pathlib import Path
@@ -27,10 +28,14 @@ def test_token_is_only_in_env_not_url():
     g = _load_git_https()
     pat = "sample-pat-value-xx"
     env = g.git_fetch_env(pat, base_env={"PATH": "/usr/bin"})
-    assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: Bearer {pat}"
+    expected_basic = base64.b64encode(f"x-access-token:{pat}".encode()).decode()
+    assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: Basic {expected_basic}"
     assert env["GIT_CONFIG_KEY_0"] == "http.extraHeader"
     assert env["GIT_TERMINAL_PROMPT"] == "0"
     assert pat not in g.github_https_url("dentroio/clarion")
+    # GitHub's git-over-HTTPS transport only accepts Basic auth — a raw Bearer
+    # header gets a 401 (see git_https.py docstring). Guard against regressing.
+    assert "Bearer" not in env["GIT_CONFIG_VALUE_0"]
 
 
 def test_redact_secret_strips_token_from_git_stderr():
