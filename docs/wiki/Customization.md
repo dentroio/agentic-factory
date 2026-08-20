@@ -1,7 +1,7 @@
 ---
 title: "Customization"
-description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, WO execution instructions, and agent memory"
-last_verified: 2026-07-31
+description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, WO execution instructions, agent process docs, and agent memory"
+last_verified: 2026-08-20
 covers_wos:
   - WO-1014
   - WO-1021
@@ -82,6 +82,17 @@ Common things to put in the Execution section:
 - The commit and PR workflow (branch naming, merge strategy)
 - Mandatory review steps the agent must complete before opening a PR
 
+## AGENT_PROCESS.md and AGENT_PROCESS_DETAIL.md
+
+`AGENT_PROCESS.md` is the single source of truth agents read before starting any implementation task — it is referenced directly from `CLAUDE.md`. It is deliberately split into two files so agents only pay the cost of reading what they need every time:
+
+- **`AGENT_PROCESS.md`** — the "what to do" cheatsheet. Kept short (under 200 lines) and written entirely as imperative commands and tables, not prose: risk tiers, the numbered branch/PR workflow (Step 1 through Step 8), a container rebuild table (service → make target → verify command), critical code patterns, the "stop and ask user" rule, and emergency ops references. The five must-not-forget patterns (e.g. `db.commit()` after every write, migration registration, `require_role()`, double-rebuild for shared modules, claim-file-first-commit) live under a `## ⚠️ You must know these` header within the first 30 lines.
+- **`AGENT_PROCESS_DETAIL.md`** — the "why" reference, read only when an agent needs the reasoning behind a rule (worktree mechanics, why certain modules live in two containers, why `--no-deps` is required on force-recreate, migration registration rationale, role guard rationale).
+
+A **container danger zones** table in `AGENT_PROCESS.md` explicitly lists dangerous commands, their safe replacements, and what goes wrong if you don't use the replacement (e.g. `docker compose up -d --force-recreate <svc>` can wipe the migrations-done flag by recreating dependency containers; use `make build-svc-wt SVC=<svc>` from a worktree instead of the non-worktree-aware `make build-svc`).
+
+When customizing the factory for your project, edit `AGENT_PROCESS.md` to reflect your own risk tiers, rebuild targets, and danger zones — keep it short and imperative. Move any lengthy justification into `AGENT_PROCESS_DETAIL.md` instead of letting it accumulate in the cheatsheet.
+
 ## WO template
 
 A canonical WO template lives at `docs/work_orders/TEMPLATE.md`. Every complete WO spec must contain these sections (in order):
@@ -119,75 +130,4 @@ The WO queue, phases, and milestones are stored in the orchestrator's SQLite dat
 Key behaviours:
 - **Auto-cleanup:** When a WO's spec file is marked `✅` complete, it is removed from the queue automatically on the next orchestrator poll cycle — the queue stays current without manual cleanup.
 - **Pinning:** Set `pin: 1` on a queue entry to prevent it from being reordered or auto-removed.
-- **Ordering:** Use `PUT /api/queue/{wo}/position` (or the Plan UI drag-and-drop) to reorder the queue.
-
-The queue CRUD endpoints (`GET/POST/DELETE /api/queue`, `PUT /api/queue/{wo}`, etc.) are documented in `docs/TECHNICAL_ARCHITECTURE.md`.
-
-## Documentation requirements enforcement
-
-When the PM drafts a WO spec that touches documented surfaces (API endpoints, env vars, architecture diagrams), it emits a `## Documentation Required` checklist in the spec. This checklist is enforced at review time:
-
-- The orchestrator parses the `Documentation Required` section when the WO is queued and stores it in the `docs_required` column of the `queue` table.
-- The coding agent's prompt includes a **Documentation Mandate** block listing the required doc updates. The agent may not call `POST /api/validate` until all items are addressed.
-- A **documentation reviewer** runs after the four standard code reviewers (security, architecture, correctness, performance) for all P0/P1/P2 WOs. It checks the diff for meaningful updates to each file listed in `docs_required` and returns a `HIGH` finding for any item not addressed. A `HIGH` finding blocks human validation.
-
-You do not need to configure this — it activates automatically whenever a WO spec contains a `## Documentation Required` section.
-
-## Agent memory
-
-Each agent run starts with context injected from a persistent memory store at `services/agent-runner/memory/factory_memory.json`. This prevents agents from repeating mistakes already seen in previous runs.
-
-### What is injected
-
-The memory is filtered to the WO's services and injected as a `## Factory Memory` block in the agent prompt, between the WO spec and CLARION_PATTERNS. It contains:
-
-- **Lessons learned** — gotchas, conflict-magnet files, failure patterns recorded from previous WO runs
-- **Environment state** — connected connectors, healthy services, recently added DB tables and routes (refreshed every 30 minutes)
-- **Recently completed WOs** — the last 5 completed WOs so the agent knows what has already shipped
-
-### How memory is updated
-
-- **After a successful WO:** the runner distills 1–3 lessons from the agent's thread and appends them to `factory_memory.json`.
-- **After a CI failure or reviewer rejection:** a `failure_pattern` lesson is added automatically.
-- **Environment state** is refreshed every 30 minutes by polling the connectors and health endpoints and reading the migration history table.
-
-### Editing memory manually
-
-`factory_memory.json` is a plain JSON file. You can add, edit, or delete lessons directly. The structure:
-
-```json
-{
-  "lessons": [
-    {
-      "id": "lesson-001",
-      "added_at": "2026-07-18T00:00:00Z",
-      "source_wo": "WO-1031",
-      "category": "gotcha",
-      "applies_to": ["data-service", "migrations"],
-      "content": "CLARION_MIGRATIONS_DONE is set in the Dockerfile CMD, not in Vault."
-    }
-  ],
-  "environment": {
-    "last_updated": "2026-07-18T00:00:00Z",
-    "connected_connectors": ["ise", "pxgrid"],
-    "healthy_services": ["data-service", "connector-service", "frontend"],
-    "recent_migrations": ["add_schema_meta_table"],
-    "recent_routes": ["/api/v1/ot/validation"]
-  },
-  "completed_wos": [
-    {"wo": "WO-407", "completed_at": "...", "summary": "adapter.py now auto-discovers migrations"}
-  ]
-}
-```
-
-Valid `category` values: `gotcha`, `conflict_magnet`, `failure_pattern`.
-
-`applies_to` is matched against the WO's `Services` field — a lesson is only injected when at least one value overlaps.
-
-## CLARION_PATTERNS (living document)
-
-The agent-runner's built-in code patterns are loaded from `services/agent-runner/clarion_patterns.md` rather than a hardcoded constant. This file is the living reference for patterns agents must follow in your codebase.
-
-To add a pattern:
-1. Edit `services/agent-runner/clarion_patterns.md` directly (or let the post-completion memory update propose one).
-2. Commit and push. The runner picks up the change on
+- **Ordering:** Use `PUT /api/queue/{wo}/position` (or the Plan UI drag-and-dr
