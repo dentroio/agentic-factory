@@ -388,19 +388,37 @@ async def poll() -> None:
             })
 
         # Workflow runs waiting on manual approval — GitHub won't start CI
-        # until someone clicks "Approve and run" on the run itself.
+        # until someone clicks "Approve and run". A single PR commonly
+        # triggers several workflow files (CI, AI Code Review, ...) that
+        # each need their own approval, so group by branch/PR and emit one
+        # alert per PR rather than one per run — the PR's Checks tab shows
+        # every pending workflow for that commit together in one place.
+        # GitHub omits `pull_requests` on runs still pending approval (most
+        # visible for Dependabot branches), so match against the open-PR
+        # list by head branch instead of trusting run.pull_requests.
+        branch_to_pr = {pr["head"]["ref"]: pr for pr in prs}
+        runs_by_branch: dict[str, list[dict]] = {}
         for run in runs_needing_approval:
-            pr_number = None
-            if run.get("pull_requests"):
-                pr_number = run["pull_requests"][0].get("number")
+            runs_by_branch.setdefault(run.get("head_branch", ""), []).append(run)
+
+        # GitHub never cleans up an action_required run when its PR closes
+        # or gets superseded by a new push — a Dependabot branch that had
+        # one run go stale weeks ago shows up here forever with nothing
+        # useful to approve. Only alert on branches that still have an open
+        # PR; the rest are dead runs, not real pending work.
+        runs_by_branch = {b: r for b, r in runs_by_branch.items() if b in branch_to_pr}
+
+        for branch, branch_runs in runs_by_branch.items():
+            pr = branch_to_pr[branch]
+            names = ", ".join(sorted({r.get("name", "workflow") for r in branch_runs}))
             all_alerts.append({
-                "pr_number": pr_number,
+                "pr_number": pr["number"],
                 "pr_title": None,
-                "rule": f"workflow-needs-approval-{run['id']}",
+                "rule": f"workflow-needs-approval-{branch}",
                 "severity": "warning",
-                "message": f"Workflow run needs approval: {run.get('name', 'workflow')} ({run.get('event', '')})",
-                "detail": run.get("head_branch", ""),
-                "url": run.get("html_url"),
+                "message": f"{len(branch_runs)} workflow run(s) need approval: {names}",
+                "detail": branch,
+                "url": f"https://github.com/{GITHUB_REPO}/pull/{pr['number']}/checks",
                 "first_seen": now_str,
                 "last_checked": now_str,
             })
@@ -442,7 +460,7 @@ async def poll() -> None:
                 "runners_online": runners_online,
                 "runners_busy": runners_busy,
                 "queue_depth": queue_depth,
-                "runs_needing_approval": len(runs_needing_approval),
+                "prs_needing_approval": len(runs_by_branch),
             },
             "alerts": sorted(deduped, key=lambda a: {"error": 0, "warning": 1, "info": 2}.get(a["severity"], 3)),
             "pr_health": pr_health,
@@ -455,7 +473,7 @@ async def poll() -> None:
         OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         OUTPUT_PATH.write_text(json.dumps(output, indent=2))
         print(f"[watchdog] {now_str} — {len(prs)} PRs checked, {errors} errors, {warnings} warnings, "
-              f"queue={queue_depth}, needs_approval={len(runs_needing_approval)}")
+              f"queue={queue_depth}, prs_needing_approval={len(runs_by_branch)}")
 
 
 async def main() -> None:
