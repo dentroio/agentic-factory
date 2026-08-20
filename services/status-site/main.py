@@ -1906,7 +1906,7 @@ async def stream_runner_log(request: Request, wo: str = "", agent: str = "", tai
         try:
             async with httpx.AsyncClient(timeout=None) as client:
                 url = f"{ORCHESTRATOR_URL}/api/log/stream"
-                async with client.stream("GET", url, params=params) as resp:
+                async with client.stream("GET", url, params=params, headers=_orch_headers()) as resp:
                     async for raw in resp.aiter_lines():
                         if await request.is_disconnected():
                             break
