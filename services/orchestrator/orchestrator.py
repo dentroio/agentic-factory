@@ -148,6 +148,17 @@ _approval_skips: dict[str, str] = {}   # wo_id → ISO timestamp until approval 
 _wo_ever_approved: set[str] = set()
 _preflight_held: dict[str, dict] = {}  # wo_id → {hold_reason, held_at, last_checked}
 _max_retry_notified: set[str] = set()  # wo_ids already alerted for exceeding MAX_RETRY_ATTEMPTS
+# Stall detection: the dispatch queue can end up non-empty but fully held (manually
+# or auto-held) with nothing active — runners then poll /api/next forever getting
+# "queue empty or all candidates claimed/blocked" with no one ever finding out. This
+# ran silently for ~36h once (all 5 queued WOs held, wos_active=0) before a human
+# noticed. _stall_since is set the first poll cycle the condition is seen and cleared
+# the moment it isn't; _stall_alerted ensures one alert per stall episode, not one per
+# poll cycle. In-memory only (like _last_summary_day) — an orchestrator restart at the
+# exact wrong moment costs at most one missed detection cycle, not worth persisting for.
+_stall_since: str | None = None
+_stall_alerted: bool = False
+STALL_ALERT_THRESHOLD_SECONDS = int(os.getenv("STALL_ALERT_THRESHOLD_SECONDS", "7200"))
 
 HOLD_PATH = DATA_DIR / "held_wos.json"
 PAUSE_PATH = DATA_DIR / "factory_paused.json"
@@ -3991,6 +4002,13 @@ async def poll() -> None:
                     _save_held()
                     state_changed = True
                     print(f"[orchestrator] ⛔ {wo_id} auto-held after {idle} — human must review and un-hold")
+                    asyncio.create_task(notify_factory_alert(
+                        title=f"{wo_id} auto-held — stuck with no activity",
+                        body=f"No activity for {idle} (priority threshold: {threshold}). Un-hold once reviewed.",
+                        level="warning",
+                        source="stuck-detector",
+                        secrets=_load_secrets(),
+                    ))
         else:
             if was_stuck:
                 entry.pop("stuck", None)
@@ -4068,6 +4086,38 @@ async def poll() -> None:
     dispatch_control.atomic_write_json(OUTPUT_PATH, _orchestrator_output)
     print(f"[orchestrator] {now_str} — {len(specs)} WOs, {len(dispatch_queue)} dispatchable, "
           f"{len(in_progress_wos)} in-progress, {len(pending_validations)} awaiting validation")
+
+    # Stall detection — mirrors /api/next's own "not done, not held" filter over
+    # plan.queue so this fires exactly when a runner polling /api/next would keep
+    # getting "queue empty or all candidates claimed/blocked" back.
+    global _stall_since, _stall_alerted
+    active_now = sum(1 for c in _dispatch_state.values() if c.get("status") in ("claimed", "in_progress"))
+    queue_candidates = [w for w in _orchestrator_output["plan"]["queue"] if not _is_done(w.get("status", ""))]
+    unheld_candidates = [w for w in queue_candidates if w.get("wo") not in _held_wos]
+    stalled_now = active_now == 0 and bool(queue_candidates) and not unheld_candidates
+    if stalled_now:
+        if _stall_since is None:
+            _stall_since = now_str
+            _stall_alerted = False
+        else:
+            elapsed = (datetime.now(UTC) - datetime.fromisoformat(_stall_since.replace("Z", "+00:00"))).total_seconds()
+            if elapsed > STALL_ALERT_THRESHOLD_SECONDS and not _stall_alerted:
+                held_ids = ", ".join(str(w.get("wo")) for w in queue_candidates[:10])
+                asyncio.create_task(notify_factory_alert(
+                    title="Factory idle — entire dispatch queue is held",
+                    body=(
+                        f"{len(queue_candidates)} WO(s) queued, none active, and every one is on "
+                        f"hold — idle for over {int(STALL_ALERT_THRESHOLD_SECONDS // 3600)}h. "
+                        f"Held: {held_ids}"
+                    ),
+                    level="warning",
+                    source="stall-detector",
+                    secrets=_load_secrets(),
+                ))
+                _stall_alerted = True
+    else:
+        _stall_since = None
+        _stall_alerted = False
 
     async with httpx.AsyncClient(timeout=20) as client:
         await _maybe_post_summary(client, _orchestrator_output)
