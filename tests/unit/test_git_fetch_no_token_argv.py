@@ -52,3 +52,6 @@ def test_orchestrator_does_not_embed_token_in_git_argv():
     assert "from git_https import git_fetch_env, github_https_url, redact_secret" in text
     assert "env=git_fetch_env(token)" in text
     assert "github_https_url(GITHUB_REPO)" in text
+    sync = text.split("async def _sync_local_repo")[1].split("async def ")[0]
+    assert '"merge"' not in sync
+    assert "--ff-only" not in sync

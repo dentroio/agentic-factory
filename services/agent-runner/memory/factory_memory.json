@@ -81,6 +81,86 @@
         "all"
       ],
       "content": "WO-408 failed: CI tests failed"
+    },
+    {
+      "id": "lesson-009",
+      "added_at": "2026-08-18T15:54:58Z",
+      "source_wo": "WO-496",
+      "category": "failure_pattern",
+      "applies_to": [
+        "all"
+      ],
+      "content": "WO-496 failed: CI tests failed"
+    },
+    {
+      "id": "lesson-010",
+      "added_at": "2026-08-18T16:33:22Z",
+      "source_wo": "WO-497",
+      "category": "failure_pattern",
+      "applies_to": [
+        "all"
+      ],
+      "content": "WO-497 failed: CI tests failed"
+    },
+    {
+      "id": "lesson-011",
+      "added_at": "2026-08-18T17:51:54Z",
+      "source_wo": "WO-500",
+      "category": "failure_pattern",
+      "applies_to": [
+        "all"
+      ],
+      "content": "WO-500 failed: CI tests failed"
+    },
+    {
+      "id": "lesson-012",
+      "added_at": "2026-08-18T18:31:10Z",
+      "source_wo": "WO-443",
+      "category": "failure_pattern",
+      "applies_to": [
+        "all"
+      ],
+      "content": "WO-443 failed: CI tests failed"
+    },
+    {
+      "id": "lesson-013",
+      "added_at": "2026-08-18T19:15:37Z",
+      "source_wo": "WO-513",
+      "category": "failure_pattern",
+      "applies_to": [
+        "all"
+      ],
+      "content": "WO-513 failed: CI tests failed"
+    },
+    {
+      "id": "lesson-014",
+      "added_at": "2026-08-19T01:34:40Z",
+      "source_wo": "WO-495",
+      "category": "failure_pattern",
+      "applies_to": [
+        "all"
+      ],
+      "content": "WO-495 failed: CI tests failed"
+    },
+    {
+      "id": "lesson-015",
+      "added_at": "2026-08-19T14:02:04Z",
+      "source_wo": "WO-465",
+      "category": "failure_pattern",
+      "applies_to": [
+        "all"
+      ],
+      "content": "WO-465 failed: review chain: - [CRITICAL] N/A:0: The git diff is empty \u2014 there are no committed changes beyond main. The work order required fetching the PR #541 branch, rebasing onto latest main, resolving conflicts (prioritizing mechanism-agnostic path changes), and force-pushing the cleaned branch. None of this"
+    },
+    {
+      "id": "lesson-016",
+      "added_at": "2026-08-20T03:34:11Z",
+      "source_wo": "WO-519",
+      "category": "failure_pattern",
+      "applies_to": [
+        "all"
+      ],
+      "content": "WO-519 failed: review chain: - [HIGH] N/A:0: The git diff is empty (\"no diff \u2014 this branch has no committed changes beyond main\"), indicating the work order was not actually completed. WO-519 required fetching the WO-443-infrastructure-workspace-consolidation branch, rebasing onto latest main, resolving conflicts "
     }
   ],
   "environment": {
@@ -141,6 +221,26 @@
       "wo": "WO-1038",
       "completed_at": "2026-07-19",
       "summary": "Stale claim timeout: dead agents auto-released after CLAIM_TIMEOUT_SECONDS (default 600s)"
+    },
+    {
+      "wo": "WO-496",
+      "completed_at": "2026-08-18",
+      "summary": "Identity 360 uses the snapshot conflict rule"
+    },
+    {
+      "wo": "WO-443",
+      "completed_at": "2026-08-20",
+      "summary": "Infrastructure Workspace Consolidation: Overview/Locations/Devices/Profiles/Config Standards \u2192 One Tabbed Workspace"
+    },
+    {
+      "wo": "WO-520",
+      "completed_at": "2026-08-20",
+      "summary": "Resolve conflict: PR #704 \u2014 docs: classify every canonical doc as Customer-Facing or Int"
+    },
+    {
+      "wo": "WO-519",
+      "completed_at": "2026-08-20",
+      "summary": "Resolve conflict: PR #702 \u2014 WO-443: Infrastructure Workspace Consolidation: Overview/Loc"
     }
   ]
 }

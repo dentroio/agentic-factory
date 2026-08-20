@@ -223,14 +223,13 @@ def format_prior_context(rejections: list[dict], thread_msgs: list[dict]) -> str
                 + wrap_untrusted("reviewer rejection", reason)
             )
 
-    # Pull CI analysis messages posted by the runner on prior failures
+    # Pull CI analysis / key-error posts from the runner on prior failures
     ci_analyses = [
         m["content"]
         for m in thread_msgs
-        if m.get("type") == "ci_analysis" and m.get("content")
+        if m.get("type") in ("ci_analysis", "ci_result") and m.get("content")
     ]
     if ci_analyses:
-        # Most recent CI analysis is last in the list
         parts.append(
             "### Prior CI failure analysis\n\n"
             + wrap_untrusted("CI failure analysis", ci_analyses[-1])

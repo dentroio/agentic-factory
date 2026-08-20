@@ -1,6 +1,6 @@
 # Dentro AI Factory — Progress Tracker
 
-_Last updated: 2026-08-17_
+_Last updated: 2026-08-18_
 
 ---
 
@@ -19,6 +19,8 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
+| WO-1087 | Gate-failure intelligence: classify, retry infra, one code-fix pass | P1 | 🟡 In Progress | — |
+| WO-1086 | Conflict advisor for dispatch order | P1 | 🟡 In Progress | — |
 | WO-1085 | Closeout docs: Gitleaks required check | P3 | 🟡 In Progress | — |
 | WO-1084 | Atomic JSON writes for remaining /data state | P1 | ✅ Complete | 2026-08-16 |
 | WO-1083 | Pause must refuse runner start | P0 | ✅ Complete | 2026-08-16 |

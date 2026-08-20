@@ -77,6 +77,54 @@ async def _changed_files(worktree: str, extensions: tuple[str, ...]) -> list[str
     ]
 
 
+async def frontend_changed(worktree: str) -> bool:
+    """True if this worktree touched frontend/ vs main, including uncommitted files.
+
+    Full `make ci-local` runs Clarion `frontend-check` (tsc + Jest --runInBand +
+    build). That step took 20–70 minutes on 18 Aug 2026 and hit the 1800s gate
+    timeout even for data-service-only WOs. Skip it when frontend/ is untouched.
+    """
+    rc, out = await _run(
+        ["git", "diff", "main", "--name-only", "--", "frontend"],
+        worktree,
+        timeout=15,
+    )
+    if rc == 0 and out.strip():
+        return True
+    rc, out = await _run(
+        ["git", "ls-files", "--others", "--exclude-standard", "--", "frontend"],
+        worktree,
+        timeout=15,
+    )
+    return bool(out.strip())
+
+
+async def repair_frontend_node_modules(worktree: str) -> str:
+    """Replace a broken or shared-symlink frontend/node_modules and reinstall."""
+    import shutil
+
+    frontend = Path(worktree) / "frontend"
+    if not frontend.is_dir():
+        return "no frontend/"
+    nm = frontend / "node_modules"
+    try:
+        if nm.is_symlink():
+            nm.unlink()
+        elif nm.is_dir():
+            shutil.rmtree(nm, ignore_errors=True)
+    except OSError as exc:
+        return f"could not clear node_modules: {exc}"
+    env = _ci_env(worktree)
+    rc, out = await _run(
+        ["npm", "ci", "--prefer-offline"], str(frontend), timeout=180, env=env,
+    )
+    if rc != 0:
+        rc, out = await _run(
+            ["npm", "install", "--prefer-offline"], str(frontend), timeout=180, env=env,
+        )
+    return out[-500:]
+
+
 _CI_LOCK_PATH = Path("/tmp/factory-ci-local.lock")
 _CI_LOCK_TIMEOUT = 2700  # wait at least as long as one ci-local run
 # 1800s was already 2x the worst historically observed `make ci-local` run
@@ -193,7 +241,16 @@ async def run_ci(worktree: str) -> tuple[bool, str]:
             waited += 5
 
     try:
-        rc, out = await _run(["make", "ci-local"], worktree, timeout=_CI_RUN_TIMEOUT, env=env)
+        if await frontend_changed(worktree):
+            rc, out = await _run(["make", "ci-local"], worktree, timeout=_CI_RUN_TIMEOUT, env=env)
+        else:
+            # Same contract as ci-local minus frontend-check (tsc/Jest/build).
+            rc, out = await _run(
+                ["make", "lint", "test", "check-migrations", "check-rbac", "pre-pr-check"],
+                worktree,
+                timeout=_CI_RUN_TIMEOUT,
+                env=env,
+            )
     finally:
         try:
             _CI_LOCK_PATH.unlink(missing_ok=True)

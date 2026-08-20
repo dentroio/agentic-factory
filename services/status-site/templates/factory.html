@@ -305,6 +305,7 @@
 
       function statusClass(s) {
         if (s === 'awaiting_human') return 'bg-amber-500/15 text-amber-400';
+        if (s === 'awaiting_commit') return 'bg-amber-500/15 text-amber-400';
         if (s === 'stale') return 'bg-amber-500/15 text-amber-400';
         if (s === 'complete') return 'bg-emerald-500/15 text-emerald-400';
         if (s === 'rejected') return 'bg-rose-500/15 text-rose-400';

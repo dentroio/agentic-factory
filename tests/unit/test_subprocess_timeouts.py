@@ -112,6 +112,7 @@ def test_reentry_keeps_uncommitted_worktree_state():
     )[1].split("async def ")[0]
     assert "git stash" not in setup
     assert "keeping uncommitted state for re-entry" in setup
+    assert "refuse_wrong_branch" in setup
 
 
 def test_parallel_sdk_review_is_bounded():

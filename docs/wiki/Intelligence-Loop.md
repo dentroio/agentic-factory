@@ -1,7 +1,7 @@
 ---
 title: "Intelligence Loop"
 description: "How the factory autonomously detects and handles recurring problems without human intervention"
-last_verified: 2026-07-21
+last_verified: 2026-08-18
 covers_wos: []
 doc_owner: factory-team
 ---
@@ -48,6 +48,32 @@ A "ghost" is a dispatch entry stuck in `claimed` or `in_progress` state where:
 - No open branch exists on GitHub for that WO number
 
 These are artifacts from agent processes that died mid-run without calling `/retry`. The loop marks them as `ghost` and clears them from the Active Agents panel.
+
+### 5. Conflict advisor → extra `depends_on` edges
+
+Dispatch order stays rule-based (pin → phase → priority, plus occupancy and file overlap). The advisor does **not** pick the next WO.
+
+On each intelligence pass it:
+
+1. Looks at open primary-repo WOs that are not held or already in-flight
+2. If two WOs share a real service (`frontend`, `data-service`, … — not `docs`/`none`) or the same `files_likely_changed` entry, it records that the later WO (lower priority first, then higher number) must wait for the earlier one
+3. Optionally asks Haiku for extra **high-confidence** edges the spec author missed (skipped when no Anthropic key; bad JSON is ignored)
+4. Writes edges to `/data/conflict_advisor.json` and posts a thread message
+
+`/api/next` unions those edges with spec `depends_on`. It also skips a candidate whose services overlap a `claimed`/`in_progress` WO (one agent per service).
+
+Edges never rewrite spec files. They are refused if they would create a cycle.
+
+### 6. Quality-gate close-out — classify, retry infra, one code-fix pass
+
+Park-on-fail stays: a dead worktree must not silently retry forever. Before parking, the runner classifies CI output:
+
+- **`lock_timeout` / `node_modules` / `timeout`** — retry the **gate** (repair `node_modules` when needed). Do not rewrite WO code. Up to two infra retries.
+- **`code`** — one in-session agent pass with the CI excerpt, then park if it still fails.
+- Data-service-only diffs skip Clarion `frontend-check` (tsc + Jest `--runInBand` + build), which was hitting the 1800s wall on WOs that never touched `frontend/`.
+- `awaiting_commit` after a quality-gate fail is **Stalled** on the PM board, not In Review. The human action is Factory **Retry**, not Approve.
+
+The 10-minute intelligence job does not pick the next WO. This pass is inside the runner close-out.
 
 ## Deduplication
 

@@ -61,6 +61,7 @@ from orchestrator_client import (
     get_next,
     get_prior_rejections,
     get_thread_messages,
+    park_dispatch,
     post_thread_message,
     release_dispatch,
     request_validate,
@@ -69,10 +70,17 @@ from prompt_builder import (
     build_prompt, format_prior_context, slug_from_title,
     update_memory_after_completion, update_memory_after_failure,
 )
-from quality_gate import run_container_rebuild, run_quality_gate, _ci_env
+from quality_gate import (
+    run_container_rebuild, run_quality_gate, _ci_env, repair_frontend_node_modules,
+)
+from gate_failure import (
+    CODE, NODE_MODULES, UNKNOWN,
+    classify_ci_output, error_excerpt, is_infra, park_reason,
+)
 from proc import GH, GIT, GIT_PUSH, WO_START, communicate as _communicate
 from review_chain import get_worktree_diff, run_review_chain
 from thread_monitor import ThreadMonitor, _is_question
+import worktree_guard
 
 
 def _log(msg: str) -> None:
@@ -97,9 +105,10 @@ async def _analyze_failure(wo_id: str, context: str) -> str:
     """Call claude -p to produce a short root-cause diagnosis of a build/CI failure."""
     import subprocess as _sp
     prompt = (
-        f"A CI or build step just failed for work order {wo_id}. "
+        f"A CI or build step just failed for work order {wo_id} in the Clarion "
+        f"worktree (not the factory repo). "
         "Give a 3-5 sentence root-cause diagnosis and the exact file/line fix the agent must apply. "
-        "Be specific and actionable — no preamble, no markdown headers.\n\n"
+        "Only refer to files that exist in that worktree. Be specific and actionable — no preamble, no markdown headers.\n\n"
         f"{context}"
     )
     def _run() -> str:
@@ -287,13 +296,16 @@ async def _setup_worktree(wo_number: str | int, title: str) -> str:
     title_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:40].rstrip("-")
 
     if LOCAL_REPO_PATH:
+        wrong = worktree_guard.refuse_wrong_branch(LOCAL_REPO_PATH, num)
+        if wrong:
+            raise RuntimeError(wrong)
         worktree_dir = str(Path(LOCAL_REPO_PATH) / ".worktrees" / f"wo-{num}-{title_slug}")
         if Path(worktree_dir).exists():
             # Same WO reclaimed after a timeout, lease loss, or retry. Keep
             # uncommitted files in the tree — stashing hid the implementation
             # from the next agent (WO-482) and a hard reset destroyed it
             # (WO-440 / WO-445). Commits are already kept; dirty state is the
-            # work in progress.
+            # work in progress. HEAD must still be wo/{num}-* (checked above).
             _log(f"Worktree exists — keeping uncommitted state for re-entry: {worktree_dir}")
             return worktree_dir
         _log(f"Creating worktree via wo_start.sh: wo-{num}-{title_slug}")
@@ -317,6 +329,46 @@ async def _setup_worktree(wo_number: str | int, title: str) -> str:
     worktree_dir = str(Path(WORKTREE_BASE) / f"wo-{num}-{title_slug}")
     Path(worktree_dir).mkdir(parents=True, exist_ok=True)
     return worktree_dir
+
+
+async def _worktree_has_implementation(worktree: str) -> bool:
+    """True when the worktree has uncommitted files or commits not on origin/main."""
+    if not worktree or not Path(worktree).is_dir():
+        return False
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "status", "--porcelain",
+            cwd=worktree,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await _communicate(proc, timeout=GIT)
+        if out.decode(errors="replace").strip():
+            return True
+        proc = await asyncio.create_subprocess_exec(
+            "git", "rev-list", "--count", "origin/main..HEAD",
+            cwd=worktree,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await _communicate(proc, timeout=GIT)
+        count = out.decode(errors="replace").strip()
+        return count.isdigit() and int(count) > 0
+    except Exception:
+        # Fail closed: if we cannot inspect, park rather than silent-retry.
+        return True
+
+
+async def _park_closeout(wo_id: str, reason: str, worktree: str = "") -> None:
+    """Park as awaiting_commit when implementation exists; otherwise release."""
+    has_work = await _worktree_has_implementation(worktree) if worktree else False
+    if has_work:
+        _log(f"{wo_id} parking as awaiting_commit — {reason}")
+        await park_dispatch(wo_id, reason)
+        await post_thread_message(
+            wo_id,
+            f"⏸️ **Parked as awaiting_commit** — not releasing for another silent retry.\n\n{reason}",
+        )
+        return
+    await release_dispatch(wo_id)
 
 
 async def _build_change_summary(worktree: str) -> str:
@@ -466,7 +518,13 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         _log(f"{wo_id} already claimed — skipping")
         return
 
-    worktree_path = await _setup_worktree(wo_number, title)
+    try:
+        worktree_path = await _setup_worktree(wo_number, title)
+    except RuntimeError as exc:
+        _log(f"{wo_id} worktree refused: {exc}")
+        await park_dispatch(wo_id, str(exc))
+        await post_thread_message(wo_id, f"⏸️ **Parked as awaiting_commit** — {exc}")
+        return
 
     # Fetch the full WO markdown for the prompt
     wo_markdown = await fetch_wo_markdown(
@@ -474,12 +532,14 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         wo_path="docs/project_management/work_orders",
     )
 
-    # Inject prior failure context so the agent knows exactly what to fix on retry
+    # Inject prior failure context so the agent knows exactly what to fix on retry.
+    # Load the thread even when there is no validation rejection — parked gate
+    # fails never went through /api/validate, so prior_rejections is empty.
     prior_rejections = await get_prior_rejections(wo_id)
-    thread_msgs = await get_thread_messages(wo_id) if prior_rejections else []
+    thread_msgs = await get_thread_messages(wo_id)
     prior_ctx = format_prior_context(prior_rejections, thread_msgs)
     if prior_ctx:
-        _log(f"{wo_id} retry #{len(prior_rejections)}: injecting prior rejection context")
+        _log(f"{wo_id} injecting prior rejection/CI context from thread")
 
     prompt = build_prompt(wo_spec, wo_markdown, worktree_path, AGENT_NAME, prior_context=prior_ctx)
     backend = get_backend(preferred_agent)
@@ -563,13 +623,18 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     # claim — bounded so a genuinely stuck WO still gives up instead of
     # looping forever.
     MAX_REVIEW_FIX_ROUNDS = 2
+    MAX_GATE_FIX_ROUNDS = 1
+    MAX_INFRA_GATE_RETRIES = 2
     fix_round = 0
+    gate_fix_round = 0
     review_passed = False
     all_findings: list = []
     gate: dict = {}
 
     while True:
-        round_label = attempt_label if fix_round == 0 else f"fix round {fix_round}"
+        round_label = attempt_label if fix_round == 0 and gate_fix_round == 0 else (
+            f"fix round {fix_round}" if fix_round else f"gate fix round {gate_fix_round}"
+        )
         _log(f"Starting {preferred_agent} backend for {wo_id} ({round_label})")
         await checkin(wo_id, f"starting agent ({round_label})")
         if fix_round == 0:
@@ -589,9 +654,9 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
             await post_thread_message(
                 wo_id,
                 f"❌ **All backends failed or are quota-exhausted** — no implementation work "
-                f"was done this attempt. Releasing the claim for retry.\n\n`{exc}`",
+                f"was done this attempt.\n\n`{exc}`",
             )
-            await release_dispatch(wo_id)
+            await _park_closeout(wo_id, f"all backends failed or exhausted: {exc}", worktree_path)
             return
 
         _log(f"{wo_id} agent run complete — rebuilding changed containers")
@@ -621,36 +686,38 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
                 )
                 if build_analysis:
                     await post_thread_message(wo_id, f"🔍 **Build failure analysis:**\n\n{build_analysis}", msg_type="ci_analysis")
-                await release_dispatch(wo_id)
+                await _park_closeout(wo_id, "container build failed", worktree_path)
                 return
         else:
             await post_thread_message(wo_id, "No container changes detected (docs/scripts only) — skipping rebuild.")
 
-        _log(f"{wo_id} running quality gate")
-        await checkin(wo_id, "quality gate: running CI + security scan")
-        await post_thread_message(wo_id, "Running quality gate (CI + security scan)...")
+        retry_agent_for_gate = False
+        infra_tries = 0
+        while True:
+            _log(f"{wo_id} running quality gate")
+            await checkin(wo_id, "quality gate: running CI + security scan")
+            await post_thread_message(wo_id, "Running quality gate (CI + security scan)...")
 
-        _gate_heartbeat = asyncio.create_task(_checkin_loop(wo_id, label="quality gate: running CI + security scan"))
-        try:
-            gate = await run_quality_gate(worktree_path)
-        finally:
-            _gate_heartbeat.cancel()
-        _log(f"{wo_id} gate: ci={'✅' if gate['ci_passed'] else '❌'} "
-             f"security={'✅' if gate['security_passed'] else '❌'} "
-             f"findings={gate['finding_count']}")
+            _gate_heartbeat = asyncio.create_task(_checkin_loop(wo_id, label="quality gate: running CI + security scan"))
+            try:
+                gate = await run_quality_gate(worktree_path)
+            finally:
+                _gate_heartbeat.cancel()
+            _log(f"{wo_id} gate: ci={'✅' if gate['ci_passed'] else '❌'} "
+                 f"security={'✅' if gate['security_passed'] else '❌'} "
+                 f"findings={gate['finding_count']}")
 
-        # F-04: a scanner that crashed and produced zero findings looked identical
-        # to a scan that genuinely ran clean. Not blocking (a tooling crash isn't
-        # evidence of a real vulnerability) but must not be silent either.
-        if gate.get("scan_errors"):
-            _log(f"{wo_id} security scanner error(s): {gate['scan_errors']}")
-            await post_thread_message(
-                wo_id,
-                "⚠️ **Security scan didn't fully run** (non-blocking, but flagging so it's not "
-                "mistaken for a clean scan):\n" + "\n".join(f"- {e}" for e in gate["scan_errors"]),
-            )
+            if gate.get("scan_errors"):
+                _log(f"{wo_id} security scanner error(s): {gate['scan_errors']}")
+                await post_thread_message(
+                    wo_id,
+                    "⚠️ **Security scan didn't fully run** (non-blocking, but flagging so it's not "
+                    "mistaken for a clean scan):\n" + "\n".join(f"- {e}" for e in gate["scan_errors"]),
+                )
 
-        if not gate["ci_passed"] or not gate["security_passed"]:
+            if gate["ci_passed"] and gate["security_passed"]:
+                break
+
             failures = []
             if not gate["ci_passed"]:
                 failures.append("CI tests failed")
@@ -658,42 +725,78 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
                 count = gate.get("finding_count", 0)
                 failures.append(f"{count} CRITICAL/HIGH security issue{'s' if count != 1 else ''} found")
             failure_str = ", ".join(failures)
-            _log(f"{wo_id} quality gate FAILED: {failure_str} — not submitting for validation")
-            await checkin(wo_id, f"quality gate failed: {failure_str}")
-
-            # Extract only the most meaningful error lines — don't dump 1000 chars of raw output
             raw_output = gate.get("ci_output", "")
-            error_lines = [
-                l.rstrip() for l in raw_output.splitlines()
-                if l.strip() and any(w in l.lower() for w in
-                   ("error", "failed", "assert", "exception", "traceback", "import", "syntax"))
-            ]
-            error_excerpt = "\n".join(error_lines[:8]) if error_lines else raw_output[-400:].strip()
+            kind = classify_ci_output(raw_output if not gate["ci_passed"] else str(gate.get("bandit_findings", "")))
+            excerpt = error_excerpt(raw_output)
+            _log(f"{wo_id} quality gate FAILED ({kind}): {failure_str}")
+            await checkin(wo_id, park_reason(kind, failure_str))
+
+            if is_infra(kind) and infra_tries < MAX_INFRA_GATE_RETRIES:
+                infra_tries += 1
+                await post_thread_message(
+                    wo_id,
+                    f"❌ **Quality gate failed ({kind}) — retrying the gate, not rewriting WO code** "
+                    f"(infra attempt {infra_tries} of {MAX_INFRA_GATE_RETRIES})\n\n"
+                    f"**What failed:** {failure_str}\n\n"
+                    + (f"**Key errors:**\n```\n{excerpt}\n```\n" if excerpt else ""),
+                    msg_type="ci_result",
+                    metadata={"ci_passed": gate["ci_passed"], "security_passed": gate["security_passed"],
+                              "findings": gate["bandit_findings"][:5], "class": kind},
+                )
+                if kind == NODE_MODULES:
+                    repair_out = await repair_frontend_node_modules(worktree_path)
+                    _log(f"{wo_id} repaired frontend node_modules: {repair_out[:200]}")
+                continue
 
             await post_thread_message(
                 wo_id,
-                f"❌ **Quality gate failed — the agent will fix this automatically**\n\n"
+                f"❌ **Quality gate failed ({kind})**\n\n"
                 f"**What failed:** {failure_str}\n\n"
-                + (f"**Key errors:**\n```\n{error_excerpt}\n```\n\n" if not gate["ci_passed"] and error_excerpt else "")
-                + "Analyzing root cause...",
+                + (f"**Key errors:**\n```\n{excerpt}\n```\n\n" if excerpt else "")
+                + ("Queuing one in-session agent fix pass..." if kind in (CODE, UNKNOWN)
+                   and gate_fix_round < MAX_GATE_FIX_ROUNDS else "Parking — no further automatic rewrite."),
                 msg_type="ci_result",
                 metadata={"ci_passed": gate["ci_passed"], "security_passed": gate["security_passed"],
-                          "findings": gate["bandit_findings"][:5]},
+                          "findings": gate["bandit_findings"][:5], "class": kind},
             )
             failure_detail = raw_output if not gate["ci_passed"] else str(gate.get("bandit_findings", ""))
-            ci_analysis = await _analyze_failure(
-                wo_id,
-                f"CI/security gate failed for {wo_id}.\n\nFailure: {failure_str}\n\nOutput:\n{failure_detail[-3000:]}"
-            )
-            if ci_analysis:
+            if kind in (CODE, UNKNOWN):
+                ci_analysis = await _analyze_failure(
+                    wo_id,
+                    f"CI/security gate failed for {wo_id} in worktree {worktree_path}.\n"
+                    f"This is the Clarion product repo, not agentic-factory.\n\n"
+                    f"Failure: {failure_str}\n\nOutput:\n{failure_detail[-3000:]}"
+                )
+                if ci_analysis:
+                    await post_thread_message(
+                        wo_id,
+                        f"🔍 **Root cause & fix:**\n\n{ci_analysis}",
+                        msg_type="ci_analysis"
+                    )
+            else:
+                ci_analysis = ""
+
+            if kind in (CODE, UNKNOWN) and gate_fix_round < MAX_GATE_FIX_ROUNDS:
+                prompt = (
+                    f"The quality gate just failed for {wo_id} ({kind}). "
+                    f"Fix only this failure in the existing worktree — do not start over. "
+                    f"Do not ask the human to verify or restore shell; the factory runs git and CI.\n\n"
+                    f"{excerpt}\n\n{ci_analysis}"
+                )
+                gate_fix_round += 1
+                retry_agent_for_gate = True
                 await post_thread_message(
                     wo_id,
-                    f"🔍 **Root cause & fix:**\n\n{ci_analysis}",
-                    msg_type="ci_analysis"
+                    f"Fixing quality-gate failure — agent pass {gate_fix_round} of {MAX_GATE_FIX_ROUNDS}...",
                 )
+                break
+
             update_memory_after_failure(wo_id, failure_str, services=wo_spec.get("services", ""))
-            await release_dispatch(wo_id)
+            await _park_closeout(wo_id, park_reason(kind, failure_str), worktree_path)
             return
+
+        if retry_agent_for_gate:
+            continue
 
         await post_thread_message(
             wo_id,
@@ -760,7 +863,11 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
                 f"releasing for a fresh attempt rather than looping further.\n\n{findings_text}",
             )
             update_memory_after_failure(wo_id, f"review chain: {findings_text}", services=wo_spec.get("services", ""))
-            await release_dispatch(wo_id)
+            await _park_closeout(
+                wo_id,
+                f"review chain still failing after {fix_round} fix round(s)",
+                worktree_path,
+            )
             return
 
         _log(f"{wo_id} review chain FAILED — {len(blocking)} blocking issues — fixing in-session (round {fix_round + 1})")
@@ -798,11 +905,14 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     if not pr_url:
         _log(f"{wo_id} nothing committed or PR creation failed — aborting")
         await monitor.post("⚠️ Nothing to commit after removing noise, or PR creation failed. Manual intervention needed.")
-        # Without this, the WO is stuck in_progress (set by the checkin above)
-        # with no release — it holds a MAX_PARALLEL_WOS slot for the full
-        # stale-claim timeout and then consumes a retry attempt on a WO that
-        # was never actually broken. See AF-19.
-        await release_dispatch(wo_id)
+        # Close-out failed with implementation still in the worktree must stay
+        # visible as awaiting_commit — releasing hid WO-502/505 until occupancy
+        # started skipping them with no dashboard row. See occupancy + park.
+        await _park_closeout(
+            wo_id,
+            "nothing committed or PR creation failed",
+            worktree_path,
+        )
         return
 
     # Request human validation with the PR URL attached
@@ -820,8 +930,11 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     if not validated:
         _log(f"{wo_id} validate rejected by orchestrator — check error in thread")
         await monitor.post("⚠️ Orchestrator rejected the validation request — see thread for details.")
-        # Same reasoning as the pr_url branch above — see AF-19.
-        await release_dispatch(wo_id)
+        await _park_closeout(
+            wo_id,
+            "orchestrator rejected the validation request after close-out",
+            worktree_path,
+        )
         return
 
     # Wait for human decision
@@ -880,10 +993,10 @@ async def main(once: bool = False) -> None:
             except Exception as e:
                 # A crash here (e.g. missing CLI, bad auth) must not take down the whole
                 # process — launchd's KeepAlive would just relaunch it straight into
-                # re-claiming the same WO and crashing again, looping forever. Release
-                # the claim so it's retryable and keep polling instead.
-                _log(f"{wo_id} run_wo crashed: {e!r} — releasing claim so it can be retried")
-                await release_dispatch(wo_id)
+                # re-claiming the same WO and crashing again, looping forever. Park
+                # so the dashboard shows awaiting_commit instead of a silent retry.
+                _log(f"{wo_id} run_wo crashed: {e!r} — parking as awaiting_commit")
+                await park_dispatch(wo_id, f"run_wo crashed: {e!r}")
             if once:
                 _log("--once: WO complete, exiting")
                 break
