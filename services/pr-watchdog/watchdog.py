@@ -133,6 +133,13 @@ async def _fetch_queue_depth(client: httpx.AsyncClient) -> int:
     return len(queued.get("workflow_runs", [])) + len(in_progress.get("workflow_runs", []))
 
 
+async def _fetch_runs_needing_approval(client: httpx.AsyncClient) -> list[dict]:
+    """Workflow runs sitting in 'action_required' — GitHub is waiting on a
+    maintainer to click Approve and run before CI starts at all."""
+    data = await _get(client, f"/repos/{GITHUB_REPO}/actions/runs", {"status": "action_required", "per_page": 20})
+    return data.get("workflow_runs", [])
+
+
 def _evaluate_pr(pr: dict, checks: list[dict], now_str: str, prev: dict) -> tuple[dict, list[dict]]:
     number = pr["number"]
     title = pr["title"]
@@ -326,10 +333,11 @@ async def poll() -> None:
 
     async with httpx.AsyncClient(timeout=15) as client:
         try:
-            prs, runners, queue_depth = await asyncio.gather(
+            prs, runners, queue_depth, runs_needing_approval = await asyncio.gather(
                 _fetch_open_prs(client),
                 _fetch_runners(client),
                 _fetch_queue_depth(client),
+                _fetch_runs_needing_approval(client),
             )
         except Exception as e:
             print(f"[watchdog] API error during initial fetch: {e}")
@@ -379,6 +387,24 @@ async def poll() -> None:
                 "last_checked": now_str,
             })
 
+        # Workflow runs waiting on manual approval — GitHub won't start CI
+        # until someone clicks "Approve and run" on the run itself.
+        for run in runs_needing_approval:
+            pr_number = None
+            if run.get("pull_requests"):
+                pr_number = run["pull_requests"][0].get("number")
+            all_alerts.append({
+                "pr_number": pr_number,
+                "pr_title": None,
+                "rule": f"workflow-needs-approval-{run['id']}",
+                "severity": "warning",
+                "message": f"Workflow run needs approval: {run.get('name', 'workflow')} ({run.get('event', '')})",
+                "detail": run.get("head_branch", ""),
+                "url": run.get("html_url"),
+                "first_seen": now_str,
+                "last_checked": now_str,
+            })
+
         # Queue depth
         if queue_depth >= QUEUE_WARN_DEPTH:
             all_alerts.append({
@@ -416,6 +442,7 @@ async def poll() -> None:
                 "runners_online": runners_online,
                 "runners_busy": runners_busy,
                 "queue_depth": queue_depth,
+                "runs_needing_approval": len(runs_needing_approval),
             },
             "alerts": sorted(deduped, key=lambda a: {"error": 0, "warning": 1, "info": 2}.get(a["severity"], 3)),
             "pr_health": pr_health,
@@ -427,7 +454,8 @@ async def poll() -> None:
 
         OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
         OUTPUT_PATH.write_text(json.dumps(output, indent=2))
-        print(f"[watchdog] {now_str} — {len(prs)} PRs checked, {errors} errors, {warnings} warnings, queue={queue_depth}")
+        print(f"[watchdog] {now_str} — {len(prs)} PRs checked, {errors} errors, {warnings} warnings, "
+              f"queue={queue_depth}, needs_approval={len(runs_needing_approval)}")
 
 
 async def main() -> None:
