@@ -43,3 +43,5 @@ def test_claude_review_wraps_the_diff_as_data():
     assert "from prompt_builder import wrap_untrusted" in text
     assert pb.UNTRUSTED_BEGIN
     assert "may_auto_approve(" in text
+    assert "_worktree_for_wo" in text
+    assert "shared main" in text

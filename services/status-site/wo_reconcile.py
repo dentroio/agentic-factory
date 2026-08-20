@@ -36,6 +36,14 @@ IN_PROGRESS_STATUSES = {"claimed", "in_progress"}
 AWAITING_REVIEW_STATUSES = {"awaiting_human", "awaiting_commit"}
 NEEDS_ATTENTION_STATUSES = {"stale", "rejected", "retry_queued"}
 
+
+def is_failed_gate_park(entry: dict | None) -> bool:
+    """awaiting_commit after a failed quality gate is not human PR review."""
+    if not entry or (entry.get("status") or "") != "awaiting_commit":
+        return False
+    step = (entry.get("step") or "").lower()
+    return "quality gate failed" in step
+
 # The subset of the above that means "an attempt happened and stopped, and
 # nobody is on it now" — these land in the board's Stalled column. `rejected`
 # is the odd one out: it needs a human, but it needs one to rework a specific
@@ -56,10 +64,13 @@ def dispatch_status_counts(dispatch: dict) -> dict:
     them, so it needs the number, but it must never be presented as a count of
     running work.
     """
-    statuses = [w.get("status") for w in dispatch.values()]
-    in_progress = sum(1 for s in statuses if s in IN_PROGRESS_STATUSES)
-    awaiting_review = sum(1 for s in statuses if s in AWAITING_REVIEW_STATUSES)
-    needs_attention = sum(1 for s in statuses if s in NEEDS_ATTENTION_STATUSES)
+    entries = list(dispatch.values())
+    in_progress = sum(1 for w in entries if w.get("status") in IN_PROGRESS_STATUSES)
+    awaiting_review = sum(
+        1 for w in entries
+        if w.get("status") in AWAITING_REVIEW_STATUSES and not is_failed_gate_park(w)
+    )
+    needs_attention = sum(1 for w in entries if w.get("status") in NEEDS_ATTENTION_STATUSES)
     return {
         "in_progress": in_progress,
         "awaiting_review": awaiting_review,
@@ -68,10 +79,15 @@ def dispatch_status_counts(dispatch: dict) -> dict:
         # the Factory page can name its buckets after board columns instead of
         # coining a fourth word for "not running." One label per set was the
         # whole point of pinning the running definition down.
-        "stalled": sum(1 for s in statuses if s in STALLED_STATUSES),
-        "rejected": sum(1 for s in statuses if s == "rejected"),
-        "total_active": in_progress + awaiting_review + needs_attention,
-        "tracked": sum(1 for s in statuses if s != "complete"),
+        "stalled": sum(
+            1 for w in entries
+            if w.get("status") in STALLED_STATUSES or is_failed_gate_park(w)
+        ),
+        "rejected": sum(1 for w in entries if w.get("status") == "rejected"),
+        "total_active": in_progress + awaiting_review + needs_attention + sum(
+            1 for w in entries if is_failed_gate_park(w)
+        ),
+        "tracked": sum(1 for w in entries if w.get("status") != "complete"),
     }
 
 
@@ -328,8 +344,12 @@ def apply_live_status(
             # most wants to see. Keep it Running and put the reason on the card.
             spec.agent_step = step
         elif dispatch_status in AWAITING_REVIEW_STATUSES:
-            spec.status = "⏳ Awaiting Review"
             spec.agent_name = dispatch_entry.get("backend") or dispatch_entry.get("agent", "")
+            if is_failed_gate_park(dispatch_entry):
+                spec.status = "⚠️ Stalled — quality gate failed"
+                spec.agent_step = dispatch_entry.get("step", "") or ""
+            else:
+                spec.status = "⏳ Awaiting Review"
         elif dispatch_status == "rejected":
             spec.status = "🔴 Rejected — awaiting rework"
         elif dispatch_status in STALLED_STATUSES:

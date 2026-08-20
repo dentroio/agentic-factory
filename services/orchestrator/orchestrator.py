@@ -41,6 +41,8 @@ from wo_resolver import (
     wos_completed_by_merged_pr,
 )
 import dispatch_control
+import occupancy
+import conflict_advisor
 from db import (
     connect as _db_connect,
     remember_runs as _db_remember_runs,
@@ -159,6 +161,12 @@ _max_retry_notified: set[str] = set()  # wo_ids already alerted for exceeding MA
 _stall_since: str | None = None
 _stall_alerted: bool = False
 STALL_ALERT_THRESHOLD_SECONDS = int(os.getenv("STALL_ALERT_THRESHOLD_SECONDS", "7200"))
+# Last-good open-PR occupancy cache. Updated each poll; never cleared on fetch
+# failure so a GitHub blip cannot reopen WOs that already have PRs.
+_open_pr_wos: set[int] = set()
+_open_pr_urls: dict[int, str] = {}
+# Extra depends_on written by conflict_advisor (not the spec file).
+_advisor_depends: dict[str, list[int]] = {}
 
 HOLD_PATH = DATA_DIR / "held_wos.json"
 PAUSE_PATH = DATA_DIR / "factory_paused.json"
@@ -166,6 +174,7 @@ ATTEMPTS_PATH = DATA_DIR / "attempt_counts.json"
 PM_MEMORY_PATH = DATA_DIR / "pm_memory.json"
 OVERRIDES_PATH = DATA_DIR / "wo_overrides.json"
 RESERVED_WOS_PATH = DATA_DIR / "reserved_wos.json"
+ADVISOR_PATH = DATA_DIR / "conflict_advisor.json"
 RESERVATION_TTL_HOURS = 1
 
 _pm_memory: dict = {}   # persisted PM preferences, decisions, dispatched history
@@ -221,6 +230,7 @@ def _load_state() -> None:
             _last_intelligence_run = {}
     _load_overrides()
     _load_reserved()
+    _load_advisor_depends()
 
 
 def _load_overrides() -> None:
@@ -423,6 +433,64 @@ def _save_dispatch() -> None:
 
 def _save_held() -> None:
     dispatch_control.atomic_write_json(HOLD_PATH, sorted(_held_wos))
+
+
+def _load_advisor_depends() -> None:
+    global _advisor_depends
+    if not ADVISOR_PATH.exists():
+        _advisor_depends = {}
+        return
+    try:
+        raw = json.loads(ADVISOR_PATH.read_text(encoding="utf-8"))
+        cleaned: dict[str, list[int]] = {}
+        if isinstance(raw, dict):
+            for wo_id, nums in raw.items():
+                if not isinstance(nums, list):
+                    continue
+                cleaned[str(wo_id)] = [int(n) for n in nums if str(n).isdigit() or isinstance(n, int)]
+        _advisor_depends = cleaned
+    except Exception:
+        _advisor_depends = {}
+
+
+def _save_advisor_depends() -> None:
+    try:
+        dispatch_control.atomic_write_json(ADVISOR_PATH, _advisor_depends)
+    except Exception as e:
+        print(f"[orchestrator] conflict advisor save failed: {e}")
+
+
+def _apply_advisor_edge(later: str, earlier: int, reason: str) -> None:
+    deps = _advisor_depends.setdefault(later, [])
+    if earlier not in deps:
+        deps.append(earlier)
+        _save_advisor_depends()
+    thread_store.append_message(later, thread_store.system_message(
+        f"🔀 Conflict advisor: wait for **WO-{earlier}** — {reason}"
+    ))
+    print(f"[orchestrator] advisor edge {later} → WO-{earlier} ({reason})")
+
+
+def _effective_depends(wo: dict) -> list[int]:
+    """Spec depends_on plus advisor edges (ints)."""
+    wo_id = wo.get("wo", "")
+    nums: list[int] = []
+    seen: set[int] = set()
+    extra = _advisor_depends.get(wo_id, []) if wo_id else []
+    for d in list(wo.get("depends_on") or []) + list(extra):
+        if isinstance(d, int):
+            n = d
+        else:
+            n = occupancy.wo_num_from_id(str(d))
+            if n is None:
+                try:
+                    n = int(str(d).replace("WO-", "").replace("wo-", ""))
+                except ValueError:
+                    continue
+        if n not in seen:
+            seen.add(n)
+            nums.append(n)
+    return nums
 
 
 def _save_validations() -> None:
@@ -1044,6 +1112,12 @@ class ClaimRequest(BaseModel):
     slug: str = ""
 
 
+class ParkRequest(BaseModel):
+    status: str = "awaiting_commit"
+    reason: str = ""
+    claim_token: str = ""
+
+
 class CompleteRequest(BaseModel):
     wo: str
     agent: str = ""
@@ -1197,6 +1271,17 @@ async def _intelligence_job() -> None:
             update_dispatch=_update_dispatch,
             reserve_wo=_reserve_wo,
         )
+        try:
+            advisor = await _run_conflict_advisor()
+            result.setdefault("actions_taken", []).extend(advisor.get("actions") or [])
+            result["conflict_advisor"] = {
+                k: advisor[k]
+                for k in ("edges_added", "deterministic", "llm", "open_wos_considered")
+                if k in advisor
+            }
+        except Exception as adv_err:
+            result.setdefault("actions_taken", []).append(f"conflict advisor failed: {adv_err}")
+            print(f"[intelligence] conflict advisor failed: {adv_err}")
         _last_intelligence_run = result
         try:
             dispatch_control.atomic_write_json(INTELLIGENCE_STATE_PATH, result)
@@ -1213,6 +1298,38 @@ async def _intelligence_job() -> None:
         except Exception:
             pass
         print(f"[intelligence] pass failed: {e}")
+
+
+async def _run_conflict_advisor() -> dict:
+    """Queue hygiene: extra depends_on edges. Does not pick the next WO."""
+    open_wos: list[dict] = []
+    inflight = {"claimed", "in_progress", "awaiting_human", "awaiting_commit", "pending_approval"}
+    for num, spec in (_specs_cache or {}).items():
+        if spec.get("repo", GITHUB_REPO) != GITHUB_REPO:
+            continue
+        if _is_done(spec.get("status", "")) or _is_blocked(spec.get("status", "")):
+            continue
+        wo_id = f"WO-{num}"
+        if wo_id in _held_wos:
+            continue
+        if (_dispatch_state.get(wo_id) or {}).get("status") in inflight:
+            continue
+        open_wos.append({
+            "wo": wo_id,
+            "number": num,
+            "title": spec.get("title", wo_id),
+            "priority": spec.get("priority", "P2"),
+            "services": spec.get("services") or [],
+            "files_likely_changed": spec.get("files_likely_changed") or [],
+            "depends_on": spec.get("depends_on") or [],
+            "_raw_body": spec.get("_raw_body", ""),
+        })
+    return await conflict_advisor.run_advisor_pass(
+        open_wos,
+        _advisor_depends,
+        anthropic_key=_get_anthropic_key(),
+        apply_edge=_apply_advisor_edge,
+    )
 
 
 # ── FastAPI app + lifespan ────────────────────────────────────────────────────
@@ -1400,8 +1517,13 @@ async def get_next(domain: str = ""):
     # PM-dispatched WO takes priority over the normal queue
     if _pm_dispatch:
         dispatch = _pm_dispatch
-        _pm_dispatch = None
         wo_id = dispatch["wo"]
+        occupied = _occupancy_reason_for(wo_id)
+        if occupied:
+            # Keep the PM request queued — occupancy can clear (PR merged,
+            # claim file completed) and the next poll should still honor it.
+            return {"wo": None, "reason": f"{wo_id} occupied — {occupied}"}
+        _pm_dispatch = None
         existing = _dispatch_state.get(wo_id, {})
         if existing.get("status") in active_statuses - {"complete"}:
             return {"wo": None, "reason": f"{wo_id} already active"}
@@ -1444,9 +1566,16 @@ async def get_next(domain: str = ""):
     # editing NetworkSegments.tsx) without either ever declaring a dependency.
     files_by_wo = {w.get("wo", ""): set(w.get("files_likely_changed") or []) for w in queue}
     files_in_flight: set[str] = set()
+    services_in_flight: set[str] = set()
     for active_id, active_entry in _dispatch_state.items():
         if active_entry.get("status") in active_statuses - {"complete"}:
             files_in_flight |= files_by_wo.get(active_id, set())
+        if active_entry.get("status") in ("claimed", "in_progress"):
+            n = occupancy.wo_num_from_id(active_id)
+            if n is not None:
+                services_in_flight |= conflict_advisor.service_set_from_spec(
+                    (_specs_cache or {}).get(n) or {}
+                )
 
     for wo in queue:
         wo_id = wo.get("wo", "")
@@ -1456,6 +1585,9 @@ async def get_next(domain: str = ""):
             continue
         claim = _dispatch_state.get(wo_id, {})
         if _claim_blocks_next(wo_id, claim, _specs_cache or {}):
+            continue
+        occupied = _occupancy_reason_for(wo_id)
+        if occupied:
             continue
         # A WO that already exceeded MAX_RETRY_ATTEMPTS will always 429 on
         # claim (see /api/claim below) — without this check it stays the
@@ -1472,7 +1604,7 @@ async def get_next(domain: str = ""):
         # Spec-done (or a trusted complete stub) counts; an unknown-agent
         # complete stub for the *dependency* must not unblock, and a missing
         # dispatch row must not block a spec that is already marked done.
-        deps = wo.get("depends_on") or []
+        deps = _effective_depends(wo)
         unmet = [d for d in deps if not _dependency_satisfied(d, _specs_cache or {}, _dispatch_state)]
         if unmet:
             continue
@@ -1481,6 +1613,14 @@ async def get_next(domain: str = ""):
         # into consideration next poll once the in-flight WO stops being active.
         overlap = files_by_wo.get(wo_id, set()) & files_in_flight
         if overlap:
+            continue
+        # Same-service mutex — AGENT_PROCESS: one agent per service. Docs/none
+        # are ignored by conflict_advisor.parse_service_tokens.
+        n = occupancy.wo_num_from_id(wo_id)
+        cand_svcs = conflict_advisor.service_set_from_spec(
+            (_specs_cache or {}).get(n or -1) or {}
+        ) if n is not None else set()
+        if cand_svcs & services_in_flight:
             continue
         # Domain filter — skip WOs not in this runner's domain
         if domain_tokens:
@@ -1685,6 +1825,11 @@ async def claim_wo(req: ClaimRequest):
         wo_id = "WO-" + wo_id[6:]
     existing = _dispatch_state.get(wo_id, {})
     active_statuses = {"claimed", "in_progress", "awaiting_human", "awaiting_commit"}
+
+    occupied = _occupancy_reason_for(wo_id)
+    if occupied:
+        print(f"[orchestrator] {wo_id} claim refused — occupied: {occupied}")
+        raise HTTPException(status_code=423, detail=f"{wo_id} occupied — {occupied}")
 
     if existing.get("status") in active_statuses:
         raise HTTPException(
@@ -2089,6 +2234,33 @@ async def release_dispatch(wo_id: str):
     _save_dispatch()
     print(f"[orchestrator] {wo_id} released from dispatch (manual reset)")
     return {"ok": True, "released": wo_id}
+
+
+@app.post("/api/dispatch/{wo_id}/park")
+async def park_dispatch(wo_id: str, request: Request, req: ParkRequest):
+    """Park an in-flight WO as awaiting_commit so close-out failures stay visible.
+
+    Does not release the claim. Capacity is freed because awaiting_commit is
+    not counted toward MAX_PARALLEL_WOS. Human retries via /retry.
+    """
+    wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
+    status = (req.status or "awaiting_commit").strip().lower()
+    if status not in ("awaiting_commit", "awaiting_human"):
+        raise HTTPException(
+            status_code=400,
+            detail="status must be awaiting_commit or awaiting_human",
+        )
+    entry = _require_lease(wo_id, _lease_token(request, req.claim_token))
+    entry["status"] = status
+    entry["step"] = req.reason or "parked — needs human"
+    entry["parked_at"] = _utcnow()
+    entry["last_seen"] = _utcnow()
+    _save_dispatch()
+    thread_store.append_message(wo_id, thread_store.system_message(
+        f"⏸️ Parked as **{status}**" + (f" — {req.reason}" if req.reason else "")
+    ))
+    print(f"[orchestrator] {wo_id} parked as {status}: {req.reason}")
+    return {"ok": True, "wo": wo_id, "status": status}
 
 
 @app.post("/api/dispatch/{wo_id}/retry")
@@ -3094,6 +3266,26 @@ def _claim_blocks_next(wo_id: str, claim: dict, specs: dict[int, dict]) -> bool:
     return _trust_dispatch_complete(num, claim, specs)
 
 
+def _occupancy_reason_for(wo_id: str) -> str | None:
+    """External occupancy: Clarion claim file, open PR, or dirty/wrong-branch worktree."""
+    num = occupancy.wo_num_from_id(wo_id)
+    if num is None:
+        return None
+    factory_status = (_dispatch_state.get(wo_id) or {}).get("status", "")
+    claim = None
+    worktrees = None
+    if LOCAL_REPO_MOUNT:
+        claim = occupancy.load_claim_file(LOCAL_REPO_MOUNT, num, RUNS_PATH)
+        worktrees = occupancy.inspect_worktrees(LOCAL_REPO_MOUNT, num)
+    return occupancy.occupancy_reason(
+        wo_num=num,
+        claim=claim,
+        worktrees=worktrees,
+        open_pr_urls=_open_pr_urls,
+        factory_status=factory_status,
+    )
+
+
 def _dependency_satisfied(dep_num: int, specs: dict[int, dict],
                           dispatch_state: dict) -> bool:
     """True when a depends_on target is actually done (spec or trusted complete)."""
@@ -3109,8 +3301,35 @@ def _dependency_satisfied(dep_num: int, specs: dict[int, dict],
 # ── GitHub data fetchers ──────────────────────────────────────────────────────
 
 def _read_local_wo_specs(repo_root: str, wo_path: str, repo: str) -> dict[int, dict]:
-    """Read WO spec files directly from the local filesystem mount."""
+    """Read WO spec files from origin/main (fetch-only) with filesystem fallback.
+
+    Never depends on the operator's working-tree checkout being on main.
+    """
     specs: dict[int, dict] = {}
+
+    def _spec_from_content(num: int, content: str) -> dict:
+        return {
+            "number": num,
+            "repo": repo,
+            "title": _parse_title(content, num),
+            "status": _parse_status(content),
+            "priority": _parse_priority(content),
+            "effort": _parse_effort(content),
+            "depends_on": _parse_depends_on(content),
+            "files_likely_changed": _parse_files_likely_changed(content),
+            "services": sorted(conflict_advisor.parse_services_from_spec(content)),
+            "_raw_body": content,
+        }
+
+    files = occupancy.read_tree_files(repo_root, "origin/main", wo_path)
+    for fname, content in files.items():
+        num = _parse_wo_number(fname)
+        if not num:
+            continue
+        specs[num] = _spec_from_content(num, content)
+    if specs:
+        return specs
+
     wo_dir = Path(repo_root) / wo_path
     if not wo_dir.is_dir():
         return specs
@@ -3120,17 +3339,7 @@ def _read_local_wo_specs(repo_root: str, wo_path: str, repo: str) -> dict[int, d
             continue
         try:
             content = f.read_text(encoding="utf-8", errors="replace")
-            specs[num] = {
-                "number": num,
-                "repo": repo,
-                "title": _parse_title(content, num),
-                "status": _parse_status(content),
-                "priority": _parse_priority(content),
-                "effort": _parse_effort(content),
-                "depends_on": _parse_depends_on(content),
-                "files_likely_changed": _parse_files_likely_changed(content),
-                "_raw_body": content,
-            }
+            specs[num] = _spec_from_content(num, content)
         except Exception as e:
             print(f"[orchestrator] Failed to read local WO-{num}: {e}")
     return specs
@@ -3168,6 +3377,7 @@ async def _fetch_wo_specs(client: httpx.AsyncClient, repo: str = GITHUB_REPO, wo
                 "effort": _parse_effort(content),
                 "depends_on": _parse_depends_on(content),
                 "files_likely_changed": _parse_files_likely_changed(content),
+                "services": sorted(conflict_advisor.parse_services_from_spec(content)),
                 "_raw_body": content,
             }
         except Exception as e:
@@ -3223,6 +3433,7 @@ async def _cached_get(client: httpx.AsyncClient, url: str, params: dict, ttl: in
 
 
 async def _fetch_open_pr_wos(client: httpx.AsyncClient, repo: str = GITHUB_REPO) -> set[int]:
+    global _open_pr_wos, _open_pr_urls
     try:
         prs = await _cached_get(client, f"/repos/{repo}/pulls", {"state": "open", "per_page": 100})
         # resolve_all_wos_for_pr, not resolve_wo_for_pr: this set feeds the
@@ -3232,11 +3443,18 @@ async def _fetch_open_pr_wos(client: httpx.AsyncClient, repo: str = GITHUB_REPO)
         # matches first. Missing this let the second WO get redispatched to a
         # fresh agent while its real PR was already open, awaiting review.
         wos: set[int] = set()
+        urls: dict[int, str] = {}
         for p in prs:
-            wos.update(resolve_all_wos_for_pr(p))
+            url = p.get("html_url") or ""
+            for n in resolve_all_wos_for_pr(p):
+                wos.add(n)
+                if url and n not in urls:
+                    urls[n] = url
+        _open_pr_wos = wos
+        _open_pr_urls = urls
         return wos
     except Exception:
-        return set()
+        return set(_open_pr_wos)
 
 
 async def _fetch_dependabot_prs(client: httpx.AsyncClient) -> list[dict]:
@@ -3374,8 +3592,14 @@ async def _fetch_recently_merged_wo_prs(client: httpx.AsyncClient) -> dict[int, 
 
 
 async def _fetch_plan(client: httpx.AsyncClient) -> dict | None:
-    # Read PLAN.json from local filesystem — no API call
+    # Prefer origin/main so we don't depend on the operator's working tree.
     if LOCAL_REPO_MOUNT:
+        raw = occupancy.git_show(LOCAL_REPO_MOUNT, f"origin/main:{PLAN_PATH}")
+        if raw:
+            try:
+                return json.loads(raw)
+            except Exception as e:
+                print(f"[orchestrator] Failed to parse origin/main PLAN.json: {e}")
         plan_file = Path(LOCAL_REPO_MOUNT) / PLAN_PATH
         if plan_file.exists():
             try:
@@ -3551,10 +3775,11 @@ def _load_watchdog() -> dict | None:
 # ── Main poll loop ────────────────────────────────────────────────────────────
 
 async def _sync_local_repo() -> None:
-    """Pull latest from origin/main so local WO specs and PLAN.json stay fresh.
+    """Fetch origin/main and origin/wo/* so spec reads via `git show` stay fresh.
 
-    Uses HTTPS with GITHUB_TOKEN to avoid SSH key requirements inside Docker.
-    Runs once per poll cycle. Failures are logged but never block the poll.
+    Never merges into LOCAL_REPO_MOUNT — that is the operator's working clone.
+    A ff-only merge of origin/main onto a dirty or feature-branch checkout
+    overwrites in-progress human work.
     """
     if not LOCAL_REPO_MOUNT:
         return
@@ -3576,18 +3801,9 @@ async def _sync_local_repo() -> None:
             msg = redact_secret(err.decode(errors="replace"), token).strip()[:200]
             print(f"[orchestrator] git fetch failed: {msg}")
             return
-        proc2 = await asyncio.create_subprocess_exec(
-            "git", "merge", "--ff-only", "refs/remotes/origin/main",
-            cwd=LOCAL_REPO_MOUNT,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        out2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
-        if proc2.returncode == 0:
-            msg = out2.decode(errors="replace").strip().splitlines()[0] if out2 else "ok"
-            if "Already up to date" not in msg:
-                print(f"[orchestrator] local repo synced: {msg}")
+        print("[orchestrator] local repo fetch ok (working tree untouched)")
     except Exception as e:
-        print(f"[orchestrator] git pull error: {redact_secret(str(e), token)}")
+        print(f"[orchestrator] git fetch error: {redact_secret(str(e), token)}")
 
 
 async def poll() -> None:
@@ -3921,6 +4137,7 @@ async def poll() -> None:
             "status": spec.get("status", "open"),
             "depends_on": spec.get("depends_on", []),
             "files_likely_changed": spec.get("files_likely_changed", []),
+            "services": spec.get("services", []),
             "_overlay": True,
         }
         if wo_id in plan_registered:

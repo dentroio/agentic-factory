@@ -8,6 +8,8 @@ recurring problems that previously required human intervention:
   2. PRs stuck with merge conflicts (DIRTY) → create factory WO to resolve
   3. CI failing > FAILURE_THRESHOLD_MINUTES → LLM diagnoses, creates WO or re-triggers
   4. Ghost dispatch entries (claimed/in_progress but stale) → re-queue
+5. Conflict advisor — extra depends_on edges so WOs that share a service or
+   declared files cannot dispatch in a colliding order (does not pick next WO)
 
 All actions are logged to _last_run so the /api/intelligence/status endpoint
 can show what happened.

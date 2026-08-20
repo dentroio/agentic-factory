@@ -148,6 +148,15 @@ def _classify(diff: str) -> tuple[bool, bool, bool, list[str]]:
     return has_ui, has_api_surface, has_backend, sorted(svcs)
 
 
+def _worktree_for_wo(wo_id: str, repo_path: str) -> str | None:
+    """Return the product worktree for this WO, never the shared main clone."""
+    if not repo_path:
+        return None
+    num = re.sub(r"^WO-", "", str(wo_id), flags=re.IGNORECASE)
+    matches = sorted(p for p in Path(repo_path).glob(f".worktrees/wo-{num}-*") if p.is_dir())
+    return str(matches[0]) if matches else None
+
+
 def _rebuild_and_smoke(repo_path: str, services: list[str]) -> tuple[bool, str]:
     """Rebuild service containers and run smoke-test. Returns (success, output)."""
     if not repo_path or not Path(repo_path).exists():
@@ -420,10 +429,10 @@ async def review_one(v: dict) -> None:
                 f"Services being rebuilt: `{'`, `'.join(services)}`"
             )
 
-            repo = LOCAL_REPO_PATH
-            if services and repo:
+            worktree = _worktree_for_wo(wo, LOCAL_REPO_PATH)
+            if services and worktree:
                 build_ok, build_out = await asyncio.get_event_loop().run_in_executor(
-                    None, _rebuild_and_smoke, repo, services
+                    None, _rebuild_and_smoke, worktree, services
                 )
                 if not build_ok:
                     error_lines = [l for l in build_out.splitlines() if l.strip() and
@@ -443,7 +452,13 @@ async def review_one(v: dict) -> None:
                     f"`{'`, `'.join(services)}` are healthy."
                 )
             else:
-                _log(f"{wo}: LOCAL_REPO_PATH not set — skipping rebuild; routing to human anyway")
+                _log(f"{wo}: no WO worktree — skipping rebuild of shared main checkout; routing to human")
+                await _post_thread(
+                    wo,
+                    "⏭️ **Skipped container rebuild** — no `.worktrees/wo-*` checkout for this WO, "
+                    "and the reviewer will not run `make` in the shared main clone. "
+                    "Please verify on localhost.",
+                )
 
         guide = _generate_verification_guide(wo, title, pr_url, pr_num, diff, wo_spec)
         _log(f"{wo}: code OK — requesting human sign-off (priority={wo_spec.get('priority') or 'unknown'})")

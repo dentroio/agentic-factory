@@ -206,6 +206,26 @@ async def release_dispatch(wo_id: str) -> None:
         print(f"[runner] release_dispatch {wo_id} failed: {e}")
 
 
+async def park_dispatch(wo_id: str, reason: str, status: str = "awaiting_commit") -> None:
+    """Park a WO as awaiting_commit instead of releasing it for silent retry."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{ORCHESTRATOR_URL}/api/dispatch/{wo_id}/park",
+                headers=_lease_headers(wo_id),
+                json={"status": status, "reason": reason},
+            )
+            if resp.status_code == 409:
+                _claim_tokens.pop(wo_id, None)
+                raise ClaimLost(wo_id)
+            if resp.status_code >= 400:
+                print(f"[runner] park_dispatch {wo_id} HTTP {resp.status_code}: {resp.text[:200]}")
+    except ClaimLost:
+        raise
+    except Exception as e:
+        print(f"[runner] park_dispatch {wo_id} failed: {e}")
+
+
 async def get_agent_config() -> dict:
     """Fetch agent config from the orchestrator (preferred backend, reviewers, etc.)."""
     try:
