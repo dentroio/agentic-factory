@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Configuring and using AI backends (Claude, Cursor, Codex, Gemini, claude-api) for WO execution"
-last_verified: 2026-07-31
+last_verified: 2026-08-20
 covers_wos:
   - WO-1007
   - WO-1008
@@ -75,45 +75,11 @@ If any reviewer hits its blocking threshold, the chain stops and the agent is se
 
 **8. PR and merge** — after approval, the agent commits, opens a PR, sets `--auto-merge` if P2, and calls `POST /api/complete`.
 
-## Pre-dispatch approval
+## Cloud agent path (Codex + GitHub Actions)
 
-P1 WOs (and optionally P2) go through a mandatory approval step before an agent is assigned. This prevents agents from starting work on WOs whose environment prerequisites aren't met — this closed a gap where a WO that required connectors not present in the environment ran for 23 hours without ever passing its own acceptance criteria.
+The local agent-runner needs Docker, a worktree, and a developer machine with an AI CLI logged in. P3 / docs-only WOs — those with `services: none` — don't need any of that. For these, the factory can dispatch straight to a GitHub Actions workflow that runs Codex in CI and opens a PR, with no local runner involved.
 
-### Dispatch lifecycle
-
-```
-queue → [pending_approval] → claimed → in_progress → awaiting_human → complete
-```
-
-P2 and P3 WOs bypass approval and dispatch immediately.
-
-### Configuring which priorities require approval
-
-Set the `REQUIRE_APPROVAL_FOR` env var (default: `P1`). Accepts a comma-separated list:
-
-```bash
-REQUIRE_APPROVAL_FOR=P1        # default — only P1 gated
-REQUIRE_APPROVAL_FOR=P1,P2     # gate both P1 and P2
-```
-
-### Approving WOs
-
-When a WO enters `pending_approval`, the factory sends a Slack/ntfy notification and the Factory tab shows an **Approvals** panel above Active Jobs:
+**`github_dispatch.py`** (orchestrator module) triggers a `workflow_dispatch` event on the target repo:
 
 ```
-┌─ PENDING APPROVAL ──────────────────────────────────────────── 1 ─┐
-│  WO-1036  P1  Pre-Dispatch WO Approval                             │
-│  services: orchestrator, status-site  |  effort: M                 │
-│  [View spec]  [Approve →]  [Skip]  [Hold]                          │
-└────────────────────────────────────────────────────────────────────┘
-```
-
-**View spec** expands an inline markdown preview (first 40 lines) without leaving the Factory tab. The panel is hidden when there are no pending approvals.
-
-### Approval API
-
-| Endpoint | Action |
-|----------|--------|
-| `GET /api/approvals` | List WOs pending approval |
-| `POST /api/approvals/{wo_id}/approve` | Dispatch to next available agent |
-| `POST /api/approvals/{wo_id}/skip` |
+POST /repos/
