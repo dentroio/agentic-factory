@@ -18,6 +18,7 @@
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
+- [orchestrator-silent-stall-detection](auto_fix-orchestrator-alert-when-the-dispatch-queue-sta.md) — Orchestrator dispatch queue can silently stall (all WOs held, nothing active) for hours with no alert — new health/stall detectors must mirror /api/next's exact filter and use one-alert-per-episode in-memory state.
 - [orchestrator-proxy-routes-require-auth-header](auto_wo1037.md) — All status-site proxy calls to the orchestrator must include _orch_headers() or they silently 401
 - [github-action-required-runs-are-not-cleaned-up](auto_feat-watchdog-surface-github-actions-runs-waiting-.md) — GitHub Actions runs stuck in action_required state persist forever even after the PR closes or gets superseded, and omit pull_requests field
 
