@@ -19,6 +19,7 @@
 
 ## Known Invariants
 - [orchestrator-proxy-routes-require-auth-header](auto_wo1037.md) — All status-site proxy calls to the orchestrator must include _orch_headers() or they silently 401
+- [github-action-required-runs-are-not-cleaned-up](auto_feat-watchdog-surface-github-actions-runs-waiting-.md) — GitHub Actions runs stuck in action_required state persist forever even after the PR closes or gets superseded, and omit pull_requests field
 
 Auto-extracted by `memory_agent.py` after merges — one lesson per PR, written but never indexed here until 2026-08-05 (the gap itself was AF-38 in the 2026-08 engineering assessment). Two entries below are marked superseded where a later fix changed the behavior they describe.
 
