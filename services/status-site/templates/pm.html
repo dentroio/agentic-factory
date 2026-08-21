@@ -272,7 +272,8 @@
       </div>
       <div class="space-y-2 flex-1 overflow-y-auto max-h-[320px] pr-0.5">
         {% for spec in columns[key] %}
-        <a href="/wo/{{ spec.number }}" class="block p-2.5 rounded-lg bg-slate-900/40 border border-slate-800/60 hover:border-slate-700/80 hover:bg-slate-900/80 transition-all duration-200 group">
+        <div class="rounded-lg bg-slate-900/40 border border-slate-800/60 hover:border-slate-700/80 transition-all duration-200 group overflow-hidden">
+        <a href="/wo/{{ spec.number }}" class="block p-2.5 hover:bg-slate-900/80 transition-all duration-200">
           <div class="flex items-center justify-between gap-1.5 mb-1.5">
             <span class="text-xs font-bold px-1.5 py-0.5 rounded font-mono uppercase {{ spec.priority_class }}">
               {{ spec.priority or "—" }}
@@ -308,6 +309,12 @@
           <div class="text-xs text-slate-600 font-mono mt-1">{{ spec.effort }}</div>
           {% endif %}
         </a>
+        {% if key == "stalled" and 'failed' in (spec.agent_step or '').lower() %}
+        <button onclick="retryStalledWO('WO-{{ spec.number }}', this)"
+                class="w-full text-xs px-2 py-1 font-mono uppercase tracking-wide bg-amber-500/15 text-amber-400 hover:bg-amber-500/30 border-t border-amber-500/20 transition-all"
+                title="Re-queue this WO for another attempt">↺ Retry</button>
+        {% endif %}
+        </div>
         {% else %}
         <div class="flex items-center justify-center py-6 text-slate-700 text-xs">— empty —</div>
         {% endfor %}
@@ -478,6 +485,19 @@
 </div>
 
 <script>
+async function retryStalledWO(woId, btn) {
+  btn.disabled = true;
+  btn.textContent = '↺ Retrying…';
+  try {
+    const r = await fetch(`/api/dispatch/${woId}/retry`, {method: 'POST'});
+    if (r.ok) { btn.textContent = '↺ Queued'; setTimeout(() => location.reload(), 1000); }
+    else { btn.disabled = false; btn.textContent = '↺ Retry (failed, try again)'; }
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '↺ Retry (failed, try again)';
+  }
+}
+
 const _PROG = {
   {% for prog_name, pw in prog_list %}
   {% set prog = programs[prog_name] if prog_name in programs else {"total": 0, "done": 0, "pct": 0} %}

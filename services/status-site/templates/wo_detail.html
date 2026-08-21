@@ -25,6 +25,11 @@
         {% else %}bg-slate-800 text-slate-300 border border-slate-700/40{% endif %}">
         {{ spec.status or "Open" }}
       </span>
+      {% if 'failed' in (spec.agent_step or '').lower() %}
+      <button onclick="retryWO()" id="retry-wo-btn"
+              class="text-xs px-2.5 py-0.5 rounded-full font-mono uppercase tracking-wide bg-amber-500/15 text-amber-400 hover:bg-amber-500/30 border border-amber-500/20 transition-all"
+              title="Re-queue this WO for another attempt">↺ Retry</button>
+      {% endif %}
     </div>
     <h1 class="text-xl font-display font-bold text-slate-100 mb-4">{{ spec.title }}</h1>
 
@@ -427,6 +432,18 @@
     document.getElementById('thread-compose').addEventListener('keydown', function(e) {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); window.sendThreadMessage(); }
     });
+
+    window.retryWO = async function() {
+      const btn = document.getElementById('retry-wo-btn');
+      if (btn) { btn.disabled = true; btn.textContent = '↺ Retrying…'; }
+      try {
+        const r = await fetch(`/api/dispatch/${WO_ID}/retry`, {method: 'POST'});
+        if (r.ok) { if (btn) btn.textContent = '↺ Queued'; setTimeout(() => location.reload(), 1000); }
+        else if (btn) { btn.disabled = false; btn.textContent = '↺ Retry (failed, try again)'; }
+      } catch (e) {
+        if (btn) { btn.disabled = false; btn.textContent = '↺ Retry (failed, try again)'; }
+      }
+    };
   })();
   </script>
 
