@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Configuring and using AI backends (Claude, Cursor, Codex, Gemini, claude-api) for WO execution"
-last_verified: 2026-08-20
+last_verified: 2026-08-21
 covers_wos:
   - WO-1007
   - WO-1008
@@ -82,4 +82,21 @@ The local agent-runner needs Docker, a worktree, and a developer machine with an
 **`github_dispatch.py`** (orchestrator module) triggers a `workflow_dispatch` event on the target repo:
 
 ```
-POST /repos/
+POST /repos/{repo}/actions/workflows/codex-dispatch.yml/dispatches
+{
+  "ref": "main",
+  "inputs": { "wo_id": "WO-362", "wo_slug": "sync-in-app-help" }
+}
+```
+
+Returns `True` on HTTP 204 (queued), `False` on any error.
+
+### `POST /api/dispatch-codex`
+
+```json
+{ "wo": "WO-362", "repo": "dentroio/clarion", "ref": "main", "slug": "sync-in-app-help" }
+```
+
+1. Checks for an existing claim — 409 if already active
+2. Pre-claims the WO as `codex-gh-actions / github-actions`
+3. Triggers the `workflow_d
