@@ -1,7 +1,7 @@
 ---
 title: "Customization"
-description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, WO execution instructions, agent process docs, WO templates, documentation enforcement, and agent memory"
-last_verified: 2026-08-21
+description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, WO templates, documentation enforcement, agent process docs, and agent memory"
+last_verified: 2026-08-24
 covers_wos:
   - WO-1014
   - WO-1021
@@ -51,11 +51,4 @@ The `observability.yml` workflow polls `METRICS_ENDPOINT` every 15 minutes and c
 | Field | What it checks |
 |-------|---------------|
 | `error_rate_pct` | Percentage of requests returning 5xx. Alert if above this value. |
-| `p99_latency_ms` | 99th percentile response time in milliseconds. Alert if above this value. |
-| `unhealthy_services` | Service names to check in the health endpoint's `services` map. Alert if any are not `"healthy"`. |
-
-Set `METRICS_ENDPOINT` as a GitHub Actions variable (**Settings → Secrets and variables → Actions → Variables**) pointing to your application's health or metrics endpoint. If the variable is not set, the observability workflow skips silently.
-
-## .github/workflows/ci.yml.template
-
-The template ships with a `ci.yml.template` rather than a live `ci.yml`. This is intentional — CI is highly project-specific and a w
+| `p99
