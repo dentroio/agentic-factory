@@ -1,7 +1,7 @@
 ---
 title: "Customization"
 description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, WO templates, documentation enforcement, agent process docs, and agent memory"
-last_verified: 2026-08-24
+last_verified: 2026-08-26
 covers_wos:
   - WO-1014
   - WO-1021
@@ -51,4 +51,36 @@ The `observability.yml` workflow polls `METRICS_ENDPOINT` every 15 minutes and c
 | Field | What it checks |
 |-------|---------------|
 | `error_rate_pct` | Percentage of requests returning 5xx. Alert if above this value. |
-| `p99
+| `p99_latency_ms` | 99th percentile latency in milliseconds. Alert if above this value. |
+| `unhealthy_services` | List of service names that must report healthy. Alert if any listed service reports unhealthy. |
+
+## docs/work_orders/TEMPLATE.md — the WO spec template
+
+`docs/work_orders/TEMPLATE.md` is the canonical reference for what a complete Work Order spec must contain. New WOs (written by a human or by the planning agent) should follow it so agents have everything they need without guessing:
+
+- **Header** — `Created`, `Priority`, `Effort`, `Services`, `Depends on`, `Status`
+- **Background** — why this exists, what pain it solves
+- **What to Build** — a concrete implementation spec with no ambiguity; the agent should not have to make significant design decisions
+- **Requirements** — a `requires:` YAML block listing needed connectors/services
+- **Acceptance Criteria** — at least 3 items, each independently verifiable by the agent or CI (no "looks good" items)
+- **Files** — every file to be created or modified, so there are no surprises for the agent
+- **Domain Notes** — gotchas specific to the services touched, known conflict risks, recently changed dependencies, patterns to copy from
+
+If you're adapting the factory to a new codebase, start new WOs from this template rather than from a blank page.
+
+## Documentation enforcement
+
+Documentation debt used to accumulate silently — code could merge without any corresponding doc update. The factory now enforces documentation completeness as part of the review chain:
+
+- A WO spec can include a `## Documentation Required` checklist. When the WO is created, this checklist is parsed and stored as JSON (`docs_required`) on the queue record.
+- The coding agent's prompt includes a **documentation mandate**: it is told explicitly which doc files must be updated, and is instructed not to request human validation until each item is checked off.
+- A fifth reviewer role, **documentation**, runs after the security/architecture/correctness/performance reviewers on the PR diff. It checks whether each `docs_required` item is meaningfully addressed in the diff — not code quality, just completeness.
+- Unfulfilled items come back as `HIGH` severity findings, which block the chain the same way other blocking findings do. If `docs_required` is empty, the documentation reviewer step is skipped entirely.
+
+To use this, add a `## Documentation Required` section to your WO specs listing the specific files/sections that must change (e.g. README env var tables, architecture diagrams, in-app help copy).
+
+## Agent process docs
+
+Agents are told to read a process doc before starting any implementation task. That doc is split into two files so agents pay the token cost only for what they need:
+
+- **`AGENT_PROCESS.md`** — the "what to do" cheatsheet. Short, imperative, no prose. Contains the ris
