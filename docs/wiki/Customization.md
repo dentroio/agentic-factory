@@ -1,7 +1,7 @@
 ---
 title: "Customization"
 description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, WO templates, documentation enforcement, agent process docs, and agent memory"
-last_verified: 2026-08-26
+last_verified: 2026-08-27
 covers_wos:
   - WO-1014
   - WO-1021
@@ -83,4 +83,41 @@ To use this, add a `## Documentation Required` section to your WO specs listing 
 
 Agents are told to read a process doc before starting any implementation task. That doc is split into two files so agents pay the token cost only for what they need:
 
-- **`AGENT_PROCESS.md`** — the "what to do" cheatsheet. Short, imperative, no prose. Contains the ris
+- **`AGENT_PROCESS.md`** — the "what to do" cheatsheet. Short (under 200 lines), imperative, no prose. A `## ⚠️ You must know these` section with the must-not-forget patterns (db.commit, migration registration, require_role, correlation_engine double-rebuild, claim file first commit) sits within the first 30 lines, before anything else. It also contains:
+  - Risk tiers table
+  - Branch/PR workflow as an explicitly numbered list (Step 1 through Step 8), so agents can reference steps unambiguously in status updates and logs
+  - A container rebuild table (service → make target → verify command)
+  - A **"Container danger zones"** table pairing dangerous commands with safe replacements and what goes wrong if you use the dangerous one (e.g. `docker compose up -d --force-recreate <svc>` recreates dependencies and can wipe state — use `make build-svc-wt SVC=<svc>` instead)
+  - The "stop and ask user" rule
+  - Emergency ops reference (who to page, where logs are)
+- **`AGENT_PROCESS_DETAIL.md`** — the "why" reference, read only when an agent needs the reasoning behind a rule. Holds the detailed explanations that used to bloat the main file: the worktree system, why `db.commit()` is always required, why `correlation_engine.py` lives in two containers and needs a double rebuild, why `--no-deps` is required, migration registration, role guards.
+
+`CLAUDE.md` tells agents: read `AGENT_PROCESS.md` before starting any implementation task, and consult `AGENT_PROCESS_DETAIL.md` only if you need the reasoning behind a rule. If you're adapting the factory to your own project, follow the same split — put every rule an agent must apply on every single task in the short file, and move justification/background into the detail file.
+
+## Agent memory
+
+Agents used to start every task cold, with no knowledge of what previous agents learned, what "conflict magnet" files exist in the codebase, or what the current environment actually looks like. The factory now maintains a lightweight persistent memory store that's injected into every agent's prompt.
+
+### Memory store
+
+A JSON file at `services/agent-runner/memory/factory_memory.json` holds three things:
+
+- **`lessons`** — an array of `{id, added_at, source_wo, category, applies_to, content}` records. `category` is typically `gotcha`, `conflict_magnet`, or `failure_pattern`. `applies_to` lists the services a lesson is relevant to.
+- **`environment`** — current environment state: `connected_connectors`, `healthy_services`, `recent_migrations`, `recent_routes`, and when it was last updated.
+- **`completed_wos`** — a short history of recently completed WOs with a one-line summary of what they changed.
+
+### How it's used
+
+`build_prompt()` accepts a `memory` dict and injects a `## Factory Memory` section between the WO spec and the code-pattern reference, containing:
+
+- Lessons whose `applies_to` intersects with the current WO's `services` field (so agents only see what's relevant)
+- Current environment state (connected connectors, healthy services, recent migrations, recent routes) — so agents don't waste time investigating things that were true in the past but aren't now
+- The last 5 completed WOs, so the agent doesn't duplicate work that already shipped
+
+### How it stays current
+
+- After a WO completes successfully, the runner distills 1–3 lessons from the agent's thread and appends them to `factory_memory.json`, along with an entry in `completed_wos`.
+- After a CI failure or reviewer rejection, a `failure_pattern` lesson is recorded the same way.
+- A background refresh runs periodically to update `connected_connectors`, `healthy_services`, and `recent_migrations` from the live environment, so the memory doesn't drift from reality.
+
+This means WO specs and prompts don't need to be manually kept in sync with every environment change — the memory store closes that gap automatically as WOs complete.
