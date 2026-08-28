@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Configuring and using AI backends (Claude, Cursor, Codex, Gemini, claude-api) for WO execution, including the Codex GitHub Actions cloud dispatch path"
-last_verified: 2026-08-27
+last_verified: 2026-08-28
 covers_wos:
   - WO-1008
   - WO-1036
