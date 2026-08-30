@@ -75,6 +75,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Claim lease (fencing token) | ✅ | Issued on claim; checkin/validate/complete/heartbeat 409 on mismatch; token never returned from GET /api/dispatch | WO-1054 |
 | PM privileged-action gating | ✅ | Free-text `[PR:merge:]`/`[DISPATCH:]`/`[RESET:]` do not execute; `merge_pr` is P2/P3 only | WO-1054 |
 | Conflict advisor for dispatch order | ✅ | Service and file overlap detection + cycle-free `depends_on` edge generation | WO-1086 |
+| Durable execution history & audit trail | ✅ | Persists completed/failed/released runs, cycle times, failure categories, and metrics in SQLite (`/data/factory.db`) | WO-1088 |
 | Multi-repo orchestration | 🔵 | Currently single-repo per instance | — |
 
 ## Dimension 4: Agent Runner (agent-runner, native launchd service — not Docker)

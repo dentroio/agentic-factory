@@ -48,6 +48,10 @@ from db import (
     remember_runs as _db_remember_runs,
     schedule_sync_runs as _db_schedule_sync_runs,
     sync_runs as _db_sync_runs,
+    init_history_table as _db_init_history_table,
+    record_run_history as _db_record_run_history,
+    get_run_history as _db_get_run_history,
+    get_run_metrics as _db_get_run_metrics,
 )
 from agent_config_policy import AgentConfigError, apply_agent_config_updates
 from git_https import git_fetch_env, github_https_url, redact_secret
@@ -747,6 +751,7 @@ def _init_db() -> None:
                 conn.execute(_ddl)
             except sqlite3.OperationalError:
                 pass  # column already exists
+    _db_init_history_table(DB_PATH)
 
 
 def _db_load_all_runs() -> dict[str, dict]:
@@ -2291,6 +2296,18 @@ async def retry_dispatch(wo_id: str, force: bool = False):
             ),
         )
     attempt_count = prev.get("attempt_count", 0)
+    # Record failed attempt in run history
+    try:
+        fail_rec = dict(prev)
+        fail_rec["wo"] = wo_id
+        fail_rec["final_status"] = "failed"
+        fail_rec["completed_at"] = _utcnow()
+        if not fail_rec.get("failure_reason"):
+            fail_rec["failure_reason"] = fail_rec.get("step", "")
+        _db_record_run_history(DB_PATH, fail_rec)
+    except Exception as exc:
+        print(f"[db] error recording history on retry for {wo_id}: {exc}")
+
     # Preserve attempt_count so the max-retries gate still applies on the next claim.
     # Use a minimal stub rather than deleting so history is kept.
     _dispatch_state[wo_id] = {
@@ -2353,6 +2370,14 @@ async def reset_dispatch(wo_id: str, force: bool = False):
             ),
         )
     if wo_id in _dispatch_state:
+        try:
+            rel_rec = dict(existing)
+            rel_rec["wo"] = wo_id
+            rel_rec["final_status"] = "released"
+            rel_rec["completed_at"] = _utcnow()
+            _db_record_run_history(DB_PATH, rel_rec)
+        except Exception as exc:
+            print(f"[db] error recording history on reset for {wo_id}: {exc}")
         del _dispatch_state[wo_id]
         _save_dispatch()
     dispatch_control.clear_attempt(_attempt_counts, wo_id)
@@ -2367,6 +2392,15 @@ async def reset_dispatch(wo_id: str, force: bool = False):
 async def release_all_dispatch():
     """Clear entire dispatch state — use to reset after a crash or bad run."""
     count = len(_dispatch_state)
+    for wo_id, run_data in _dispatch_state.items():
+        try:
+            rel_rec = dict(run_data)
+            rel_rec["wo"] = wo_id
+            rel_rec["final_status"] = "released"
+            rel_rec["completed_at"] = _utcnow()
+            _db_record_run_history(DB_PATH, rel_rec)
+        except Exception as exc:
+            print(f"[db] error recording history on release_all for {wo_id}: {exc}")
     _dispatch_state.clear()
     _save_dispatch()
     print(f"[orchestrator] dispatch state cleared ({count} entries removed)")
@@ -2387,6 +2421,22 @@ async def complete_wo(request: Request, req: CompleteRequest):
         _dispatch_state[wo_id]["pr_number"] = req.pr_number
     _save_dispatch()
     _db_append_step(wo_id, "complete", step=f"merged by {req.agent}", agent=req.agent)
+    
+    # Persist to durable run history
+    try:
+        hist_rec = dict(_dispatch_state[wo_id])
+        hist_rec["wo"] = wo_id
+        hist_rec["final_status"] = "complete"
+        hist_rec["agent"] = req.agent or hist_rec.get("agent", "")
+        hist_rec["step"] = f"merged by {req.agent}"
+        if req.pr_url:
+            hist_rec["pr_url"] = req.pr_url
+        if req.pr_number:
+            hist_rec["pr_number"] = req.pr_number
+        _db_record_run_history(DB_PATH, hist_rec)
+    except Exception as exc:
+        print(f"[db] error recording history for {wo_id}: {exc}")
+
     # Remove from pending validations
     global _validations
     _validations = [v for v in _validations if v["wo"] != wo_id]
@@ -2505,6 +2555,20 @@ async def auto_mark_done_wo(wo_id: str, pr_number: int | None = None,
             _dispatch_state[wo_id]["pr_number"] = pr_number
         _save_dispatch()
         _db_append_step(wo_id, "complete", step="auto-marked done by pr-watchdog")
+        try:
+            rec = dict(_dispatch_state[wo_id])
+            rec["wo"] = wo_id
+            rec["final_status"] = "complete"
+            rec["step"] = "auto-marked done by pr-watchdog"
+            if pr_url:
+                rec["pr_url"] = pr_url
+            if pr_number:
+                rec["pr_number"] = pr_number
+            if merged_at:
+                rec["completed_at"] = merged_at
+            _db_record_run_history(DB_PATH, rec)
+        except Exception as exc:
+            print(f"[db] error recording history on auto-mark-done for {wo_id}: {exc}")
         results.append("dispatch entry → complete")
 
     print(f"[orchestrator] auto-mark-done {wo_id}: {results}, errors: {errors}")
@@ -6257,6 +6321,38 @@ async def pm_chat(req: PMChatRequest):
         clean_text = clean_text + "\n\n" + "\n".join(plan_action_results)
 
     return {"type": "text", "reply": clean_text.strip(), "wo_draft": None}
+
+
+# ── Run History & Audit API Endpoints ──────────────────────────────────────────
+
+@app.get("/api/history")
+async def api_get_history(
+    wo: str | None = None,
+    status: str | None = None,
+    agent: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """Retrieve durable execution run history and audit trails."""
+    if wo:
+        wo = wo.upper() if wo.upper().startswith("WO-") else f"WO-{wo}"
+    runs = _db_get_run_history(DB_PATH, wo=wo, status=status, agent=agent, limit=limit, offset=offset)
+    return {"ok": True, "count": len(runs), "history": runs}
+
+
+@app.get("/api/history/metrics")
+async def api_get_history_metrics():
+    """Retrieve aggregate performance and reliability metrics from run history."""
+    metrics = _db_get_run_metrics(DB_PATH)
+    return {"ok": True, "metrics": metrics}
+
+
+@app.get("/api/history/{wo_id}")
+async def api_get_wo_history(wo_id: str):
+    """Retrieve all execution history attempts for a specific work order."""
+    wo_id = wo_id.upper() if wo_id.upper().startswith("WO-") else f"WO-{wo_id}"
+    runs = _db_get_run_history(DB_PATH, wo=wo_id, limit=100)
+    return {"ok": True, "wo": wo_id, "count": len(runs), "history": runs}
 
 
 if __name__ == "__main__":
