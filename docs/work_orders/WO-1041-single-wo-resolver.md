@@ -5,7 +5,7 @@
 **Effort:** M
 **Services:** orchestrator, pr-watchdog, status-site
 **Depends on:** —
-**Status:** Open
+**Status:** ✅ Complete
 
 ---
 

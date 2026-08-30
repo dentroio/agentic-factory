@@ -1,6 +1,6 @@
 # Dentro AI Factory — Capability Status
 
-_Last updated: 2026-08-17_
+_Last updated: 2026-08-30_
 
 A living registry of what the system can do, at what fidelity, and what's still open.
 
@@ -74,6 +74,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Factory pause (`/api/factory/pause`) | ✅ | `/api/next` and `/api/claim` refuse work while paused; health agent will not revive runners or re-dispatch | WO-1054 |
 | Claim lease (fencing token) | ✅ | Issued on claim; checkin/validate/complete/heartbeat 409 on mismatch; token never returned from GET /api/dispatch | WO-1054 |
 | PM privileged-action gating | ✅ | Free-text `[PR:merge:]`/`[DISPATCH:]`/`[RESET:]` do not execute; `merge_pr` is P2/P3 only | WO-1054 |
+| Conflict advisor for dispatch order | ✅ | Service and file overlap detection + cycle-free `depends_on` edge generation | WO-1086 |
 | Multi-repo orchestration | 🔵 | Currently single-repo per instance | — |
 
 ## Dimension 4: Agent Runner (agent-runner, native launchd service — not Docker)
@@ -97,6 +98,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Agent mandate: PERFORMANCE section | ✅ | No blocking I/O, no unbounded queries, no N+1 | fix/factory-quality-alignment |
 | Agent mandate: CODE QUALITY section | ✅ | Error paths, function focus, pattern adherence | fix/factory-quality-alignment |
 | Auto-recovery on build/CI failure | ✅ | Runner calls `POST /api/dispatch/{wo}/retry` on failure; WO released for re-pickup without manual intervention | fix/factory-resilience |
+| Gate-failure intelligence & auto-fix pass | ✅ | Classifies failure causes (lock timeout, node_modules, timeouts, code); automatic infra gate retry & 1 code-fix pass | WO-1087 |
 | Retry context injection | ✅ | Prior rejection reasons + CI failure analysis injected into next attempt's prompt via `format_prior_context()`; agent gets targeted fix instructions instead of starting from scratch | fix/factory-resilience |
 | Validation `reject_reason` storage | ✅ | `ValidationDecision` stores explicit `reject_reason` (accepts both `reason` and `notes` fields); filters rejections without actionable feedback from retry context | fix/factory-resilience |
 | Factory status site — live feed timestamps | ✅ | Local browser HH:MM:SS prefix on each live feed line | fix/factory-resilience |
@@ -109,7 +111,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 |------------|--------|-------|----|
 | GitHub Actions CI pipeline (lint, test, static check) | ✅ | Blocks merge on failure | — |
 | AI code review (Claude) | ✅ | Advisory — never blocks merge | — |
-| Secret detection (gitleaks) | ✅ | Blocks on detected secrets | — |
+| Secret detection (Gitleaks) | ✅ | Blocks on detected secrets; required check | WO-1072, WO-1085 |
 | Merge advisor (synthesized recommendation) | ✅ | ✅/⚠️/❌ in PR comments | — |
 | Self-healing CI (auto-update behind-main branches) | ✅ | | — |
 | `.agents/` entry point for Google Antigravity / Gemini | ✅ | Skills + workflows subdirs | — |
@@ -132,11 +134,12 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 ## Open Gaps
 
-1. **Multi-repo orchestration** — single orchestrator instance can only dispatch to one `GITHUB_REPO`; secondary repos contribute WO specs to the board (read-only). Impact: medium.
-2. **Agent authentication** — `/api/claim` is unauthenticated; any caller can claim a WO. Suitable for closed networks only. Impact: low for current use, high for SaaS.
-3. **Persistent agent history** — orchestrator dispatch state resets on container restart; no durable audit log of completed WOs. Impact: medium.
-4. **Oryntra not yet merged to `main`** — the factory thread integration lives on `feat/factory-thread-integration` in `dentroio/Oryntra`. Impact: low (fully functional on branch; needs PR review).
-5. **JS/TS security scanning limited** — eslint-plugin-security falls back to regex if not installed. Regex covers 6 patterns. Impact: low for Python-heavy projects.
+1. **Continuous Deployment (CD)** — `deploy.yml` workflow and self-hosted deploy runners not yet active. (See `docs/CD_IMPLEMENTATION_PLAN.md`).
+2. **Multi-repo orchestration** — single orchestrator instance can only dispatch to one `GITHUB_REPO`; secondary repos contribute WO specs to the board (read-only). Impact: medium.
+3. **Agent authentication** — `/api/claim` is unauthenticated; any caller can claim a WO. Suitable for closed networks only. Impact: low for current use, high for SaaS.
+4. **Persistent agent history** — orchestrator dispatch state resets on container restart; no durable audit log of completed WOs. Impact: medium.
+5. **Oryntra not yet merged to `main`** — the factory thread integration lives on `feat/factory-thread-integration` in `dentroio/Oryntra`. Impact: low (fully functional on branch; needs PR review).
+6. **JS/TS security scanning limited** — eslint-plugin-security falls back to regex if not installed. Regex covers 6 patterns. Impact: low for Python-heavy projects.
 
 ---
 
@@ -144,6 +147,13 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
+| 2026-08-21 | WO detail retry UI wired to PM board & detail view | fix/factory-wo-retry-ui (#274) |
+| 2026-08-20 | Conflict advisor for dispatch order | WO-1086 (#271) |
+| 2026-08-20 | Gate-failure intelligence & auto-fix pass | WO-1087 (#271) |
+| 2026-08-20 | Dispatch stall alert for held queue | fix/factory-stall-alert (#270) |
+| 2026-08-20 | Watchdog PR approval wait detection | feat/watchdog (#267) |
+| 2026-08-16 | Gitleaks required check documentation & CI integration | WO-1085 |
+| 2026-08-16 | Factory security hardening suite (AF-01 to AF-31) | WO-1054–WO-1084 |
 | 2026-08-05 | Dashboard data integrity — one WO source of truth, one "Running" definition, Stalled column, shared agents-in-flight list | fix/dashboard-wo-source-of-truth |
 | 2026-07-14 | Auto-recovery on failure (release_dispatch), retry context injection, reject_reason storage, dispatch management endpoints, status site timestamps | fix/factory-resilience |
 | 2026-07-04 | Agent quality+security+optimization alignment (semgrep threshold, JS scan, performance mandate, backend ask() fixes) | fix/factory-quality-alignment |

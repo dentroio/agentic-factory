@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** docs, scripts
 **Depends on:** WO-1057
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 
 ---
 

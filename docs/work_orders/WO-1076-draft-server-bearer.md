@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** agent-runner, orchestrator, docs
 **Depends on:** WO-1075
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 
 ---
 

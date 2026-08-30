@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** agent-runner, docs
 **Depends on:** WO-1074
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 
 ---
 

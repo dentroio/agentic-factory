@@ -161,6 +161,16 @@
         "all"
       ],
       "content": "WO-519 failed: review chain: - [HIGH] N/A:0: The git diff is empty (\"no diff \u2014 this branch has no committed changes beyond main\"), indicating the work order was not actually completed. WO-519 required fetching the WO-443-infrastructure-workspace-consolidation branch, rebasing onto latest main, resolving conflicts "
+    },
+    {
+      "id": "lesson-017",
+      "added_at": "2026-08-21T02:58:36Z",
+      "source_wo": "WO-506",
+      "category": "failure_pattern",
+      "applies_to": [
+        "all"
+      ],
+      "content": "WO-506 failed: CI tests failed, 0 CRITICAL/HIGH security issues found"
     }
   ],
   "environment": {
@@ -241,6 +251,26 @@
       "wo": "WO-519",
       "completed_at": "2026-08-20",
       "summary": "Resolve conflict: PR #702 \u2014 WO-443: Infrastructure Workspace Consolidation: Overview/Loc"
+    },
+    {
+      "wo": "WO-501",
+      "completed_at": "2026-08-21",
+      "summary": "Posture hierarchy + score_basis honesty"
+    },
+    {
+      "wo": "WO-508",
+      "completed_at": "2026-08-21",
+      "summary": "Tab-aware contextual help routing"
+    },
+    {
+      "wo": "WO-503",
+      "completed_at": "2026-08-21",
+      "summary": "OT validation kill switch + empty state + padding"
+    },
+    {
+      "wo": "WO-498",
+      "completed_at": "2026-08-21",
+      "summary": "DIEP empty-channel visibility (DHCP / SNMP / mDNS / HTTP UA)"
     }
   ]
 }

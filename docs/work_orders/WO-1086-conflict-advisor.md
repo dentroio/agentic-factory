@@ -5,7 +5,7 @@
 **Effort:** M
 **Services:** orchestrator, docs
 **Depends on:** —
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 
 ---
 

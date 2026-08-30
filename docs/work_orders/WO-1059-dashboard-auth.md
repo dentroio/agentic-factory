@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** status-site, docs
 **Depends on:** WO-1058
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 
 ---
 
