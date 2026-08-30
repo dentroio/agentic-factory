@@ -27,6 +27,7 @@ _RUN_KEYS = (
     "stuck",
     "stuck_since",
     "claim_token",
+    "repo",
 )
 
 _UPSERT_SQL = """
@@ -34,12 +35,12 @@ INSERT INTO runs
   (wo, slug, agent, backend, workstation, claimed_at, status,
    step, last_seen, completed_at, pr_url, pr_number,
    attempt_count, first_claimed_at, retried_at, stuck, stuck_since,
-   claim_token)
+   claim_token, repo)
 VALUES
   (:wo, :slug, :agent, :backend, :workstation, :claimed_at, :status,
    :step, :last_seen, :completed_at, :pr_url, :pr_number,
    :attempt_count, :first_claimed_at, :retried_at, :stuck, :stuck_since,
-   :claim_token)
+   :claim_token, :repo)
 ON CONFLICT(wo) DO UPDATE SET
   slug=excluded.slug, agent=excluded.agent, backend=excluded.backend,
   workstation=excluded.workstation, claimed_at=excluded.claimed_at,
@@ -48,7 +49,7 @@ ON CONFLICT(wo) DO UPDATE SET
   pr_url=excluded.pr_url, pr_number=excluded.pr_number,
   attempt_count=excluded.attempt_count, first_claimed_at=excluded.first_claimed_at,
   retried_at=excluded.retried_at, stuck=excluded.stuck, stuck_since=excluded.stuck_since,
-  claim_token=excluded.claim_token
+  claim_token=excluded.claim_token, repo=excluded.repo
 """
 
 _synced: dict[str, tuple] = {}
@@ -97,6 +98,7 @@ def _row(wo_id: str, record: dict) -> dict:
         "stuck": int(bool(record.get("stuck", False))),
         "stuck_since": record.get("stuck_since"),
         "claim_token": record.get("claim_token") or "",
+        "repo": str(record.get("repo") or ""),
     }
 
 
@@ -122,6 +124,10 @@ def sync_runs(path: Path | str, records: dict[str, dict]) -> dict[str, int]:
         if not to_delete and not to_upsert:
             return {"upserted": 0, "deleted": 0}
         with connect(path) as conn:
+            try:
+                conn.execute("ALTER TABLE runs ADD COLUMN repo TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             for wo_id in to_delete:
                 conn.execute("DELETE FROM runs WHERE wo = ?", (wo_id,))
             for wo_id in to_upsert:
@@ -232,6 +238,7 @@ CREATE TABLE IF NOT EXISTS run_history (
     failure_category TEXT DEFAULT '',
     failure_reason TEXT DEFAULT '',
     review_verdicts TEXT DEFAULT '{}',
+    repo TEXT DEFAULT '',
     recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
@@ -240,6 +247,7 @@ _CREATE_HISTORY_INDICES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_run_history_wo ON run_history(wo);",
     "CREATE INDEX IF NOT EXISTS idx_run_history_recorded_at ON run_history(recorded_at);",
     "CREATE INDEX IF NOT EXISTS idx_run_history_final_status ON run_history(final_status);",
+    "CREATE INDEX IF NOT EXISTS idx_run_history_repo ON run_history(repo);",
 ]
 
 
@@ -249,6 +257,10 @@ def init_history_table(path: Path | str) -> None:
         conn.execute(_CREATE_HISTORY_TABLE_SQL)
         for idx_sql in _CREATE_HISTORY_INDICES_SQL:
             conn.execute(idx_sql)
+        try:
+            conn.execute("ALTER TABLE run_history ADD COLUMN repo TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 
 def _compute_duration_seconds(claimed_at: str | None, completed_at: str | None) -> int:
@@ -298,6 +310,7 @@ def record_run_history(path: Path | str, record: dict) -> int:
         "failure_category": str(record.get("failure_category") or ""),
         "failure_reason": str(record.get("failure_reason") or ""),
         "review_verdicts": review_verdicts_str,
+        "repo": str(record.get("repo") or ""),
         "recorded_at": datetime.now(UTC).isoformat(),
     }
 
@@ -305,11 +318,11 @@ def record_run_history(path: Path | str, record: dict) -> int:
     INSERT INTO run_history (
         wo, slug, agent, backend, workstation, claimed_at, completed_at,
         duration_seconds, final_status, step, attempt_count, pr_number,
-        pr_url, failure_category, failure_reason, review_verdicts, recorded_at
+        pr_url, failure_category, failure_reason, review_verdicts, repo, recorded_at
     ) VALUES (
         :wo, :slug, :agent, :backend, :workstation, :claimed_at, :completed_at,
         :duration_seconds, :final_status, :step, :attempt_count, :pr_number,
-        :pr_url, :failure_category, :failure_reason, :review_verdicts, :recorded_at
+        :pr_url, :failure_category, :failure_reason, :review_verdicts, :repo, :recorded_at
     )
     """
     with connect(path) as conn:
@@ -322,6 +335,7 @@ def get_run_history(
     wo: str | None = None,
     status: str | None = None,
     agent: str | None = None,
+    repo: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[dict]:
@@ -339,6 +353,9 @@ def get_run_history(
     if agent:
         clauses.append("agent = ?")
         params.append(agent)
+    if repo:
+        clauses.append("repo = ?")
+        params.append(repo)
 
     where_str = " AND ".join(clauses)
     query_sql = f"""

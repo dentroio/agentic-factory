@@ -84,10 +84,7 @@ SPEC_MIN_BODY_LENGTH = int(os.getenv("SPEC_MIN_BODY_LENGTH", "300"))
 SPEC_REQUIRED_SECTIONS = ["## Background", "## What to Build", "## Acceptance Criteria"]
 SPEC_MIN_AC_ITEMS = int(os.getenv("SPEC_MIN_AC_ITEMS", "3"))
 
-# Optional: comma-separated secondary repos to include in the WO board.
-# Format: "owner/repo" or "owner/repo:docs/work_orders" to override WO path.
-# Secondary repos contribute WO specs to the board only — PLAN.json and the
-# dispatch queue always come from GITHUB_REPO.
+# Configured repositories for multi-repo dispatch
 _SECONDARY_REPOS_RAW = [r.strip() for r in os.getenv("SECONDARY_REPOS", "").split(",") if r.strip()]
 SECONDARY_REPOS: list[tuple[str, str]] = []
 for _entry in _SECONDARY_REPOS_RAW:
@@ -96,6 +93,57 @@ for _entry in _SECONDARY_REPOS_RAW:
         SECONDARY_REPOS.append((_repo.strip(), _path.strip()))
     else:
         SECONDARY_REPOS.append((_entry, WO_PATH))
+
+FACTORY_CONFIG_PATH = Path(os.getenv("FACTORY_CONFIG_PATH", "/config/factory-config.json"))
+
+
+def _get_configured_repos() -> list[dict]:
+    """Return all active configured repositories with their wo_path and plan_path."""
+    repos: list[dict] = []
+    seen: set[str] = set()
+
+    # 1. Primary GITHUB_REPO
+    if GITHUB_REPO:
+        repos.append({
+            "repo": GITHUB_REPO,
+            "label": GITHUB_REPO.split("/")[-1],
+            "wo_path": WO_PATH,
+            "plan_path": PLAN_PATH,
+            "primary": True,
+        })
+        seen.add(GITHUB_REPO)
+
+    # 2. From factory-config.json if present
+    if FACTORY_CONFIG_PATH.exists():
+        try:
+            cfg = json.loads(FACTORY_CONFIG_PATH.read_text())
+            for p in cfg.get("projects", []):
+                r = p.get("repo", "").strip()
+                if r and r not in seen:
+                    repos.append({
+                        "repo": r,
+                        "label": p.get("label", r.split("/")[-1]),
+                        "wo_path": p.get("wo_path", WO_PATH),
+                        "plan_path": p.get("plan_path", PLAN_PATH),
+                        "primary": False,
+                    })
+                    seen.add(r)
+        except Exception as exc:
+            print(f"[orchestrator] config load failed: {exc}")
+
+    # 3. From SECONDARY_REPOS env var fallback
+    for _r, _p in SECONDARY_REPOS:
+        if _r not in seen:
+            repos.append({
+                "repo": _r,
+                "label": _r.split("/")[-1],
+                "wo_path": _p or WO_PATH,
+                "plan_path": PLAN_PATH,
+                "primary": False,
+            })
+            seen.add(_r)
+
+    return repos
 RUNS_PATH = os.getenv("RUNS_PATH", "docs/factory/runs")
 PLAN_PATH = os.getenv("PLAN_PATH", "docs/factory/PLAN.json")
 # When set, WO specs / PLAN.json / branches are read from the local filesystem
@@ -1511,8 +1559,8 @@ async def get_metrics():
 
 
 @app.get("/api/next")
-async def get_next(domain: str = ""):
-    """Return the highest-priority unclaimed WO matching the optional domain filter."""
+async def get_next(domain: str = "", repo: str = ""):
+    """Return the highest-priority unclaimed WO matching the optional domain and repo filter."""
     global _pm_dispatch
     if _factory_paused:
         return {"wo": None, "reason": "factory paused — drain mode active"}
@@ -1533,12 +1581,16 @@ async def get_next(domain: str = ""):
         if existing.get("status") in active_statuses - {"complete"}:
             return {"wo": None, "reason": f"{wo_id} already active"}
         spec = _specs_cache.get(int(wo_id.replace("WO-", "")), {}) if _specs_cache else {}
+        target_repo = spec.get("repo", GITHUB_REPO)
+        if repo and target_repo != repo:
+            return {"wo": None, "reason": f"{wo_id} belongs to {target_repo}, not {repo}"}
         return {
             "wo": wo_id,
             "title": spec.get("title", dispatch.get("title", wo_id)),
             "priority": spec.get("priority", "P2"),
             "effort": spec.get("effort", "M"),
-            "repo": spec.get("repo", GITHUB_REPO),
+            "repo": target_repo,
+            "wo_path": spec.get("wo_path", WO_PATH),
             "_dispatch_backend": dispatch.get("backend"),
         }
 
@@ -1547,13 +1599,7 @@ async def get_next(domain: str = ""):
 
     # Audit F-02: this used to count every non-complete status — including
     # awaiting_human/awaiting_commit, which are WOs sitting idle waiting on a
-    # human to review a PR, consuming zero CI/container resources. Three WOs
-    # all parked in awaiting_human at once (which genuinely happened tonight —
-    # WO-420/433/444 simultaneously) fully occupied the cap and blocked every
-    # new dispatch, even though nothing was actually contending for anything.
-    # The cap exists to protect the shared CI lock and Docker containers, so
-    # it should only count WOs that are actually touching those — claimed
-    # (about to) or in_progress (currently).
+    # human to review a PR, consuming zero CI/container resources.
     active_count = sum(
         1 for c in _dispatch_state.values()
         if c.get("status") in ("claimed", "in_progress")
@@ -1564,22 +1610,19 @@ async def get_next(domain: str = ""):
     domain_tokens = [t.lower() for t in domain.split(",") if t.strip()] if domain else []
 
     # Files currently being touched by whatever's actively claimed right now —
-    # used below to hold off dispatching a WO that overlaps with in-flight
-    # work even when the two WOs declare no formal depends_on relationship to
-    # each other. depends_on only catches conflicts the WO author thought to
-    # write down; two WOs can genuinely collide on the same file (e.g. both
-    # editing NetworkSegments.tsx) without either ever declaring a dependency.
+    # scoped by repository to avoid false collisions between different projects.
     files_by_wo = {w.get("wo", ""): set(w.get("files_likely_changed") or []) for w in queue}
-    files_in_flight: set[str] = set()
-    services_in_flight: set[str] = set()
+    files_in_flight_by_repo: dict[str, set[str]] = {}
+    services_in_flight_by_repo: dict[str, set[str]] = {}
     for active_id, active_entry in _dispatch_state.items():
+        act_repo = active_entry.get("repo") or GITHUB_REPO
         if active_entry.get("status") in active_statuses - {"complete"}:
-            files_in_flight |= files_by_wo.get(active_id, set())
+            files_in_flight_by_repo.setdefault(act_repo, set()).update(files_by_wo.get(active_id, set()))
         if active_entry.get("status") in ("claimed", "in_progress"):
             n = occupancy.wo_num_from_id(active_id)
             if n is not None:
-                services_in_flight |= conflict_advisor.service_set_from_spec(
-                    (_specs_cache or {}).get(n) or {}
+                services_in_flight_by_repo.setdefault(act_repo, set()).update(
+                    conflict_advisor.service_set_from_spec((_specs_cache or {}).get(n) or {})
                 )
 
     for wo in queue:
@@ -1588,6 +1631,9 @@ async def get_next(domain: str = ""):
             continue
         if _is_done(wo.get("status", "")):
             continue
+        cand_repo = wo.get("repo") or GITHUB_REPO
+        if repo and cand_repo != repo:
+            continue
         claim = _dispatch_state.get(wo_id, {})
         if _claim_blocks_next(wo_id, claim, _specs_cache or {}):
             continue
@@ -1595,37 +1641,24 @@ async def get_next(domain: str = ""):
         if occupied:
             continue
         # A WO that already exceeded MAX_RETRY_ATTEMPTS will always 429 on
-        # claim (see /api/claim below) — without this check it stays the
-        # top recommendation forever, and since /api/next has no way to say
-        # "give me the next one instead," every runner poll gets the same
-        # unclaimable WO back and nothing lower in the queue ever gets a
-        # chance. Skip it here the same way held/active WOs are skipped.
+        # claim (see /api/claim below)
         if claim.get("attempt_count", 0) >= MAX_RETRY_ATTEMPTS:
             continue
         # Dependency enforcement — skip WOs whose depends_on aren't complete yet.
-        # depends_on holds bare WO numbers (ints); _dispatch_state is keyed by
-        # "WO-{n}" strings — without the f-string below every lookup misses and
-        # every WO with a declared dependency is held forever, complete or not.
-        # Spec-done (or a trusted complete stub) counts; an unknown-agent
-        # complete stub for the *dependency* must not unblock, and a missing
-        # dispatch row must not block a spec that is already marked done.
         deps = _effective_depends(wo)
         unmet = [d for d in deps if not _dependency_satisfied(d, _specs_cache or {}, _dispatch_state)]
         if unmet:
             continue
-        # File-overlap guard — skip WOs whose declared scope collides with a
-        # WO actively being worked right now, dependency or not. Comes back
-        # into consideration next poll once the in-flight WO stops being active.
-        overlap = files_by_wo.get(wo_id, set()) & files_in_flight
+        # File-overlap guard — scoped to the candidate WO's target repository
+        overlap = files_by_wo.get(wo_id, set()) & files_in_flight_by_repo.get(cand_repo, set())
         if overlap:
             continue
-        # Same-service mutex — AGENT_PROCESS: one agent per service. Docs/none
-        # are ignored by conflict_advisor.parse_service_tokens.
+        # Same-service mutex — scoped to the candidate WO's target repository
         n = occupancy.wo_num_from_id(wo_id)
         cand_svcs = conflict_advisor.service_set_from_spec(
             (_specs_cache or {}).get(n or -1) or {}
         ) if n is not None else set()
-        if cand_svcs & services_in_flight:
+        if cand_svcs & services_in_flight_by_repo.get(cand_repo, set()):
             continue
         # Domain filter — skip WOs not in this runner's domain
         if domain_tokens:
@@ -1633,13 +1666,16 @@ async def get_next(domain: str = ""):
             wo_priority = wo.get("priority", "").upper()
             docs_domain = any(t in ("docs", "p3") for t in domain_tokens)
             if docs_domain:
-                # docs domain: match WOs with services=none/docs or priority=P3
                 if not ("none" in wo_services or "docs" in wo_services or wo_priority == "P3"):
                     continue
             else:
                 if not any(t in wo_services for t in domain_tokens):
                     continue
-        return {**wo, "repo": GITHUB_REPO}
+        return {
+            **wo,
+            "repo": cand_repo,
+            "wo_path": wo.get("wo_path", WO_PATH),
+        }
 
     return {"wo": None, "reason": "queue empty or all candidates claimed/blocked"}
 
@@ -1973,6 +2009,7 @@ async def claim_wo(req: ClaimRequest):
         del _reserved[GITHUB_REPO][wo_num]
         _save_reserved()
 
+    target_repo = wo_spec.get("repo") or GITHUB_REPO
     claim_token = dispatch_control.issue_claim_token()
     _dispatch_state[wo_id] = {
         "wo": wo_id,
@@ -1987,6 +2024,7 @@ async def claim_wo(req: ClaimRequest):
         "attempt_count": attempt_count,
         "first_claimed_at": prev.get("first_claimed_at", _utcnow()),
         "claim_token": claim_token,
+        "repo": target_repo,
     }
     dispatch_control.record_attempt(_attempt_counts, wo_id, attempt_count)
     dispatch_control.save_attempt_counts(ATTEMPTS_PATH, _attempt_counts)
@@ -1996,7 +2034,13 @@ async def claim_wo(req: ClaimRequest):
         f"{wo_id} claimed by **{req.agent}** on `{req.workstation or 'unknown'}`"
     ))
     print(f"[orchestrator] {wo_id} claimed by {req.agent} on {req.workstation}")
-    return {"ok": True, "wo": wo_id, "agent": req.agent, "claim_token": claim_token}
+    return {"ok": True, "wo": wo_id, "agent": req.agent, "claim_token": claim_token, "repo": target_repo}
+
+
+@app.get("/api/factory/projects")
+async def api_get_factory_projects():
+    """Return list of all configured projects for multi-repo dispatch."""
+    return {"ok": True, "projects": _get_configured_repos()}
 
 
 @app.post("/api/checkin")
@@ -2469,17 +2513,30 @@ async def auto_mark_done_wo(wo_id: str, pr_number: int | None = None,
     results: list[str] = []
     errors: list[str] = []
 
+    target_repo = (_dispatch_state.get(wo_id) or {}).get("repo")
+    if not target_repo and _specs_cache:
+        n_val = int(wo_num) if wo_num.isdigit() else None
+        if n_val is not None:
+            target_repo = (_specs_cache.get(n_val) or {}).get("repo")
+    target_repo = target_repo or GITHUB_REPO
+
+    target_wo_path = WO_PATH
+    for p in _get_configured_repos():
+        if p.get("repo") == target_repo:
+            target_wo_path = p.get("wo_path") or WO_PATH
+            break
+
     async with httpx.AsyncClient(timeout=20) as client:
         # ── 1. Update spec file ──────────────────────────────────────────────
         try:
-            files = await _cached_get(client, f"/repos/{GITHUB_REPO}/contents/{WO_PATH}",
+            files = await _cached_get(client, f"/repos/{target_repo}/contents/{target_wo_path}",
                                        {}, ttl=60)
             spec_file = next(
                 (f for f in files if re.match(rf"WO-{wo_num}-", f["name"])),
                 None,
             )
             if spec_file:
-                file_data = await _get(client, f"/repos/{GITHUB_REPO}/contents/{spec_file['path']}")
+                file_data = await _get(client, f"/repos/{target_repo}/contents/{spec_file['path']}")
                 old_content = base64.b64decode(file_data["content"]).decode("utf-8")
                 new_content = re.sub(
                     r"^\*\*Status:\*\*.*$",
@@ -2495,7 +2552,7 @@ async def auto_mark_done_wo(wo_id: str, pr_number: int | None = None,
                         "branch": "main",
                     }
                     resp = await client.put(
-                        f"https://api.github.com/repos/{GITHUB_REPO}/contents/{spec_file['path']}",
+                        f"https://api.github.com/repos/{target_repo}/contents/{spec_file['path']}",
                         headers=_headers(), json=payload,
                     )
                     if resp.status_code in (200, 201):
@@ -2518,7 +2575,7 @@ async def auto_mark_done_wo(wo_id: str, pr_number: int | None = None,
                 "pr_url": pr_url or "",
             }
             try:
-                existing = await _get(client, f"/repos/{GITHUB_REPO}/contents/{claim_path}")
+                existing = await _get(client, f"/repos/{target_repo}/contents/{claim_path}")
                 old_claim = json.loads(base64.b64decode(existing["content"]).decode())
                 old_claim.update(claim_content)
                 claim_content = old_claim
@@ -2535,7 +2592,7 @@ async def auto_mark_done_wo(wo_id: str, pr_number: int | None = None,
             if claim_sha:
                 payload["sha"] = claim_sha
             resp = await client.put(
-                f"https://api.github.com/repos/{GITHUB_REPO}/contents/{claim_path}",
+                f"https://api.github.com/repos/{target_repo}/contents/{claim_path}",
                 headers=_headers(), json=payload,
             )
             if resp.status_code in (200, 201):
@@ -4130,19 +4187,27 @@ async def poll() -> None:
         _save_dispatch()
         print(f"[orchestrator] poll: auto-completed {reconciled} WO(s) from merged PRs")
 
-    # Merge secondary specs (secondary repos contribute board visibility only)
-    # Never overwrite primary-repo specs — WO numbers can collide across repos
-    specs: dict[int, dict] = dict(primary_specs)
-    for sec_specs in results[5:]:
-        for num, spec in sec_specs.items():
-            if num not in specs:
-                specs[num] = spec
+    # Combine specs, active branches, and open PRs across all configured projects
+    specs: dict[int, dict] = {}
+    active_branch_wos: set[int] = set()
+    pr_wos: set[int] = set()
+
+    for idx, p in enumerate(configured_projects):
+        p_repo = p["repo"]
+        p_path = p.get("wo_path") or WO_PATH
+        for num, spec in specs_results[idx].items():
+            if num not in specs or p.get("primary"):
+                s_copy = dict(spec)
+                s_copy["repo"] = p_repo
+                s_copy["wo_path"] = p_path
+                specs[num] = s_copy
+        active_branch_wos.update(branch_results[idx])
+        pr_wos.update(pr_results[idx])
 
     global _specs_cache
     _specs_cache = dict(specs)  # snapshot for PM chat context injection
 
-    # Sets for board summary use all specs; dispatch queue uses primary-repo specs only
-    # Also treat dispatch-complete WOs as done so lingering branches don't re-surface them.
+    # Sets for board summary use all specs
     dispatch_done = {
         int(k[3:]) for k, v in _dispatch_state.items()
         if k.startswith("WO-") and k[3:].isdigit() and v.get("status") == "complete"
@@ -4151,19 +4216,10 @@ async def poll() -> None:
     done_wos = {num for num, s in specs.items() if _is_done(s["status"])} | dispatch_done
     in_progress_wos = active_branch_wos - pr_wos - done_wos
     in_review_wos = pr_wos - done_wos
-    # Audit F-01: open_wos used to only ask the spec file's raw status text, not
-    # dispatch_done (which done_wos, just above, already correctly falls back to).
-    # A WO the orchestrator's own dispatch_state knows is complete — via
-    # /api/complete, before the spec file's status text has been rewritten to
-    # match — would still show up here as open. dispatch_state is the more
-    # current signal in that window; give it the same precedence done_wos does.
     open_wos = {num for num, s in specs.items()
                 if not _is_done(s["status"]) and num not in dispatch_done
                 and num not in active_branch_wos and num not in pr_wos}
     blocked_wos = {num for num, s in specs.items() if _is_blocked(s["status"])}
-
-    # Plan engine only operates on primary repo WOs
-    primary_open_wos = {num for num in open_wos if specs[num].get("repo", GITHUB_REPO) == GITHUB_REPO}
 
     # Build plan dict from DB (queue / phases / milestones)
     plan_dict = _db_build_plan_dict()
@@ -4173,12 +4229,11 @@ async def poll() -> None:
     plan_queue_sorted = sorted_queue(plan_dict, wo_statuses)
 
     dispatch_queue, holding_queue, cycle_warnings = _resolve_dependencies(
-        {num: s for num, s in specs.items() if num in primary_open_wos}, done_wos,
+        {num: s for num, s in specs.items() if num in open_wos}, done_wos,
         dispatch_state=_dispatch_state,
     )
 
     # Build runtime overlay — spec-file WOs not registered in the DB queue.
-    # Uses prefix-based _is_done() so inline text like "deferred to WO-226" or
     # "conflict advisor v1 done" does NOT cause a WO to be excluded from the overlay.
     global _plan_overlay
     plan_registered = _db_get_queue_wo_ids()
@@ -4191,8 +4246,6 @@ async def poll() -> None:
         # because the spec file's status text hasn't been rewritten yet.
         if _is_done(spec.get("status", "")) or num in dispatch_done or _is_blocked(spec.get("status", "")):
             continue
-        if spec.get("repo", GITHUB_REPO) != GITHUB_REPO:
-            continue  # secondary-repo WOs board-visible only, not dispatchable
         entry = {
             "wo": wo_id,
             "title": spec.get("title", wo_id),
@@ -4202,6 +4255,8 @@ async def poll() -> None:
             "depends_on": spec.get("depends_on", []),
             "files_likely_changed": spec.get("files_likely_changed", []),
             "services": spec.get("services", []),
+            "repo": spec.get("repo", GITHUB_REPO),
+            "wo_path": spec.get("wo_path", WO_PATH),
             "_overlay": True,
         }
         if wo_id in plan_registered:

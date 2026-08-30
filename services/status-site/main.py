@@ -1070,8 +1070,8 @@ async def _fetch_history_from_orchestrator(wo: str | None = None, status: str | 
             if resp.status_code == 200:
                 data = resp.json()
                 return data.get("history", [])
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[status-site] history fetch failed: {exc}")
     return []
 
 
@@ -1082,8 +1082,8 @@ async def _fetch_history_metrics_from_orchestrator() -> dict:
             if resp.status_code == 200:
                 data = resp.json()
                 return data.get("metrics", {})
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[status-site] history metrics fetch failed: {exc}")
     return {
         "total_runs": 0,
         "completed_runs": 0,
@@ -1320,6 +1320,22 @@ async def settings_projects_remove(request: Request):
     cfg["projects"] = [p for p in cfg.get("projects", []) if p["repo"] != repo]
     _save_factory_config(cfg)
     return RedirectResponse(url="/settings/projects?saved=removed", status_code=303)
+
+
+@app.get("/api/factory/projects")
+async def api_factory_projects():
+    """Return all configured projects from config and orchestrator."""
+    cfg = _load_factory_config()
+    projects = list(cfg.get("projects", []))
+    if GITHUB_REPO and not any(p["repo"] == GITHUB_REPO for p in projects):
+        projects.insert(0, {
+            "repo": GITHUB_REPO,
+            "label": GITHUB_REPO.split("/")[-1],
+            "wo_path": "docs/project_management/work_orders",
+            "plan_path": "docs/factory/PLAN.json",
+            "primary": True,
+        })
+    return {"ok": True, "projects": projects}
 
 
 @app.get("/settings/agents", response_class=HTMLResponse)

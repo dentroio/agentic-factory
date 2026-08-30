@@ -76,7 +76,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | PM privileged-action gating | ✅ | Free-text `[PR:merge:]`/`[DISPATCH:]`/`[RESET:]` do not execute; `merge_pr` is P2/P3 only | WO-1054 |
 | Conflict advisor for dispatch order | ✅ | Service and file overlap detection + cycle-free `depends_on` edge generation | WO-1086 |
 | Durable execution history & audit trail | ✅ | Persists completed/failed/released runs, cycle times, failure categories, and metrics in SQLite (`/data/factory.db`) | WO-1088 |
-| Multi-repo orchestration | 🔵 | Currently single-repo per instance | — |
+| Multi-repo autonomous orchestration | ✅ | Ingests projects from `factory-config.json` / `SECONDARY_REPOS`, parallel polling, repo-scoped conflict isolation, targeted dispatch | WO-1089 |
 
 ## Dimension 4: Agent Runner (agent-runner, native launchd service — not Docker)
 
@@ -136,11 +136,9 @@ A living registry of what the system can do, at what fidelity, and what's still 
 ## Open Gaps
 
 1. **Continuous Deployment (CD)** — `deploy.yml` workflow and self-hosted deploy runners not yet active. (See `docs/CD_IMPLEMENTATION_PLAN.md`).
-2. **Multi-repo orchestration** — single orchestrator instance can only dispatch to one `GITHUB_REPO`; secondary repos contribute WO specs to the board (read-only). Impact: medium.
-3. **Agent authentication** — `/api/claim` is unauthenticated; any caller can claim a WO. Suitable for closed networks only. Impact: low for current use, high for SaaS.
-4. **Persistent agent history** — orchestrator dispatch state resets on container restart; no durable audit log of completed WOs. Impact: medium.
-5. **Oryntra not yet merged to `main`** — the factory thread integration lives on `feat/factory-thread-integration` in `dentroio/Oryntra`. Impact: low (fully functional on branch; needs PR review).
-6. **JS/TS security scanning limited** — eslint-plugin-security falls back to regex if not installed. Regex covers 6 patterns. Impact: low for Python-heavy projects.
+2. **Agent runner authentication** — `/api/claim` is unauthenticated; any caller can claim a WO. Suitable for closed networks only. Impact: low for current use, high for SaaS.
+3. **Oryntra deep integration & PR merge** — `WO-1048` (artifact export) & `WO-1049` (validation queue) in backlog; `feat/factory-thread-integration` branch in `dentroio/Oryntra` ready for merge.
+4. **JS/TS security scanning limited** — eslint-plugin-security falls back to regex if not installed. Regex covers 6 patterns. Impact: low for Python-heavy projects.
 
 ---
 
