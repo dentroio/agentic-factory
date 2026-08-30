@@ -1,7 +1,7 @@
 ---
 title: "Customization"
 description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, WO templates, documentation enforcement, agent process docs, and agent memory"
-last_verified: 2026-08-29
+last_verified: 2026-08-30
 covers_wos:
   - WO-1014
   - WO-1021
