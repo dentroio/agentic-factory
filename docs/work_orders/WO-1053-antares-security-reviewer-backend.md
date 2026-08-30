@@ -6,7 +6,7 @@
 **Services:** agent-runner, orchestrator, status-site
 **Repos:** `dentroio/agentic-factory`
 **Depends on:** —
-**Status:** 🔵 Open
+**Status:** ✅ Complete
 
 ---
 

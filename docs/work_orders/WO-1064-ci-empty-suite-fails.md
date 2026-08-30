@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** ci, docs
 **Depends on:** WO-1063
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 
 ---
 

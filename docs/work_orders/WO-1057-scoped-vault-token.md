@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** vault, orchestrator, docs
 **Depends on:** WO-1056
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 
 ---
 

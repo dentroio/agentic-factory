@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** docs
 **Depends on:** WO-1084
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 
 ---
 

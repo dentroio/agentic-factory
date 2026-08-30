@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** github-actions, docs
 **Depends on:** WO-1054
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 
 ---
 

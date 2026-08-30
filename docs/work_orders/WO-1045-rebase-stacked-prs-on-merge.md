@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** GitHub Actions
 **Depends on:** —
-**Status:** Open
+**Status:** ✅ Complete
 
 ---
 

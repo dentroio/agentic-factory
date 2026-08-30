@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** orchestrator, status-site
 **Depends on:** —
-**Status:** Open
+**Status:** ✅ Complete
 
 ---
 

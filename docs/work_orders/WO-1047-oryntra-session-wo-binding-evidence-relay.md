@@ -6,7 +6,7 @@
 **Services:** none (work happens in `dentroio/Oryntra`; factory endpoints already exist)
 **Repos:** `dentroio/Oryntra`
 **Depends on:** —
-**Status:** Open
+**Status:** ✅ Complete
 
 ---
 

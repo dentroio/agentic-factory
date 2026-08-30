@@ -5,7 +5,7 @@
 **Effort:** M
 **Services:** agent-runner, status-site, docs
 **Depends on:** WO-1086
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 
 ---
 

@@ -1,6 +1,6 @@
 # Dentro AI Factory — Progress Tracker
 
-_Last updated: 2026-08-18_
+_Last updated: 2026-08-30_
 
 ---
 
@@ -19,9 +19,9 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
-| WO-1087 | Gate-failure intelligence: classify, retry infra, one code-fix pass | P1 | 🟡 In Progress | — |
-| WO-1086 | Conflict advisor for dispatch order | P1 | 🟡 In Progress | — |
-| WO-1085 | Closeout docs: Gitleaks required check | P3 | 🟡 In Progress | — |
+| WO-1087 | Gate-failure intelligence: classify, retry infra, one code-fix pass | P1 | ✅ Complete | 2026-08-20 |
+| WO-1086 | Conflict advisor for dispatch order | P1 | ✅ Complete | 2026-08-20 |
+| WO-1085 | Closeout docs: Gitleaks required check | P3 | ✅ Complete | 2026-08-16 |
 | WO-1084 | Atomic JSON writes for remaining /data state | P1 | ✅ Complete | 2026-08-16 |
 | WO-1083 | Pause must refuse runner start | P0 | ✅ Complete | 2026-08-16 |
 | WO-1082 | Allowlist keys on PUT /api/config | P1 | ✅ Complete | 2026-08-16 |
@@ -74,6 +74,11 @@ Update this file **at the time of merge**, not before.
 
 | Fix | Description | Date |
 |-----|-------------|------|
+| fix/factory-wo-retry-ui | Wire existing retry endpoint into the WO detail page and PM board (#274) | 2026-08-21 |
+| fix/factory-stall-alert | Alert when dispatch queue stalls fully held (#270) | 2026-08-20 |
+| feat/watchdog | Surface GitHub Actions runs waiting on approval (#267) | 2026-08-20 |
+| fix/status-site | Attach orchestrator auth header to log-stream proxy (#266) | 2026-08-20 |
+| fix/ci-run-timeout-headroom | Give `_CI_RUN_TIMEOUT` and `_CI_LOCK_TIMEOUT` headroom beyond original 1800s ceiling (#264) | 2026-08-20 |
 | fix/wo-status-board-truth | Open/Done/Deferred classification: strip leading emoji so superseded/cancelled are terminal; merged-PR completion requires a `wo/NNN-` branch or `WO-NNN:` / mark-done title (filing and program-scope docs PRs no longer stamp Open WOs Done); untrusted `agent=unknown` dispatch stubs cannot hide a still-Open spec | 2026-08-17 |
 | wo/dashboard-wo-source-of-truth | Dashboard data integrity, defects 1/2/4 (WO specs read from the GitHub default branch instead of a feature-branch mount; open PR outranks a merged PR title match; deterministic duplicate-number resolution) and defects 3/7 ("Running" defined once as dispatch `claimed`/`in_progress` and shared by all pages; new Stalled column; shared `agents_in_flight()`) and defects 5/6 (velocity counts distinct work orders instead of pull requests, 47.2/wk → 22.0/wk; merged-PR window fetched via search `merged:>=` and reports its own completeness instead of truncating silently). Total WOs 434 → 439, In Review 0 → 3, Merged This Month 195 → 90. All seven defects in [DASHBOARD_DATA_INTEGRITY_FIXES.md](DASHBOARD_DATA_INTEGRITY_FIXES.md) | 2026-08-05 |
 | fix/factory-resilience | Auto-recovery on build/CI failure (`release_dispatch` → `POST /api/dispatch/{wo}/retry`); retry context injection (`format_prior_context()` injects prior rejection reason + ci_analysis into next attempt); `ValidationDecision.reject_reason` field + storage; factory status timestamps (live feed HH:MM:SS + WO card last-seen relative time); dispatch management endpoints | 2026-07-14 |

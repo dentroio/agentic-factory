@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** orchestrator, docs
 **Depends on:** WO-1064
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete
 
 ---
 
