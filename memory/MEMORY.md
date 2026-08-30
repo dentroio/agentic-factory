@@ -18,6 +18,7 @@
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
+- [orchestrator-multi-repo-scoping](auto_wo1089.md) — Multi-repo dispatch in orchestrator.py — repo config precedence and per-repo isolation of conflict guards
 - [factory-agent-cursor-runs-uncommitted-checkout](auto_wo1086.md) — factory-agent-cursor LaunchAgent executes runner.py directly from a shared local checkout with no Docker isolation — uncommitted local edits are already live in production
 - [orchestrator-silent-stall-detection](auto_fix-orchestrator-alert-when-the-dispatch-queue-sta.md) — Orchestrator dispatch queue can silently stall (all WOs held, nothing active) for hours with no alert — new health/stall detectors must mirror /api/next's exact filter and use one-alert-per-episode in-memory state.
 - [orchestrator-proxy-routes-require-auth-header](auto_wo1037.md) — All status-site proxy calls to the orchestrator must include _orch_headers() or they silently 401
