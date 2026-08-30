@@ -1056,6 +1056,71 @@ async def plan_dashboard(request: Request):
     })
 
 
+# ── History & Audit Trail ──────────────────────────────────────────────────────
+
+async def _fetch_history_from_orchestrator(wo: str | None = None, status: str | None = None, limit: int = 100) -> list[dict]:
+    try:
+        params: dict = {"limit": limit}
+        if wo:
+            params["wo"] = wo
+        if status:
+            params["status"] = status
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/history", params=params, headers=_orch_headers())
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("history", [])
+    except Exception:
+        pass
+    return []
+
+
+async def _fetch_history_metrics_from_orchestrator() -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/history/metrics", headers=_orch_headers())
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("metrics", {})
+    except Exception:
+        pass
+    return {
+        "total_runs": 0,
+        "completed_runs": 0,
+        "failed_runs": 0,
+        "released_runs": 0,
+        "pass_rate_pct": 100.0,
+        "avg_duration_seconds": 0,
+        "by_backend": {},
+        "by_failure_category": {},
+    }
+
+
+@app.get("/history", response_class=HTMLResponse)
+async def history_dashboard(request: Request, wo: str | None = None, status: str | None = None):
+    history = await _fetch_history_from_orchestrator(wo=wo, status=status, limit=200)
+    metrics = await _fetch_history_metrics_from_orchestrator()
+    return templates.TemplateResponse(request=request, name="history.html", context={
+        "site_title": SITE_TITLE,
+        "refresh_seconds": REFRESH_SECONDS,
+        "github_repo": GITHUB_REPO,
+        "history": history,
+        "metrics": metrics,
+    })
+
+
+@app.get("/api/history")
+async def api_proxy_history(wo: str | None = None, status: str | None = None, limit: int = 100):
+    history = await _fetch_history_from_orchestrator(wo=wo, status=status, limit=limit)
+    return {"ok": True, "count": len(history), "history": history}
+
+
+@app.get("/api/history/metrics")
+async def api_proxy_history_metrics():
+    metrics = await _fetch_history_metrics_from_orchestrator()
+    return {"ok": True, "metrics": metrics}
+
+
 @app.get("/api/plan")
 async def api_plan():
     """Return the full plan including phases, milestones, sorted queue, and next WO."""

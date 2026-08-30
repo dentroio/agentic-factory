@@ -19,6 +19,7 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
+| WO-1088 | Durable Orchestrator Run History & Audit Trail | P2 | 🟡 In Progress | — |
 | WO-1087 | Gate-failure intelligence: classify, retry infra, one code-fix pass | P1 | ✅ Complete | 2026-08-20 |
 | WO-1086 | Conflict advisor for dispatch order | P1 | ✅ Complete | 2026-08-20 |
 | WO-1085 | Closeout docs: Gitleaks required check | P3 | ✅ Complete | 2026-08-16 |
