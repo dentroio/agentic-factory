@@ -128,8 +128,8 @@ def _get_configured_repos() -> list[dict]:
                         "primary": False,
                     })
                     seen.add(r)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[orchestrator] config load failed: {exc}")
 
     # 3. From SECONDARY_REPOS env var fallback
     for _r, _p in SECONDARY_REPOS:
