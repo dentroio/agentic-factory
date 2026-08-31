@@ -3,9 +3,9 @@ from datetime import UTC, datetime
 
 import httpx
 
-from config import ORCHESTRATOR_URL, AGENT_NAME, HOSTNAME, API_SECRET
+from config import ORCHESTRATOR_URL, AGENT_NAME, HOSTNAME, API_SECRET, AUTH_TOKEN
 
-_AUTH = {"Authorization": f"Bearer {API_SECRET}"} if API_SECRET else {}
+_AUTH = {"Authorization": f"Bearer {AUTH_TOKEN}"} if AUTH_TOKEN else {}
 _claim_tokens: dict[str, str] = {}
 
 

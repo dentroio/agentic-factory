@@ -105,6 +105,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Factory status site — live feed timestamps | ✅ | Local browser HH:MM:SS prefix on each live feed line | fix/factory-resilience |
 | Factory status site — WO last-seen relative time | ✅ | WO cards show `HH:MM UTC · Xs/Xm/Xh ago` from `last_seen` field | fix/factory-resilience |
 | Dispatch management endpoints | ✅ | `DELETE /api/dispatch/{wo}`, `POST /api/dispatch/{wo}/retry`, `DELETE /api/dispatch` for manual and automatic ghost-lock resolution | fix/factory-resilience |
+| Agent runner authentication & zero-trust identity binding | ✅ | Scoped runner tokens (`rn_...`), SHA-256 token hashing, identity verification on claim/checkin/complete | WO-1090 |
 
 ## Dimension 5: CI/CD + Agent Infrastructure
 
@@ -136,9 +137,8 @@ A living registry of what the system can do, at what fidelity, and what's still 
 ## Open Gaps
 
 1. **Continuous Deployment (CD)** — `deploy.yml` workflow and self-hosted deploy runners not yet active. (See `docs/CD_IMPLEMENTATION_PLAN.md`).
-2. **Agent runner authentication** — `/api/claim` is unauthenticated; any caller can claim a WO. Suitable for closed networks only. Impact: low for current use, high for SaaS.
-3. **Oryntra deep integration & PR merge** — `WO-1048` (artifact export) & `WO-1049` (validation queue) in backlog; `feat/factory-thread-integration` branch in `dentroio/Oryntra` ready for merge.
-4. **JS/TS security scanning limited** — eslint-plugin-security falls back to regex if not installed. Regex covers 6 patterns. Impact: low for Python-heavy projects.
+2. **Oryntra deep integration & PR merge** — `WO-1048` (artifact export) & `WO-1049` (validation queue) in backlog; `feat/factory-thread-integration` branch in `dentroio/Oryntra` ready for merge.
+3. **JS/TS security scanning limited** — eslint-plugin-security falls back to regex if not installed. Regex covers 6 patterns. Impact: low for Python-heavy projects.
 
 ---
 
@@ -146,6 +146,9 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
+| 2026-08-30 | Agent runner authentication & zero-trust hardening | WO-1090 |
+| 2026-08-30 | Multi-repo autonomous orchestrator dispatch | WO-1089 |
+| 2026-08-30 | Durable execution history & audit trail | WO-1088 |
 | 2026-08-21 | WO detail retry UI wired to PM board & detail view | fix/factory-wo-retry-ui (#274) |
 | 2026-08-20 | Conflict advisor for dispatch order | WO-1086 (#271) |
 | 2026-08-20 | Gate-failure intelligence & auto-fix pass | WO-1087 (#271) |

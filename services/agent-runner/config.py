@@ -12,6 +12,8 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 WORKTREE_BASE = os.getenv("WORKTREE_BASE", "/workspace")
 HOSTNAME = socket.gethostname()
 API_SECRET = os.getenv("API_SECRET", "")
+RUNNER_TOKEN = os.getenv("RUNNER_TOKEN", "")
+AUTH_TOKEN = RUNNER_TOKEN or API_SECRET
 
 # Maximum seconds to wait for a single agent run before giving up
 AGENT_TIMEOUT = int(os.getenv("AGENT_TIMEOUT", str(60 * 120)))  # 2 hours

@@ -1,10 +1,10 @@
 """Polls the WO thread for new human messages while the agent is working."""
 import httpx
 
-from config import API_SECRET, ORCHESTRATOR_URL
+from config import API_SECRET, ORCHESTRATOR_URL, AUTH_TOKEN
 from orchestrator_client import post_thread_message
 
-_AUTH = {"Authorization": f"Bearer {API_SECRET}"} if API_SECRET else {}
+_AUTH = {"Authorization": f"Bearer {AUTH_TOKEN}"} if AUTH_TOKEN else {}
 
 
 def _is_question(content: str) -> bool:
