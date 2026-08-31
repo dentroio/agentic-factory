@@ -1,7 +1,7 @@
 ---
 title: "Customization"
 description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, WO templates, documentation enforcement, agent process docs, and agent memory"
-last_verified: 2026-08-30
+last_verified: 2026-08-31
 covers_wos:
   - WO-1014
   - WO-1021
@@ -111,13 +111,4 @@ A JSON file at `services/agent-runner/memory/factory_memory.json` holds three th
 `build_prompt()` accepts a `memory` dict and injects a `## Factory Memory` section between the WO spec and the code-pattern reference, containing:
 
 - Lessons whose `applies_to` intersects with the current WO's `services` field (so agents only see what's relevant)
-- Current environment state (connected connectors, healthy services, recent migrations, recent routes) — so agents don't waste time investigating things that were true in the past but aren't now
-- The last 5 completed WOs, so the agent doesn't duplicate work that already shipped
-
-### How it stays current
-
-- After a WO completes successfully, the runner distills 1–3 lessons from the agent's thread and appends them to `factory_memory.json`, along with an entry in `completed_wos`.
-- After a CI failure or reviewer rejection, a `failure_pattern` lesson is recorded the same way.
-- A background refresh runs periodically to update `connected_connectors`, `healthy_services`, and `recent_migrations` from the live environment, so the memory doesn't drift from reality.
-
-This means WO specs and prompts don't need to be manually kept in sync with every environment change — the memory store closes that gap automatically as WOs complete.
+- Current environment state (connected connectors, healthy services, recent migrations, recent routes) — so agents don't waste
