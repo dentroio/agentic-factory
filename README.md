@@ -6,6 +6,8 @@ Extracted from an active development project. Still evolving.
 
 **Full documentation lives in the [wiki](docs/wiki/Home.md).** This README is a quick orientation, not the manual.
 
+**Use the factory without any private product:** [Adopter kit](docs/adopters/README.md) (generic process, contract, sample WO shape) and the GitHub template [dentroio/agentic-factory-template](https://github.com/dentroio/agentic-factory-template) (tiny demo app + sample Work Orders). Point `GITHUB_REPO` at the template or at **your** repo — see [Bring your own repo](docs/adopters/BYO.md). Essays: [docs/blog](docs/blog/README.md).
+
 ---
 
 ## Live Dashboard + Runtime Stack

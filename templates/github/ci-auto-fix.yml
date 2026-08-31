@@ -1,0 +1,404 @@
+# =============================================================================
+# ci-auto-fix.yml — Self-Healing CI
+#
+# When CI fails on a PR, this workflow:
+#   1. Downloads the failure logs
+#   2. Gets the PR diff (what the agent changed)
+#   3. Calls Claude with both — asks for a minimal patch to fix the failure
+#   4. Applies search-and-replace edits to the checked-out branch files
+#   5. Commits and pushes; CI re-runs automatically
+#
+# If Claude can't determine a safe fix (complex logic, too many files, or
+# confidence is low), it falls back to posting a comment with failure details.
+#
+# Guard rails:
+# - Max 2 auto-fix attempts per PR (tracked via labels)
+# - Commit message [ci-autofix] tag checked before any API call (loop guard)
+# - Only runs on agent PRs (agent-pr label or known bot accounts)
+# - Skips build failures (structural issues need human attention)
+# - Edits are search-and-replace (not full file rewrites) — code outside the
+#   edit is preserved regardless of what Claude saw in context
+#
+# Configuration:
+# - Set ANTHROPIC_API_KEY as a repository secret
+# - Add the `agent-pr` label to your repo (gh label create agent-pr ...)
+# =============================================================================
+
+name: CI Auto-Fix
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  auto-fix:
+    name: Self-heal CI failure
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event.workflow_run.conclusion == 'failure'
+
+    steps:
+      - name: Find PR and check auto-fix eligibility
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const headBranch = '${{ github.event.workflow_run.head_branch }}';
+            const headRepo = '${{ github.event.workflow_run.head_repository.full_name }}';
+            const headSha = '${{ github.event.workflow_run.head_sha }}';
+
+            // Loop guard: if HEAD commit was itself an auto-fix, stop immediately
+            const headCommit = await github.rest.repos.getCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: headSha,
+            });
+            const commitMsg = headCommit.data.commit.message || '';
+            if (commitMsg.includes('[ci-autofix]')) {
+              console.log('Triggering commit was itself an auto-fix — stopping to prevent loop');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            // Find open PRs for this branch
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: `${headRepo.split('/')[0]}:${headBranch}`,
+            });
+
+            if (prs.data.length === 0) {
+              console.log('No open PR found — skipping');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            const pr = prs.data[0];
+            const prNumber = pr.number;
+
+            // Only auto-fix agent PRs
+            const AGENT_ACCOUNTS = ['github-actions[bot]', 'claude-code-bot'];
+            const isAgentPR =
+              pr.labels.some(l => l.name === 'agent-pr') ||
+              AGENT_ACCOUNTS.includes(pr.user.login);
+
+            if (!isAgentPR) {
+              console.log(`PR #${prNumber} is not an agent PR — skipping auto-fix`);
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            // Hard limit: 2 auto-fix attempts per PR
+            const alreadyAttempted = pr.labels.some(l => l.name === 'ci-autofix-attempted');
+            const limitReached = pr.labels.some(l => l.name === 'ci-autofix-failed');
+
+            if (limitReached) {
+              console.log(`PR #${prNumber} hit the 2-attempt limit — posting manual-fix comment`);
+              core.setOutput('skip', 'true');
+              core.setOutput('limit_reached', 'true');
+              core.setOutput('pr_number', String(prNumber));
+              return;
+            }
+
+            console.log(`PR #${prNumber} eligible (attempt: ${alreadyAttempted ? '2' : '1'})`);
+            core.setOutput('skip', 'false');
+            core.setOutput('limit_reached', 'false');
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('head_branch', headBranch);
+            core.setOutput('is_second_attempt', alreadyAttempted ? 'true' : 'false');
+
+      # Checkout the PR branch for applying edits, then overlay trusted
+      # scripts from the default branch so a prompt-injected PR cannot
+      # rewrite ai_fix.py (AF-14).
+      - name: Checkout PR branch
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.check.outputs.head_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout trusted scripts from default branch
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: scripts
+          path: trusted-scripts
+          persist-credentials: false
+
+      - name: Get failure context
+        id: context
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runId = '${{ github.event.workflow_run.id }}';
+            const prNumber = parseInt('${{ steps.check.outputs.pr_number }}');
+
+            const jobs = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: parseInt(runId),
+            });
+
+            const failed = jobs.data.jobs.filter(j => j.conclusion === 'failure');
+            let logExcerpt = '';
+            let hasBuildFailure = false;
+
+            for (const job of failed) {
+              if (/build/i.test(job.name)) hasBuildFailure = true;
+              try {
+                const logs = await github.rest.actions.downloadJobLogsForWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  job_id: job.id,
+                });
+                const keyLines = logs.data.split('\n').filter(l =>
+                  /FAILED|Error:|error:|assert|AssertionError|raise|ValueError|TypeError|FAILURES|✗|FAIL/.test(l) &&
+                  !/node_modules|DeprecationWarning|warning/.test(l)
+                ).slice(0, 50);
+                if (keyLines.length > 0) {
+                  logExcerpt += `### ${job.name}\n\`\`\`\n${keyLines.join('\n')}\n\`\`\`\n\n`;
+                }
+              } catch (e) {
+                logExcerpt += `### ${job.name}\n_(logs unavailable)_\n\n`;
+              }
+            }
+
+            if (hasBuildFailure) {
+              console.log('Build step failed — skipping auto-fix');
+              core.setOutput('skip_fix', 'true');
+            } else {
+              core.setOutput('skip_fix', 'false');
+            }
+
+            const diff = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              mediaType: { format: 'diff' },
+            });
+            const diffText = typeof diff.data === 'string' ? diff.data : JSON.stringify(diff.data);
+
+            const filesChanged = (diffText.match(/^diff --git/gm) || []).length;
+            if (filesChanged > 10) {
+              console.log(`Diff touches ${filesChanged} files — too complex`);
+              core.setOutput('skip_fix', 'true');
+            }
+
+            core.setOutput('log_excerpt', logExcerpt.slice(0, 6000));
+            core.setOutput('diff_text', diffText.slice(0, 8000));
+            core.setOutput('run_url', '${{ github.event.workflow_run.html_url }}');
+
+      - name: Set up Python
+        if: steps.check.outputs.skip != 'true' && steps.context.outputs.skip_fix != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        if: steps.check.outputs.skip != 'true' && steps.context.outputs.skip_fix != 'true'
+        run: pip install anthropic --quiet
+
+      - name: Call Claude and apply search-and-replace edits
+        id: claude_fix
+        if: steps.check.outputs.skip != 'true' && steps.context.outputs.skip_fix != 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          LOG_EXCERPT: ${{ steps.context.outputs.log_excerpt }}
+          DIFF_TEXT: ${{ steps.context.outputs.diff_text }}
+        run: |
+          python3 trusted-scripts/scripts/ai_fix.py \
+            --log-excerpt "$LOG_EXCERPT" \
+            --diff "$DIFF_TEXT" \
+            --output-file /tmp/ai_fix_result.json
+
+      - name: Check if edits were applied
+        id: apply
+        if: steps.check.outputs.skip != 'true' && steps.context.outputs.skip_fix != 'true'
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+
+          with open('/tmp/ai_fix_result.json') as f:
+              result = json.load(f)
+
+          applied = result.get('can_fix') and bool(result.get('applied_files'))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f"applied={'true' if applied else 'false'}\n")
+              out.write(f"fix_summary={result.get('summary', 'Applied auto-fix')}\n")
+              out.write(f"claude_reason={result.get('reason', 'Could not determine a safe fix')}\n")
+          PYEOF
+
+      - name: Commit and push auto-fix
+        if: steps.check.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
+        env:
+          FIX_SUMMARY: ${{ steps.apply.outputs.fix_summary }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(ci): auto-fix CI failure [ci-autofix]" \
+            -m "$FIX_SUMMARY" \
+            -m "Auto-generated by ci-auto-fix.yml"
+          git push
+
+      - name: Mark PR and post success comment
+        if: steps.check.outputs.skip != 'true' && steps.apply.outputs.applied == 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.check.outputs.pr_number }}
+          IS_SECOND: ${{ steps.check.outputs.is_second_attempt }}
+          FIX_SUMMARY: ${{ steps.apply.outputs.fix_summary }}
+        with:
+          script: |
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const isSecond = process.env.IS_SECOND === 'true';
+            const fixSummary = process.env.FIX_SUMMARY;
+            const labelName = isSecond ? 'ci-autofix-failed' : 'ci-autofix-attempted';
+
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: [labelName],
+              });
+            } catch (e) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: labelName,
+                  color: isSecond ? 'e11d48' : 'f59e0b',
+                  description: isSecond ? 'Auto-fix failed twice' : 'CI auto-fix applied once',
+                });
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  labels: [labelName],
+                });
+              } catch (_) {}
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: [
+                '## 🤖 CI Auto-Fix Applied',
+                '',
+                'CI failed and I applied an automatic fix. CI is now re-running on the updated branch.',
+                '',
+                `**Fix:** ${fixSummary}`,
+                '',
+                isSecond
+                  ? '⚠️ This was the second and final auto-fix attempt. If CI fails again, manual intervention is required.'
+                  : 'If CI fails again, I will attempt one more auto-fix. After that, the failure details will be posted for manual review.',
+                '',
+                '---',
+                '*Applied by `ci-auto-fix.yml` — powered by Claude*',
+              ].join('\n'),
+            });
+
+      - name: Post comment when attempt limit is reached
+        if: steps.check.outputs.limit_reached == 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.check.outputs.pr_number }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        with:
+          script: |
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const runUrl = process.env.RUN_URL;
+            const headBranch = process.env.HEAD_BRANCH;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: [
+                '## ❌ CI Auto-Fix Limit Reached — Manual Fix Required',
+                '',
+                'I applied 2 automatic fixes on this PR but CI is still failing. Stopping to avoid runaway costs.',
+                '',
+                `1. Check the [failing CI run](${runUrl}) for the specific error`,
+                `2. Fix the code on branch \`${headBranch}\` and push`,
+                '3. CI will re-run automatically',
+                '',
+                '---',
+                '*To re-enable auto-fix, remove the `ci-autofix-failed` label.*',
+              ].join('\n'),
+            });
+
+      - name: Post fallback comment if auto-fix could not be applied
+        if: |
+          steps.check.outputs.skip != 'true' &&
+          (steps.context.outputs.skip_fix == 'true' || steps.apply.outputs.applied == 'false')
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.check.outputs.pr_number }}
+          RUN_URL: ${{ steps.context.outputs.run_url }}
+          LOG_EXCERPT: ${{ steps.context.outputs.log_excerpt }}
+          CLAUDE_REASON: ${{ steps.apply.outputs.claude_reason }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        with:
+          script: |
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const runUrl = process.env.RUN_URL;
+            const logExcerpt = process.env.LOG_EXCERPT;
+            const reason = process.env.CLAUDE_REASON || 'Build failure or complex change';
+            const headBranch = process.env.HEAD_BRANCH;
+
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+            for (const c of comments.data) {
+              if (c.body.startsWith('## ⚠️ CI Failure') || c.body.startsWith('## 🤖 CI Auto-Fix')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: c.id,
+                });
+              }
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: [
+                '## ⚠️ CI Failure — Manual Fix Required',
+                '',
+                'CI failed and I could not apply an automatic fix.',
+                '',
+                `**Why auto-fix was skipped:** ${reason}`,
+                '',
+                '### Failure details',
+                '',
+                logExcerpt || '_See the full run for details._',
+                '',
+                `**Full run:** ${runUrl}`,
+                '',
+                '---',
+                `*Fix the code on branch \`${headBranch}\` and push. Do not open a new PR.*`,
+              ].join('\n'),
+            });
