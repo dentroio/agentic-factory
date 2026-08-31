@@ -42,13 +42,25 @@ if ! printf '%s' "$GITHUB_TOKEN_VAL" | python3 "$REPO_ROOT/scripts/github_token.
     exit 1
 fi
 
-# GitHub Repo
+# GitHub Repo (PRODUCT — not this factory engine)
 echo ""
-echo "── GitHub Repo ─────────────────────────────────────────"
-echo "  Primary repo the factory monitors (format: owner/repo)"
+echo "── GitHub Repo (product) ────────────────────────────────"
+echo "  The product repo the factory monitors (format: owner/repo)."
+echo "  This is NOT the agentic-factory engine — point at a repo created"
+echo "  from https://github.com/dentroio/agentic-factory-template"
+echo "  or your own app that follows docs/adopters/."
+echo "  Leave blank only if you already stored GITHUB_REPO in prefs."
 printf "  Repo: "
 read -r GITHUB_REPO_VAL
 echo ""
+if [ -z "$GITHUB_REPO_VAL" ]; then
+    GITHUB_REPO_VAL="$(grep -E '^GITHUB_REPO=' "$PREFS_FILE" 2>/dev/null | cut -d= -f2- || true)"
+fi
+if [ -z "$GITHUB_REPO_VAL" ]; then
+    echo "ERROR: GITHUB_REPO is required (product owner/repo)."
+    exit 1
+fi
+echo "  Product repo: $GITHUB_REPO_VAL"
 
 # Cursor API Key (optional)
 echo ""

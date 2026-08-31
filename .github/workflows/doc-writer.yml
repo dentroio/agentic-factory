@@ -1,32 +1,23 @@
-name: Doc Writer — Update Clarion + Factory Wikis
+name: Doc Writer — Update Product + Factory Wikis
 
 # Runs once daily and on-demand.
-# Job 1: Updates Clarion wiki pages (dentroio/clarion wiki/docs/)
+# Job 1: Updates product wiki pages when vars.CLARION_REPO is set (optional;
+#         do NOT default to a private product — stranger forks must skip this job)
 # Job 2: Updates factory's own wiki pages (docs/wiki/) — self-maintenance
 #
 # Cost note (2026-07-30): each page costs ~$0.10-0.20 (stuffs up to 5 WO specs,
 # up to 64KB each, into context) — and that cost is paid even when Claude
-# decides no change is needed. Clarion's wiki had 182/189 pages flagged
-# "uncovered" (empty covers_wos) at the time this was tuned — most predate the
-# covers_wos convention and don't actually need rewrites. max-pages defaults to
-# 2/run (was 5) and the schedule is daily (was every 6h) to cap spend while
-# that backlog exists. Raise DOC_WRITER_MAX_PAGES once the backlog is real
-# staleness, not just untagged history.
+# decides no change is needed. max-pages defaults to 2/run and the schedule is
+# daily to cap spend.
 #
 # Secrets required (set on dentroio/agentic-factory):
 #   ANTHROPIC_API_KEY  — Claude API key
-#   GH_PAT             — PAT with contents:write on dentroio/clarion
+#   GH_PAT             — PAT with contents:write on the product wiki repo (if used)
 #
 # Variables (optional):
-#   CLARION_REPO       — default: dentroio/clarion
+#   CLARION_REPO       — product wiki repo (e.g. dentroio/clarion). Unset = skip job 1.
 #   DOC_WRITER_MAX_PAGES — default: 2
 #   ANTHROPIC_MODEL    — default: claude-sonnet-5 (script's own fallback).
-#                         Settable from the dashboard: Settings -> Agents ->
-#                         Automation Model. Note that field writes to GITHUB_REPO
-#                         (the product repo, e.g. Clarion), not this repo — set
-#                         this repo's own variable directly (gh variable set
-#                         ANTHROPIC_MODEL --repo dentroio/agentic-factory) if you
-#                         want doc-writer specifically on a non-default model.
 
 on:
   schedule:
@@ -51,7 +42,8 @@ concurrency:
 
 jobs:
   update-clarion-wiki:
-    name: Update Clarion wiki
+    name: Update product wiki
+    if: ${{ vars.CLARION_REPO != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -61,10 +53,10 @@ jobs:
       - name: Checkout agentic-factory
         uses: actions/checkout@v4
 
-      - name: Checkout Clarion repo
+      - name: Checkout product repo
         uses: actions/checkout@v4
         with:
-          repository: ${{ vars.CLARION_REPO || 'dentroio/clarion' }}
+          repository: ${{ vars.CLARION_REPO }}
           token: ${{ secrets.GH_PAT }}
           path: clarion
 
@@ -77,7 +69,7 @@ jobs:
       - name: Install dependencies
         run: pip install anthropic
 
-      - name: Run doc writer (Clarion)
+      - name: Run doc writer (product wiki)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
@@ -94,36 +86,34 @@ jobs:
 
           python3 scripts/doc_writer.py $ARGS
 
-      - name: Commit and push Clarion wiki updates
+      - name: Commit and push product wiki updates
         if: ${{ inputs.dry_run != 'true' }}
         working-directory: clarion
         run: |
-          git config user.name  "clarion-doc-writer[bot]"
+          git config user.name  "factory-doc-writer[bot]"
           git config user.email "noreply@dentroio.com"
           git add wiki/docs/
 
           if git diff --cached --quiet; then
-            echo "No Clarion wiki changes to commit."
+            echo "No product wiki changes to commit."
             exit 0
           fi
 
           # frontend/public/help/ is a committed mirror of wiki/docs/ (rsync --delete,
           # regenerated on every `npm run build` via a prebuild hook). Re-sync and commit
-          # it in the SAME commit as the wiki update so it never drifts — otherwise any
-          # WO worktree that pulls main and runs a routine frontend build silently
-          # regenerates it locally, showing up as an unrelated uncommitted diff in
-          # whatever unrelated WO that worktree happens to be working on (clarion WO-512).
-          bash frontend/scripts/sync_in_app_help.sh
-          git add frontend/public/help/
+          # it in the SAME commit as the wiki update so it never drifts.
+          if [ -x frontend/scripts/sync_in_app_help.sh ]; then
+            bash frontend/scripts/sync_in_app_help.sh
+            git add frontend/public/help/ || true
+          fi
 
-          CHANGED=$(git diff --cached --name-only | grep "^wiki/docs/" | sed 's|wiki/docs/||' | tr '\n' ', ' | sed 's/,$//')
+          CHANGED=$(git diff --cached --name-only | grep "^wiki/docs/" | sed 's|wiki/docs/||' | tr '\n' ', ' | sed 's/,$//' || true)
           git commit -m "docs(wiki): auto-update ${CHANGED} [doc-writer-agent]
 
           Updated by the AI Factory doc-writer agent.
-          Includes the frontend/public/help/ mirror so it never drifts from wiki/docs/.
           Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-          git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ vars.CLARION_REPO || 'dentroio/clarion' }}.git HEAD:main
+          git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ vars.CLARION_REPO }}.git HEAD:main
 
   update-factory-wiki:
     name: Update factory wiki (self)
