@@ -53,8 +53,8 @@ echo "  Leave blank only if you already stored GITHUB_REPO in prefs."
 printf "  Repo: "
 read -r GITHUB_REPO_VAL
 echo ""
-if [ -z "$GITHUB_REPO_VAL" ]; then
-    GITHUB_REPO_VAL="$(grep -E '^GITHUB_REPO=' "$PREFS_FILE" 2>/dev/null | cut -d= -f2- || true)"
+if [ -z "$GITHUB_REPO_VAL" ] && [ -f "$PREFS_FILE" ]; then
+    GITHUB_REPO_VAL="$(grep -E '^GITHUB_REPO=' "$PREFS_FILE" | head -1 | cut -d= -f2-)"
 fi
 if [ -z "$GITHUB_REPO_VAL" ]; then
     echo "ERROR: GITHUB_REPO is required (product owner/repo)."

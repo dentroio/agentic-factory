@@ -104,10 +104,15 @@ jobs:
           # it in the SAME commit as the wiki update so it never drifts.
           if [ -x frontend/scripts/sync_in_app_help.sh ]; then
             bash frontend/scripts/sync_in_app_help.sh
-            git add frontend/public/help/ || true
+            if [ -d frontend/public/help ]; then
+              git add frontend/public/help/
+            fi
           fi
 
-          CHANGED=$(git diff --cached --name-only | grep "^wiki/docs/" | sed 's|wiki/docs/||' | tr '\n' ', ' | sed 's/,$//' || true)
+          CHANGED=$(git diff --cached --name-only | awk '/^wiki\/docs\// { sub(/^wiki\/docs\//,""); printf "%s%s", (n++?",":""), $0 }')
+          if [ -z "$CHANGED" ]; then
+            CHANGED="pages"
+          fi
           git commit -m "docs(wiki): auto-update ${CHANGED} [doc-writer-agent]
 
           Updated by the AI Factory doc-writer agent.
