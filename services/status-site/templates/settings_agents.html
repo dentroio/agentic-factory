@@ -49,6 +49,10 @@
     class="agents-tab-btn px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors">
     WO Execution &amp; Review
   </button>
+  <button type="button" id="tab-btn-runners" onclick="switchAgentsTab('runners')"
+    class="agents-tab-btn px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors">
+    Runner Tokens &amp; Auth
+  </button>
 </div>
 
 <style>
@@ -1004,6 +1008,108 @@
 
 </div>{# /agents-tab-execution #}
 
+{# ══════════════════════════════════════════════════════════════════════════
+   TAB: Runner Tokens & Auth — Provision & Manage Agent Credentials
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div id="agents-tab-runners" class="agents-tab-panel hidden">
+
+  <div class="glass-panel overflow-hidden mb-6">
+    <div class="px-5 py-3.5 bg-slate-900/40 border-b border-slate-800/80 flex items-center justify-between">
+      <div>
+        <span class="text-xs font-display font-bold text-slate-300 uppercase tracking-widest">Agent Runner Credentials &amp; Zero-Trust Auth</span>
+        <p class="text-xs text-slate-500 mt-0.5">Provision scoped runner tokens (<code class="text-violet-300">rn_...</code>) bound to specific agent identities. Unregistered runners or mismatched claims are rejected.</p>
+      </div>
+      <button type="button" onclick="openRunnerModal()"
+        class="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-mono bg-violet-600/30 text-violet-300 hover:bg-violet-600/50 border border-violet-500/30 transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Issue Runner Token
+      </button>
+    </div>
+    <div id="runner-tokens-list" class="divide-y divide-slate-800/40">
+      <div class="px-5 py-8 text-center text-xs text-slate-600 font-mono">Loading runner tokens…</div>
+    </div>
+  </div>
+
+</div>{# /agents-tab-runners #}
+
+{# ── Add Runner Modal ────────────────────────────────────────────────────────── #}
+<div id="runner-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" style="display:none!important">
+  <div class="bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+      <h2 id="runner-modal-title" class="text-sm font-bold text-slate-100">Issue Agent Runner Token</h2>
+      <button type="button" onclick="closeRunnerModal()" class="text-slate-500 hover:text-slate-200 transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div id="runner-modal-error" class="hidden mx-6 mt-4 flex items-start gap-2 px-3 py-2 rounded-lg border bg-red-500/8 border-red-500/20 text-red-300 text-xs">
+      <svg class="w-4 h-4 flex-shrink-0 mt-0.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <span id="runner-modal-error-text"></span>
+    </div>
+
+    <div id="runner-modal-form" class="px-6 py-5 space-y-4">
+      <div>
+        <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Agent Name <span class="text-rose-400">*</span></label>
+        <input type="text" id="runner-form-agent" placeholder="e.g. claude-01, cursor-02"
+          class="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-violet-500 font-mono">
+        <p class="text-[11px] text-slate-500 mt-1">This token will be strictly bound to this agent identity on claims and check-ins.</p>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Execution Backend</label>
+          <select id="runner-form-backend"
+            class="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500 font-mono">
+            <option value="claude">Claude</option>
+            <option value="cursor">Cursor</option>
+            <option value="codex">Codex</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Workstation / Host</label>
+          <input type="text" id="runner-form-workstation" placeholder="e.g. mbp-m3-local"
+            class="w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-violet-500 font-mono">
+        </div>
+      </div>
+    </div>
+
+    {# Success banner displaying generated token #}
+    <div id="runner-modal-success" class="hidden px-6 py-5 space-y-4">
+      <div class="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs flex items-start gap-2">
+        <svg class="w-4 h-4 flex-shrink-0 text-emerald-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        <div>
+          <span class="font-bold">Token Created Successfully!</span>
+          <p class="text-[11px] text-emerald-400/90 mt-0.5">Copy and store this token in your agent runner environment (<code class="text-white">RUNNER_TOKEN</code>). For security, it will not be displayed again.</p>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Secret Runner Token</label>
+        <div class="flex items-center gap-2">
+          <input type="text" id="runner-token-display" readonly
+            class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-violet-300 font-mono select-all focus:outline-none">
+          <button type="button" onclick="copyRunnerToken()"
+            class="px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-mono text-xs font-bold transition-colors">
+            Copy
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-800 bg-slate-900/60">
+      <button type="button" onclick="closeRunnerModal()"
+        class="px-4 py-2 rounded-lg text-xs font-mono text-slate-400 hover:text-slate-200 transition-colors">
+        Done
+      </button>
+      <button type="button" id="runner-modal-submit-btn" onclick="submitRunnerForm()"
+        class="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-mono text-xs font-bold transition-colors">
+        Generate Token
+      </button>
+    </div>
+  </div>
+</div>
+
 <script>
   function switchAgentsTab(name) {
     document.querySelectorAll('.agents-tab-panel').forEach(el => el.classList.add('hidden'));
@@ -1011,7 +1117,140 @@
     document.getElementById('agents-tab-' + name).classList.remove('hidden');
     document.getElementById('tab-btn-' + name).classList.add('active');
     try { localStorage.setItem('agentsSettingsTab', name); } catch (e) {}
+    if (name === 'runners') {
+      loadRunners();
+    }
   }
+
+  async function loadRunners() {
+    const listEl = document.getElementById('runner-tokens-list');
+    if (!listEl) return;
+    try {
+      const resp = await fetch('/api/runners');
+      const data = await resp.json();
+      const runners = data.runners || [];
+      if (runners.length === 0) {
+        listEl.innerHTML = '<div class="px-5 py-8 text-center text-xs text-slate-500 font-mono">No runner tokens provisioned yet. Click "Issue Runner Token" above to register an agent.</div>';
+        return;
+      }
+      let html = '<div class="overflow-x-auto"><table class="w-full text-left text-xs">';
+      html += '<thead class="bg-slate-950/40 text-slate-400 font-mono border-b border-slate-800/80"><tr>';
+      html += '<th class="px-5 py-3 font-semibold">Agent / ID</th>';
+      html += '<th class="px-4 py-3 font-semibold">Backend</th>';
+      html += '<th class="px-4 py-3 font-semibold">Workstation</th>';
+      html += '<th class="px-4 py-3 font-semibold">Token Prefix</th>';
+      html += '<th class="px-4 py-3 font-semibold">Status</th>';
+      html += '<th class="px-4 py-3 font-semibold">Last Active</th>';
+      html += '<th class="px-5 py-3 font-semibold text-right">Actions</th>';
+      html += '</tr></thead><tbody class="divide-y divide-slate-800/40 font-mono">';
+
+      for (const r of runners) {
+        const isActive = r.status === 'active';
+        const statusBadge = isActive
+          ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">ACTIVE</span>'
+          : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-700/40 text-slate-400 border border-slate-600/30">REVOKED</span>';
+        
+        const lastActive = r.last_seen ? r.last_seen.replace('T', ' ').substring(0, 19) : 'Never';
+
+        html += `<tr class="hover:bg-slate-800/20 transition-colors">
+          <td class="px-5 py-3">
+            <div class="font-bold text-slate-200">${r.agent_name}</div>
+            <div class="text-[10px] text-slate-500">${r.id}</div>
+          </td>
+          <td class="px-4 py-3 text-slate-300">${r.backend}</td>
+          <td class="px-4 py-3 text-slate-400">${r.workstation || '—'}</td>
+          <td class="px-4 py-3 text-violet-300 font-mono">${r.token_prefix}</td>
+          <td class="px-4 py-3">${statusBadge}</td>
+          <td class="px-4 py-3 text-slate-400 text-[11px]">${lastActive}</td>
+          <td class="px-5 py-3 text-right">
+            ${isActive ? `<button type="button" onclick="revokeRunner('${r.id}', '${r.agent_name}')"
+              class="text-[11px] px-2.5 py-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-colors">
+              Revoke
+            </button>` : '<span class="text-slate-600 text-[11px]">—</span>'}
+          </td>
+        </tr>`;
+      }
+      html += '</tbody></table></div>';
+      listEl.innerHTML = html;
+    } catch (e) {
+      listEl.innerHTML = `<div class="px-5 py-8 text-center text-xs text-rose-400 font-mono">Failed to load runner tokens: ${e.message}</div>`;
+    }
+  }
+
+  function openRunnerModal() {
+    document.getElementById('runner-form-agent').value = '';
+    document.getElementById('runner-form-workstation').value = '';
+    document.getElementById('runner-modal-form').classList.remove('hidden');
+    document.getElementById('runner-modal-success').classList.add('hidden');
+    document.getElementById('runner-modal-error').classList.add('hidden');
+    document.getElementById('runner-modal-submit-btn').classList.remove('hidden');
+    const m = document.getElementById('runner-modal');
+    m.style.setProperty('display', 'flex', 'important');
+  }
+
+  function closeRunnerModal() {
+    const m = document.getElementById('runner-modal');
+    m.style.setProperty('display', 'none', 'important');
+    loadRunners();
+  }
+
+  async function submitRunnerForm() {
+    const agent = document.getElementById('runner-form-agent').value.trim();
+    const backend = document.getElementById('runner-form-backend').value;
+    const workstation = document.getElementById('runner-form-workstation').value.trim();
+    const errorEl = document.getElementById('runner-modal-error');
+    const errorText = document.getElementById('runner-modal-error-text');
+
+    if (!agent) {
+      errorEl.classList.remove('hidden');
+      errorText.textContent = 'Agent name is required.';
+      return;
+    }
+    errorEl.classList.add('hidden');
+
+    try {
+      const resp = await fetch('/api/runners/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_name: agent, backend: backend, workstation: workstation })
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        throw new Error(data.detail || data.error || 'Failed to register runner');
+      }
+
+      document.getElementById('runner-modal-form').classList.add('hidden');
+      document.getElementById('runner-modal-submit-btn').classList.add('hidden');
+      document.getElementById('runner-token-display').value = data.runner.token;
+      document.getElementById('runner-modal-success').classList.remove('hidden');
+    } catch (e) {
+      errorEl.classList.remove('hidden');
+      errorText.textContent = e.message;
+    }
+  }
+
+  function copyRunnerToken() {
+    const input = document.getElementById('runner-token-display');
+    input.select();
+    navigator.clipboard.writeText(input.value);
+  }
+
+  async function revokeRunner(runnerId, agentName) {
+    if (!confirm(`Are you sure you want to revoke the runner token for "${agentName}"? This runner will immediately be blocked from claiming or updating work orders.`)) {
+      return;
+    }
+    try {
+      const resp = await fetch(`/api/runners/${runnerId}/revoke`, { method: 'POST' });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        alert(data.detail || data.error || 'Failed to revoke token');
+      }
+      loadRunners();
+    } catch (e) {
+      alert(`Error: ${e.message}`);
+    }
+  }
+
   (function() {
     let initial = 'llm';
     try { initial = localStorage.getItem('agentsSettingsTab') || 'llm'; } catch (e) {}

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import secrets as _secrets_mod
@@ -227,11 +228,13 @@ PM_MEMORY_PATH = DATA_DIR / "pm_memory.json"
 OVERRIDES_PATH = DATA_DIR / "wo_overrides.json"
 RESERVED_WOS_PATH = DATA_DIR / "reserved_wos.json"
 ADVISOR_PATH = DATA_DIR / "conflict_advisor.json"
+RUNNERS_PATH = DATA_DIR / "runner_tokens.json"
 RESERVATION_TTL_HOURS = 1
 
 _pm_memory: dict = {}   # persisted PM preferences, decisions, dispatched history
 _overrides: dict[str, dict] = {}  # WO-NNN → {"action": "no-auto-complete", ...}
 _reserved: dict[str, dict[int, dict]] = {}   # repo → WO number → {reserved_by, reserved_at, title}
+_runners: list[dict] = []  # registered agent runner tokens
 
 _factory_paused: bool = False   # when True, get_next() returns null — drains gracefully
 _attempt_counts: dict[str, int] = {}  # WO id → claims; survives DELETE /api/dispatch (AF-21)
@@ -240,6 +243,22 @@ _attempt_counts: dict[str, int] = {}  # WO id → claims; survives DELETE /api/d
 _LOG_BUFFER_MAX = 2000
 _log_buffer: list[str] = []            # circular buffer of log lines
 _log_subscribers: list[asyncio.Queue] = []  # one Queue per active SSE client
+
+
+import runner_auth
+
+
+def _load_runners() -> None:
+    global _runners
+    _runners = runner_auth.load_runners(RUNNERS_PATH)
+
+
+def _save_runners() -> None:
+    runner_auth.save_runners(RUNNERS_PATH, _runners)
+
+
+def _find_runner_by_token(token: str) -> dict | None:
+    return runner_auth.find_runner_by_token(_runners, token)
 
 
 def _load_state() -> None:
@@ -283,6 +302,7 @@ def _load_state() -> None:
     _load_overrides()
     _load_reserved()
     _load_advisor_depends()
+    _load_runners()
 
 
 def _load_overrides() -> None:
@@ -1200,6 +1220,12 @@ class CodexDispatchRequest(BaseModel):
     slug: str = ""
 
 
+class RegisterRunnerRequest(BaseModel):
+    agent_name: str
+    backend: str = "claude"
+    workstation: str = ""
+
+
 class ThreadMessage(BaseModel):
     author: str            # "claude-runner", "human", "system", "codex-reviewer"
     role: str              # "agent" | "human" | "reviewer" | "system"
@@ -1446,19 +1472,40 @@ if not API_SECRET:
 async def _bearer_auth(request: Request, call_next):
     """Require a bearer token on every request, GET included.
 
-    GET used to be exempt unconditionally — that meant /api/dispatch (full
-    internal state), /api/config, /api/secrets (booleans only, but still),
-    and /api/log/stream were all readable by anyone who could reach this
-    port with no credentials at all. Every known consumer (status-site,
-    the native agent-runner daemons via orchestrator_client.py, pr-watchdog,
-    reviewer.py, health_agent.py, review_chain.py, thread_monitor.py,
-    slack_bot.py) has been updated to send this header on every call,
-    reads included — see AF-09 in the 2026-08 engineering assessment.
+    Accepts either master API_SECRET or an active per-runner token (rn_...).
     """
     auth = request.headers.get("Authorization", "")
-    if not _secrets_mod.compare_digest(auth, f"Bearer {API_SECRET}"):
+    if not auth.startswith("Bearer "):
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
-    return await call_next(request)
+
+    token = auth[7:].strip()
+    if not token:
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+
+    # 1. Master API_SECRET
+    if _secrets_mod.compare_digest(token, API_SECRET):
+        request.state.is_master = True
+        request.state.runner = None
+        return await call_next(request)
+
+    # 2. Per-runner token
+    runner = _find_runner_by_token(token)
+    if runner and runner.get("status") == "active":
+        runner["last_seen"] = _utcnow()
+        _save_runners()
+        request.state.is_master = False
+        request.state.runner = runner
+        return await call_next(request)
+
+    return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+
+
+def _enforce_agent_identity(request: Request, agent_name: str) -> None:
+    """If authenticated via a runner token, enforce that agent_name matches the registered identity."""
+    runner = getattr(request.state, "runner", None)
+    ok, err = runner_auth.check_agent_identity(runner, agent_name)
+    if not ok:
+        raise HTTPException(status_code=403, detail=err)
 
 
 # Was allow_origins=["*"] — permitted any website the developer's browser
@@ -1851,9 +1898,10 @@ async def list_reserved_wos(repo: str = GITHUB_REPO):
 
 
 @app.post("/api/claim")
-async def claim_wo(req: ClaimRequest):
+async def claim_wo(req: ClaimRequest, request: Request):
     """Atomically claim a WO. Returns 409 if already claimed by another agent."""
     _refuse_if_paused()
+    _enforce_agent_identity(request, req.agent)
     # Normalize WO ID: uppercase, ensure single "WO-" prefix
     wo_id = req.wo.strip()
     wo_upper = wo_id.upper()
@@ -2043,9 +2091,62 @@ async def api_get_factory_projects():
     return {"ok": True, "projects": _get_configured_repos()}
 
 
+@app.get("/api/runners")
+async def list_runners():
+    """List registered agent runner credentials (tokens masked)."""
+    _load_runners()
+    masked = []
+    for r in _runners:
+        masked.append({
+            "id": r["id"],
+            "agent_name": r["agent_name"],
+            "backend": r.get("backend", "claude"),
+            "workstation": r.get("workstation", ""),
+            "token_prefix": r.get("token_prefix", "rn_..."),
+            "status": r.get("status", "active"),
+            "created_at": r.get("created_at"),
+            "last_seen": r.get("last_seen"),
+            "revoked_at": r.get("revoked_at"),
+        })
+    return {"ok": True, "runners": masked}
+
+
+@app.post("/api/runners/register")
+async def register_runner(req: RegisterRunnerRequest):
+    """Provision a new token for an agent runner. Returns plaintext token once."""
+    agent_name = req.agent_name.strip()
+    if not agent_name:
+        raise HTTPException(status_code=400, detail="agent_name required")
+    _load_runners()
+    try:
+        runner_data = runner_auth.register_runner(
+            RUNNERS_PATH,
+            _runners,
+            agent_name=agent_name,
+            backend=req.backend or "claude",
+            workstation=req.workstation or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    print(f"[orchestrator] registered new runner '{agent_name}' ({runner_data['id']})")
+    return {"ok": True, "runner": runner_data}
+
+
+@app.post("/api/runners/{runner_id}/revoke")
+async def revoke_runner(runner_id: str):
+    """Revoke an agent runner's token immediately."""
+    _load_runners()
+    target = runner_auth.revoke_runner(RUNNERS_PATH, _runners, runner_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Runner not found")
+    print(f"[orchestrator] revoked runner token {runner_id} ('{target.get('agent_name')}')")
+    return {"ok": True, "runner_id": runner_id, "status": "revoked"}
+
+
 @app.post("/api/checkin")
 async def checkin(request: Request, wo: str, agent: str, step: str = ""):
     """Agent heartbeat — update step label while working."""
+    _enforce_agent_identity(request, agent)
     entry = _require_lease(wo, _lease_token(request))
     if agent and entry.get("agent") and agent != entry.get("agent"):
         raise HTTPException(
@@ -2140,6 +2241,7 @@ async def request_validation(request: Request, req: ValidateRequest):
     Rejects with 422 if CI or security gate not met — the agent must fix
     the failures and call /api/validate again with passing results.
     """
+    _enforce_agent_identity(request, req.agent)
     _require_lease(req.wo, _lease_token(request, req.claim_token))
     gate_failures = []
     if not req.ci_passed:
@@ -2455,6 +2557,7 @@ async def release_all_dispatch():
 async def complete_wo(request: Request, req: CompleteRequest):
     """Agent signals WO is merged and done."""
     wo_id = req.wo
+    _enforce_agent_identity(request, req.agent)
     _require_lease(wo_id, _lease_token(request, req.claim_token))
     _dispatch_state[wo_id]["status"] = "complete"
     _dispatch_state[wo_id]["completed_at"] = _utcnow()

@@ -1338,6 +1338,40 @@ async def api_factory_projects():
     return {"ok": True, "projects": projects}
 
 
+@app.get("/api/runners")
+async def proxy_list_runners():
+    """Proxy to orchestrator list runners."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{ORCHESTRATOR_URL}/api/runners", headers=_orch_headers())
+            return JSONResponse(status_code=resp.status_code, content=resp.json())
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc), "runners": []})
+
+
+@app.post("/api/runners/register")
+async def proxy_register_runner(request: Request):
+    """Proxy to orchestrator register runner."""
+    try:
+        body = await request.json()
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/runners/register", json=body, headers=_orch_headers())
+            return JSONResponse(status_code=resp.status_code, content=resp.json())
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
+
+
+@app.post("/api/runners/{runner_id}/revoke")
+async def proxy_revoke_runner(runner_id: str):
+    """Proxy to orchestrator revoke runner."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.post(f"{ORCHESTRATOR_URL}/api/runners/{runner_id}/revoke", headers=_orch_headers())
+            return JSONResponse(status_code=resp.status_code, content=resp.json())
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
+
+
 @app.get("/settings/agents", response_class=HTMLResponse)
 async def settings_agents(request: Request, saved: str = "", error: str = ""):
     cfg = {}
