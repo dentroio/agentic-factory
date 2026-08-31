@@ -1,12 +1,20 @@
 # Agentic Engineering Factory
 
-A template for building software with AI agents — human-in-the-loop where it matters, autonomous where it's safe.
+A **runtime** for building software with AI agents — human-in-the-loop where it matters, autonomous where it's safe.
 
-Extracted from an active development project. Still evolving.
+This repository is the **engine** (dashboard, orchestrator, runner). Your application lives in another GitHub repo. Point `GITHUB_REPO` at it. You do not need any other private product.
 
-**Full documentation lives in the [wiki](docs/wiki/Home.md).** This README is a quick orientation, not the manual.
+| Start here | Link |
+|------------|------|
+| Two-repo model | [Adopting](docs/wiki/Adopting.md) |
+| Setup walkthrough | [Getting Started](docs/wiki/Getting-Started.md) |
+| Product template (Use this template) | [dentroio/agentic-factory-template](https://github.com/dentroio/agentic-factory-template) |
+| Existing app | [Bring your own repo](docs/adopters/BYO.md) |
+| Generic agent process | [docs/adopters/PROCESS.md](docs/adopters/PROCESS.md) |
+| Essays | [docs/blog](docs/blog/README.md) |
+| Full wiki | [docs/wiki/Home.md](docs/wiki/Home.md) |
 
-**Use the factory without any private product:** [Adopter kit](docs/adopters/README.md) (generic process, contract, sample WO shape) and the GitHub template [dentroio/agentic-factory-template](https://github.com/dentroio/agentic-factory-template) (tiny demo app + sample Work Orders). Point `GITHUB_REPO` at the template or at **your** repo — see [Bring your own repo](docs/adopters/BYO.md). Essays: [docs/blog](docs/blog/README.md).
+Do **not** use this engine repo’s GitHub “Use this template” button to start an app. That copies Docker services. Use [agentic-factory-template](https://github.com/dentroio/agentic-factory-template) for a demo product, then replace `demo/` with your code.
 
 ---
 
@@ -25,8 +33,8 @@ The factory ships Docker services that run alongside your project:
 **Start it (macOS — uses Keychain for secrets):**
 
 ```bash
-make agent-setup              # one-time: stores GitHub token, repo, and API keys in macOS Keychain
-make up                       # reads Keychain → starts Docker services
+make agent-setup              # when asked for GitHub repo, enter owner/your-product
+make up
 open http://localhost:8099
 ```
 
@@ -46,32 +54,38 @@ Four subscription CLI backends (`claude`, `cursor`, `codex`, `gemini`) plus one 
 
 | File / Dir | Purpose |
 |------------|---------|
-| `AGENT_PROCESS.md` | Single source of truth for agents: risk tiers, WO flow, branch/PR rules, parallel coordination |
-| `CLAUDE.md` / `AGENTS.md` / `.cursor/rules/agent-process.mdc` | Per-CLI entry points read automatically by each agent |
-| `Makefile.template`, `.env.example` | Copy and fill in for your stack |
+| `docs/adopters/` | Generic process, contract, BYO checklist — for **product** repos |
+| `docs/blog/` | Public essay series on Work Orders and agents |
+| `templates/github/` | Workflow **copies** to paste into a product repo (do not replace this engine’s live Actions) |
+| `AGENT_PROCESS.md` | Process for agents working **on this engine** |
+| `CLAUDE.md` / `AGENTS.md` / `.cursor/rules/agent-process.mdc` | Engine front doors |
+| `Makefile.template`, `.env.example` | Optional copies if you vendor engine-style Make/CI into a product |
 | `services/status-site/` | FastAPI + Jinja2 status dashboard |
 | `services/orchestrator/` | Dispatch REST API — claim/checkin/validate/complete, thread storage, intelligence loop |
 | `services/vault/` | HashiCorp Vault container — encrypted secrets |
 | `services/pr-watchdog/` | PR lifecycle monitor — CI health, stale PRs, merge eligibility |
 | `services/agent-runner/` | Autonomous WO executor — runs **natively via launchd** (`scripts/agent-install.sh`), never in Docker |
-| `.github/workflows/` | AI review, CI templates, verifier, merge advisor, post-merge memory, observability, doc writer |
+| `.github/workflows/` | **This engine’s** CI and specialists — leave them |
 | `scripts/` | `ai_review.py`, `planning_agent.py`, `verifier_agent.py`, `merge_advisor.py`, `memory_agent.py`, `observability_agent.py` |
-| `docs/factory/PLAN.json` | Priority queue + milestones — orchestrator and status site both read this |
-| `docs/project_management/` | WO spec template, progress tracker, capability registry |
+| `docs/factory/PLAN.json` | Engine-side queue artifacts |
 | `docs/wiki/` | Full documentation — start at [Home](docs/wiki/Home.md) |
-| `memory/` | Persistent agent memory across conversations |
+| `memory/` | Persistent agent memory for **factory** development |
 
 ---
 
-## The fastest path: talk to the Project Engineer
+## Fastest path
 
-After creating your repo from this template, open Claude Code in the repo and say:
+**1. Product:** create a repo from [agentic-factory-template](https://github.com/dentroio/agentic-factory-template) (or point at an existing app — [BYO](docs/adopters/BYO.md)).
+
+**2. Engine:** clone this repo, run `make agent-setup`, set `GITHUB_REPO` to `owner/your-product`, then `make up`.
+
+**3. Manual walkthrough:** [Getting Started](docs/wiki/Getting-Started.md).
+
+**Developing this engine** (not a product): open Claude Code *here* and say:
 
 > **"Read ENGINEER.md and help me set up the factory."**
 
-The Project Engineer agent checks what's already configured and walks you through CI, CD, branch protection, AI review context, and the memory system — one step at a time. Most projects are fully set up in 15–20 minutes.
-
-For manual, step-by-step setup instead, see **[Getting Started](docs/wiki/Getting-Started.md)** in the wiki — it covers creating the repo from the template, GitHub ruleset configuration, first-time local setup, installing the agent runner, and writing your first work order.
+That Project Engineer path configures **this** repository (CI, branch protection, review context). Product repos use [PROCESS.md](docs/adopters/PROCESS.md) and [SETUP.md](https://github.com/dentroio/agentic-factory-template/blob/main/SETUP.md) instead.
 
 ---
 

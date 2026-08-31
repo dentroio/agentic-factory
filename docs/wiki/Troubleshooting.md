@@ -8,6 +8,8 @@ doc_owner: factory-team
 
 # Troubleshooting
 
+Engine vs product: [Adopting](Adopting). If Work Orders do not appear, confirm `GITHUB_REPO` is the **product** `owner/name` and that specs exist under `docs/project_management/work_orders/`.
+
 ## Factory won't start
 
 **Symptom:** `make up` fails or services do not come up.

@@ -3,9 +3,11 @@ description: Agent process rules — always applied
 alwaysApply: true
 ---
 
-# Agent Process — Dentro AI Factory
+# Agent Process — Dentro AI Factory (engine)
 
-Read `AGENT_PROCESS.md` before starting any implementation task.
+This checkout is the factory **engine**. Read `AGENT_PROCESS.md` before implementing a Work Order **here**.
+
+Product repos use `PROCESS.md` / `docs/adopters/PROCESS.md` — see `docs/wiki/Adopting.md`.
 
 ## Mandatory rules
 

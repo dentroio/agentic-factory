@@ -1,16 +1,21 @@
 ---
 title: "GitHub Integrations"
 description: "Automated code review, planning, verification, and observability via GitHub Actions workflows"
-last_verified: 2026-07-11
+last_verified: 2026-08-30
 covers_wos: []
 doc_owner: factory-team
 ---
 
 # GitHub Integrations
 
-The factory's GitHub Actions layer provides automated code review, planning, post-merge verification, and observability. These workflows run on GitHub's infrastructure — no local factory stack required.
+Two places run Actions:
 
-All AI-calling workflows require `ANTHROPIC_API_KEY` in your GitHub repo secrets (**Settings → Secrets and variables → Actions → New repository secret**).
+| Place | Role |
+|-------|------|
+| **This engine** (`.github/workflows/` in `agentic-factory`) | CI and specialists for **factory** development. Do not replace these to “support” a product. |
+| **Product repo** (`GITHUB_REPO`) | Your language CI. Optionally paste copies from [templates/github/](../../templates/github/). |
+
+The sections below describe the workflows **as they ship in this engine**. The same ideas, sanitized as copies, are in `templates/github/` for a product. All AI-calling workflows need `ANTHROPIC_API_KEY` on **the repo where that workflow runs**.
 
 ## planning-agent.yml
 

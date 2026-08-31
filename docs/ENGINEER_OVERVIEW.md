@@ -2,9 +2,9 @@
 
 ## What the Factory Is
 
-The Agentic Engineering Factory is a GitHub repository template that provides a complete, opinionated system for running AI agents on a software project. It ships as a template — you create your repository from it, fill in a handful of project-specific placeholders, run `make agent-setup` once, and a production-grade agent infrastructure is operational.
+The Agentic Engineering Factory is a **runtime** (this repository) plus a **product** GitHub repo the runtime watches. Clone and run the engine; set `GITHUB_REPO` to [agentic-factory-template](https://github.com/dentroio/agentic-factory-template) or [your own app](adopters/BYO.md). Do not create a product by using this engine as a GitHub template.
 
-The factory is extracted from an active development project. Everything in it has been used in production, not designed speculatively.
+The engine is extracted from an active development project. Everything in it has been used in production, not designed speculatively.
 
 ### The Philosophy
 
@@ -262,30 +262,27 @@ The **draft server** (`draft_server.py`) starts as a daemon thread inside the ag
 
 A team with an existing project needs:
 
-- A GitHub repository (create from this template)
-- An Anthropic API key from [console.anthropic.com](https://console.anthropic.com) *(for GitHub Actions AI review — the only component that can't use a subscription CLI)*
-- macOS with Docker Desktop installed *(for the runtime stack)*
-- 15–20 minutes to run through setup
+- This engine cloned and running (`make agent-setup`, `make up`)
+- A **product** GitHub repository (from [agentic-factory-template](https://github.com/dentroio/agentic-factory-template) or [BYO](adopters/BYO.md))
+- An Anthropic API key from [console.anthropic.com](https://console.anthropic.com) *(for GitHub Actions AI review if you enable it on the product or engine)*
+- macOS with Docker Desktop *(for the runtime stack)*
+- 15–20 minutes
 
 **Setup steps:**
 
 ```bash
-# 1. Create repo from template
-gh repo create your-org/your-project --template dentroio/agentic-factory --private
+# 1. Product repo (demo) — or skip if you already have an app
+#    GitHub → Use this template on dentroio/agentic-factory-template
 
-# 2. One-time credential setup (macOS Keychain)
-make agent-setup   # stores GitHub token, repo, Anthropic key in macOS Keychain
-                   # auto-generates a private ntfy push-notification topic
-
-# 3. Start the factory
+# 2. Engine
+git clone https://github.com/dentroio/agentic-factory.git
+cd agentic-factory
+make agent-setup   # GitHub token, GITHUB_REPO=owner/your-product, Anthropic key
 make up
 open http://localhost:8099
-
-# 4. Open Settings → Authentication to verify credentials are live
-# 5. Add ANTHROPIC_API_KEY to GitHub repo secrets (for AI review workflows)
 ```
 
-The setup wizard in `ENGINEER.md` walks through CI workflow, branch protection, AI review context, and memory initialization. Run `python3 scripts/factory_status.py` at any time to see what's done and what's missing.
+`ENGINEER.md` is for wiring **this engine**. Product repos use [docs/adopters/PROCESS.md](adopters/PROCESS.md) and the template [SETUP.md](https://github.com/dentroio/agentic-factory-template/blob/main/SETUP.md). Run `python3 scripts/factory_status.py` in the engine clone to see engine setup gaps.
 
 ---
 

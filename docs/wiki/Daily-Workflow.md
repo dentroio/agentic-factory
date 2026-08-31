@@ -13,7 +13,9 @@ doc_owner: factory-team
 
 # Daily Workflow
 
-This is the loop you run every day. The factory is stateful — it remembers what's in the queue, which WOs are in progress, and what the PR watchdog has seen. You do not need to reset or re-initialize anything between sessions.
+This is the loop you run every day **once the engine is up** and `GITHUB_REPO` points at your product. First-time setup: [Getting Started](Getting-Started). Two-repo model: [Adopting](Adopting).
+
+The factory is stateful — it remembers what's in the queue on the **product** GitHub repo, which WOs are in progress, and what the PR watchdog has seen.
 
 ## Starting the factory
 
@@ -22,7 +24,7 @@ make up
 open http://localhost:8099
 ```
 
-That is usually all you need. The orchestrator polls GitHub every 5 minutes. The PR watchdog tracks every open PR in the background. The dashboard auto-refreshes every 60 seconds by default.
+That is usually all you need. The orchestrator polls **the product GitHub repo** (`GITHUB_REPO`) every 5 minutes. The PR watchdog tracks every open PR in the background. The dashboard auto-refreshes every 60 seconds by default.
 
 First time on a new machine:
 

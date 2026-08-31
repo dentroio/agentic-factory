@@ -2,7 +2,9 @@
 
 ## What It Is
 
-The Agentic Engineering Factory is an open-source GitHub template that gives software teams a complete, structured system for building products with AI agents. Instead of using an AI assistant to answer questions or write one-off code snippets, teams using the factory have AI agents running the full engineering cycle: turning a problem description into a work specification, writing the code, reviewing it for quality and security issues, deciding when it is safe to merge, capturing lessons for future sessions, and watching production for anomalies. The factory ships as a GitHub repository template — a team creates their own project from it in minutes, fills in a few project-specific details, and the full system is operational.
+The Agentic Engineering Factory is an open-source **engine** for building products with AI agents. Instead of using an assistant for one-off snippets, teams queue **Work Orders**: a spec, code, review, merge, memory, and (optionally) production signals.
+
+The engine is this GitHub repository. The **product** is a second repo — start from [agentic-factory-template](https://github.com/dentroio/agentic-factory-template) or point `GITHUB_REPO` at an existing app. No other private product is required.
 
 ---
 
@@ -72,10 +74,10 @@ The factory is built for two audiences:
 
 ## How to Adopt It
 
-The factory is available at [github.com/dentroio/agentic-factory](https://github.com/dentroio/agentic-factory) under the MIT license. To start:
+The factory is available at [github.com/dentroio/agentic-factory](https://github.com/dentroio/agentic-factory) (engine) under the MIT license.
 
-1. Click "Use this template" on GitHub to create your project repository.
-2. Open the repository in Claude Code and say: "Read ENGINEER.md and help me set up the factory."
-3. The Project Engineer agent walks through configuration — CI, branch protection, AI review context, memory — in 15–20 minutes.
+1. Create a **product** repo from [agentic-factory-template](https://github.com/dentroio/agentic-factory-template), or use [an existing repo](adopters/BYO.md).
+2. Clone **agentic-factory**, run `make agent-setup`, and set `GITHUB_REPO` to `owner/your-product`.
+3. Follow [Getting Started](wiki/Getting-Started.md). Product agents read [PROCESS.md](adopters/PROCESS.md), not the engine’s Docker runbook.
 
-No infrastructure to provision. No new tools to install. The factory runs entirely on GitHub Actions with one external dependency: an Anthropic API key.
+You need Docker on a Mac (or equivalent) to run the dashboard and orchestrator. GitHub Actions on the **product** are optional paste-ins; an Anthropic API key is required for AI review if you enable those workflows.

@@ -13,7 +13,14 @@ doc_owner: factory-team
 
 # Customization
 
-The factory ships with sensible defaults and a set of project-agnostic AI review checks. This page covers the files you edit to adapt it to your specific stack and conventions.
+The factory **engine** ships with defaults. Adapt **your product** with files in that repo; do not edit this engine’s live workflows to match an app.
+
+- Product process: [docs/adopters/PROCESS.md](../adopters/PROCESS.md)
+- Product WO shape: [docs/adopters/WO_SPEC_FORMAT.md](../adopters/WO_SPEC_FORMAT.md)
+- Paste-in Actions: [templates/github/](../../templates/github/)
+- First-time split: [Adopting](Adopting)
+
+`scripts/review_context.txt` in **this** repo is for reviews that run **here**. If AI review runs on the product, put product invariants in the product (or a copied `review_context.txt` next to that workflow).
 
 ## scripts/review_context.txt
 
@@ -66,7 +73,7 @@ The `observability.yml` workflow polls `METRICS_ENDPOINT` every 15 minutes and c
 - **Files** — every file to be created or modified, so there are no surprises for the agent
 - **Domain Notes** — gotchas specific to the services touched, known conflict risks, recently changed dependencies, patterns to copy from
 
-If you're adapting the factory to a new codebase, start new WOs from this template rather than from a blank page.
+If you're adding WOs to a **product** repo, start from [docs/adopters/WO_SPEC_FORMAT.md](../adopters/WO_SPEC_FORMAT.md) (or the samples in [agentic-factory-template](https://github.com/dentroio/agentic-factory-template)). `docs/work_orders/TEMPLATE.md` in **this** engine is for factory-internal WOs.
 
 ## Documentation enforcement
 
@@ -81,18 +88,14 @@ To use this, add a `## Documentation Required` section to your WO specs listing 
 
 ## Agent process docs
 
-Agents are told to read a process doc before starting any implementation task. That doc is split into two files so agents pay the token cost only for what they need:
+**Product repos:** copy [docs/adopters/PROCESS.md](../adopters/PROCESS.md) to `AGENT_PROCESS.md`. Keep front doors (`CLAUDE.md`, `AGENTS.md`, Cursor rules) pointing at that file. Do not copy this engine’s Docker rebuild table or service names into a product.
 
-- **`AGENT_PROCESS.md`** — the "what to do" cheatsheet. Short (under 200 lines), imperative, no prose. A `## ⚠️ You must know these` section with the must-not-forget patterns (db.commit, migration registration, require_role, correlation_engine double-rebuild, claim file first commit) sits within the first 30 lines, before anything else. It also contains:
-  - Risk tiers table
-  - Branch/PR workflow as an explicitly numbered list (Step 1 through Step 8), so agents can reference steps unambiguously in status updates and logs
-  - A container rebuild table (service → make target → verify command)
-  - A **"Container danger zones"** table pairing dangerous commands with safe replacements and what goes wrong if you use the dangerous one (e.g. `docker compose up -d --force-recreate <svc>` recreates dependencies and can wipe state — use `make build-svc-wt SVC=<svc>` instead)
-  - The "stop and ask user" rule
-  - Emergency ops reference (who to page, where logs are)
-- **`AGENT_PROCESS_DETAIL.md`** — the "why" reference, read only when an agent needs the reasoning behind a rule. Holds the detailed explanations that used to bloat the main file: the worktree system, why `db.commit()` is always required, why `correlation_engine.py` lives in two containers and needs a double rebuild, why `--no-deps` is required, migration registration, role guards.
+**This engine:** agents are told to read root `AGENT_PROCESS.md` before implementing factory WOs. That file is split so agents pay tokens only for what they need:
 
-`CLAUDE.md` tells agents: read `AGENT_PROCESS.md` before starting any implementation task, and consult `AGENT_PROCESS_DETAIL.md` only if you need the reasoning behind a rule. If you're adapting the factory to your own project, follow the same split — put every rule an agent must apply on every single task in the short file, and move justification/background into the detail file.
+- **`AGENT_PROCESS.md`** — the "what to do" cheatsheet for **this engine**. Short, imperative. Must-not-forget: claim file first, never `git add -A`, human checkpoint on P0–P2, `make ci-local` before a PR. Also: risk tiers, numbered branch/PR steps, how to rebuild **factory** Docker services, danger zones for compose recreate.
+- **`AGENT_PROCESS_DETAIL.md`** — the "why" file, if present. Product repos should use [docs/adopters/PROCESS.md](../adopters/PROCESS.md) instead of copying engine make targets.
+
+`CLAUDE.md` in this engine tells agents to read `AGENT_PROCESS.md` before factory implementation work. Product front doors should point at that product’s `PROCESS.md`.
 
 ## Agent memory
 

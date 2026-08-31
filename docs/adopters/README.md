@@ -15,4 +15,4 @@ This folder is the **public, product-agnostic** copy of the Work Order process: 
 
 Paste-able GitHub workflow copies (do **not** replace this repo’s live `.github/workflows/`): [`../../templates/github/`](../../templates/github/).
 
-A clone-and-go demo lives in the separate template repo: [dentroio/agentic-factory-template](https://github.com/dentroio/agentic-factory-template).
+A clone-and-go demo lives in [dentroio/agentic-factory-template](https://github.com/dentroio/agentic-factory-template). Wiki walkthrough: [Adopting](../wiki/Adopting.md), [Getting Started](../wiki/Getting-Started.md).
