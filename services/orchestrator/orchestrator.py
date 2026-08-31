@@ -2112,8 +2112,10 @@ async def list_runners():
 
 
 @app.post("/api/runners/register")
-async def register_runner(req: RegisterRunnerRequest):
+async def register_runner(req: RegisterRunnerRequest, request: Request):
     """Provision a new token for an agent runner. Returns plaintext token once."""
+    if not getattr(request.state, "is_master", False):
+        raise HTTPException(status_code=403, detail="Master authorization required to manage runner tokens")
     agent_name = req.agent_name.strip()
     if not agent_name:
         raise HTTPException(status_code=400, detail="agent_name required")
@@ -2133,8 +2135,10 @@ async def register_runner(req: RegisterRunnerRequest):
 
 
 @app.post("/api/runners/{runner_id}/revoke")
-async def revoke_runner(runner_id: str):
+async def revoke_runner(runner_id: str, request: Request):
     """Revoke an agent runner's token immediately."""
+    if not getattr(request.state, "is_master", False):
+        raise HTTPException(status_code=403, detail="Master authorization required to manage runner tokens")
     _load_runners()
     target = runner_auth.revoke_runner(RUNNERS_PATH, _runners, runner_id)
     if not target:
