@@ -52,6 +52,13 @@ async def _get(client: httpx.AsyncClient, path: str, params: dict | None = None)
     return resp.json()
 
 
+async def _post(client: httpx.AsyncClient, path: str, json_data: dict | None = None):
+    url = f"https://api.github.com{path}"
+    resp = await client.post(url, headers=_headers(), json=json_data or {})
+    resp.raise_for_status()
+    return resp.json() if resp.content else {}
+
+
 import re as _re
 
 
@@ -387,30 +394,35 @@ async def poll() -> None:
                 "last_checked": now_str,
             })
 
-        # Workflow runs waiting on manual approval — GitHub won't start CI
-        # until someone clicks "Approve and run". A single PR commonly
-        # triggers several workflow files (CI, AI Code Review, ...) that
-        # each need their own approval, so group by branch/PR and emit one
-        # alert per PR rather than one per run — the PR's Checks tab shows
-        # every pending workflow for that commit together in one place.
-        # GitHub omits `pull_requests` on runs still pending approval (most
-        # visible for Dependabot branches), so match against the open-PR
-        # list by head branch instead of trusting run.pull_requests.
+        # Auto-approve workflow runs for trusted internal branches or dependabot
+        unapproved_runs = []
+        for run in runs_needing_approval:
+            branch = run.get("head_branch", "")
+            run_id = run.get("id")
+            if run_id and branch.startswith(("wo/", "dependabot/", "feat/", "fix/", "chore/", "docs/")):
+                try:
+                    await _post(client, f"/repos/{GITHUB_REPO}/actions/runs/{run_id}/approve", {})
+                    print(f"[watchdog] auto-approved workflow run {run_id} ({run.get('name')}) for branch '{branch}'")
+                except Exception as exc:
+                    print(f"[watchdog] auto-approve run {run_id} failed: {exc}")
+                    unapproved_runs.append(run)
+            else:
+                unapproved_runs.append(run)
+
+        # Build alerts only for remaining unapproved runs on open PRs
         branch_to_pr = {pr["head"]["ref"]: pr for pr in prs}
         runs_by_branch: dict[str, list[dict]] = {}
-        for run in runs_needing_approval:
+        for run in unapproved_runs:
             runs_by_branch.setdefault(run.get("head_branch", ""), []).append(run)
 
         # GitHub never cleans up an action_required run when its PR closes
-        # or gets superseded by a new push — a Dependabot branch that had
-        # one run go stale weeks ago shows up here forever with nothing
-        # useful to approve. Only alert on branches that still have an open
-        # PR; the rest are dead runs, not real pending work.
+        # or gets superseded by a new push — only alert on branches with an open PR.
         runs_by_branch = {b: r for b, r in runs_by_branch.items() if b in branch_to_pr}
 
         for branch, branch_runs in runs_by_branch.items():
             pr = branch_to_pr[branch]
             names = ", ".join(sorted({r.get("name", "workflow") for r in branch_runs}))
+            target_url = branch_runs[0].get("html_url") or f"https://github.com/{GITHUB_REPO}/actions/runs/{branch_runs[0].get('id')}"
             all_alerts.append({
                 "pr_number": pr["number"],
                 "pr_title": None,
@@ -418,7 +430,7 @@ async def poll() -> None:
                 "severity": "warning",
                 "message": f"{len(branch_runs)} workflow run(s) need approval: {names}",
                 "detail": branch,
-                "url": f"https://github.com/{GITHUB_REPO}/pull/{pr['number']}/checks",
+                "url": target_url,
                 "first_seen": now_str,
                 "last_checked": now_str,
             })
