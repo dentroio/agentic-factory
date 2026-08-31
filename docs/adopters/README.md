@@ -10,7 +10,7 @@ This folder is the **public, product-agnostic** copy of the Work Order process: 
 | [CONTRACT.md](CONTRACT.md) | Branch names, labels, paths the dashboard already understands |
 | [WO_SPEC_FORMAT.md](WO_SPEC_FORMAT.md) | Spec template + synthetic examples |
 | [CLAIM_SCHEMA.md](CLAIM_SCHEMA.md) | `docs/factory/runs/WO-NNN.json` |
-| [BYO.md](BYO.md) | Point `GITHUB_REPO` at an existing repo |
+| [INDEPENDENCE.md](INDEPENDENCE.md) | Remaining engine work so a clone can dispatch without Clarion |
 | [../blog/README.md](../blog/README.md) | Essay series on why this process exists |
 
 Paste-able GitHub workflow copies (do **not** replace this repo’s live `.github/workflows/`): [`../../templates/github/`](../../templates/github/).
