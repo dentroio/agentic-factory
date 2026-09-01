@@ -18,6 +18,7 @@
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
+- [factory-profile-duplicated-across-services](auto_feat-engine-factory-yaml-profile-remove-clarion-ha.md) — factory_profile.py is copy-pasted identically into services/agent-runner and services/orchestrator (no shared package) — must be updated in both places
 - [runner-admin-endpoints-master-only](auto_wo1088_2.md) — Runner registration/revocation endpoints require master-level auth via request.state.is_master
 - [runner-auth-and-identity-binding](auto_wo1090.md) — Per-runner authentication, SHA-256 token hashing, zero-trust identity verification on claim/checkin/complete, and master-only admin endpoints
 - [orchestrator-multi-repo-scoping](auto_wo1089.md) — Multi-repo dispatch in orchestrator.py — repo config precedence and per-repo isolation of conflict guards
