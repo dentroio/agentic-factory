@@ -1,5 +1,7 @@
 # Agentic Engineering Factory — Technical Architecture
 
+**Audience:** people extending **this engine**. Product setup is [wiki/Adopting.md](wiki/Adopting.md) and [wiki/Getting-Started.md](wiki/Getting-Started.md). WO specs live in the repo named by `GITHUB_REPO`, not necessarily this repository.
+
 ## Architecture Overview
 
 The factory has two complementary layers:

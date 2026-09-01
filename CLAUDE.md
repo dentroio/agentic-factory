@@ -1,4 +1,6 @@
-# Claude Code — Dentro AI Factory
+# Claude Code — Dentro AI Factory (engine)
+
+This checkout is the **factory engine**, not a product app. Product Work Orders live in whatever repo `GITHUB_REPO` names. Adopters: [docs/wiki/Adopting.md](docs/wiki/Adopting.md). Product process: [docs/adopters/PROCESS.md](docs/adopters/PROCESS.md).
 
 ## First time here?
 

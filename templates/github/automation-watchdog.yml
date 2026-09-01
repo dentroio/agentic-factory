@@ -1,0 +1,143 @@
+# =============================================================================
+# automation-watchdog.yml — alert when unattended automation silently breaks
+#
+# Problem this fixes: scheduled/event-triggered workflows that run with no
+# human directly watching (doc-writer's cron, the Dependabot->WO bridge,
+# planning-agent's issue-label trigger) can fail every single run forever
+# with zero visible signal — a green checkmark and a red one look identical
+# from the dashboard. Found this the hard way 2026-07-30: doc-writer had
+# failed 30/30 scheduled runs, and planning-agent had *never once* fired,
+# for its entire history, completely undetected.
+#
+# Listens for completion of the workflows named below. On a workflow's Nth
+# consecutive failure, files (or comments on) a single tracking issue per
+# workflow — no duplicate issue spam, one thread of history. Auto-closes
+# that issue the next time the workflow succeeds. Uses only the default
+# GITHUB_TOKEN; no new secrets. Deliberately independent of planning-agent's
+# own trigger mechanism (the thing that broke silently) — workflow_run is a
+# different, unrelated trigger type, so a repeat of that exact class of bug
+# can't also take out the watchdog.
+#
+# To monitor an additional workflow: add its exact `name:` field to the
+# `workflows:` list below.
+# =============================================================================
+
+name: Automation Watchdog
+
+on:
+  workflow_run:
+    workflows:
+      - "Doc Writer — Update Clarion + Factory Wikis"
+      - "Planning Agent — Draft WO Spec"
+      - "Dependabot → WO Bridge"
+      - "API Canary"
+    types: [completed]
+
+permissions:
+  issues: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.name }}
+  cancel-in-progress: true
+
+jobs:
+  on-failure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event.workflow_run.conclusion == 'failure'
+    steps:
+      - name: Track consecutive failures, alert past threshold
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const FAILURE_THRESHOLD = 2; // don't alert on a single flaky run
+            const run = context.payload.workflow_run;
+            const label = 'automation-failure';
+            const wfLabel = `wf-${run.workflow_id}`;
+
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: run.workflow_id,
+              per_page: 10,
+            });
+
+            let consecutive = 0;
+            for (const r of runs.data.workflow_runs) {
+              if (r.status !== 'completed') continue;
+              if (r.conclusion === 'failure') consecutive++;
+              else break;
+            }
+            console.log(`${run.name}: ${consecutive} consecutive failure(s)`);
+            if (consecutive < FAILURE_THRESHOLD) return;
+
+            for (const name of [label, wfLabel]) {
+              try {
+                await github.rest.issues.getLabel({ owner: context.repo.owner, repo: context.repo.repo, name });
+              } catch {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner, repo: context.repo.repo, name,
+                  color: name === label ? 'b60205' : 'ededed',
+                  description: name === label
+                    ? 'A scheduled/automated workflow has failed repeatedly'
+                    : undefined,
+                });
+              }
+            }
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: `${label},${wfLabel}`,
+            });
+
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body: `Failed again — **${consecutive}** in a row now.\n\nLatest run: ${run.html_url}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title: `🔴 ${run.name} has failed ${consecutive} times in a row`,
+                body: [
+                  `**${run.name}** has failed **${consecutive}** consecutive times.`,
+                  ``,
+                  `Latest failing run: ${run.html_url}`,
+                  ``,
+                  `This issue stays open and gets a new comment on each additional failure. It closes automatically the next time this workflow succeeds.`,
+                ].join('\n'),
+                labels: [label, wfLabel],
+              });
+            }
+
+  on-success:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Close the tracking issue if this workflow recovered
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const label = 'automation-failure';
+            const wfLabel = `wf-${run.workflow_id}`;
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: `${label},${wfLabel}`,
+            });
+
+            for (const issue of existing.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `✅ **${run.name}** succeeded again: ${run.html_url}`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number, state: 'closed',
+              });
+            }

@@ -1,8 +1,11 @@
 # Agent Process — Dentro AI Factory
 
+This checkout is the **engine**. Agents implementing WOs **on this repo** (factory services) follow the rest of this file.
+
+Agents implementing WOs **on a product** (`GITHUB_REPO`) follow that repo’s `AGENT_PROCESS.md` or the generic [docs/adopters/PROCESS.md](docs/adopters/PROCESS.md). Do not copy this file’s engine-specific make targets into a product.
+
 > **Version:** 1.0  
-> **Template source:** [dentroio/agentic-factory](https://github.com/dentroio/agentic-factory)  
-> **This file is the single source of truth for all agents working on this repository.**
+> **This file is the single source of truth for agents working on this repository.**
 
 All agents (Claude Code, Cursor, Codex, custom runners) MUST read this document before starting any implementation task.
 

@@ -9,7 +9,9 @@ doc_owner: factory-team
 
 # Doc Writer Agent
 
-The factory maintains its own documentation, and Clarion's, without a human triggering it. `scripts/doc_writer.py`, run by `.github/workflows/doc-writer.yml` once daily, finds stale or WO-uncovered wiki pages, reads the relevant WO specs, and asks Claude to write updated content.
+**Adopters:** you do not need this workflow. It is how **this engine instance** keeps its wiki current and, optionally, a second product wiki. Using the factory with [the template](https://github.com/dentroio/agentic-factory-template) or [BYO](../adopters/BYO.md) does not require `doc-writer.yml`.
+
+The factory can maintain documentation without a human triggering it. `scripts/doc_writer.py`, run by `.github/workflows/doc-writer.yml` once daily, finds stale or WO-uncovered wiki pages, reads relevant WO specs, and asks Claude to write updated content.
 
 **Cost note:** each page costs roughly $0.10–0.20 (it stuffs up to 5 WO specs, up to 64KB each, into context) — paid even when Claude decides the page doesn't need changing. Clarion's wiki had 182 of 189 pages flagged "uncovered" (empty `covers_wos`) when this was tuned 2026-07-30 — most predate the `covers_wos` convention and don't actually need rewrites, they're just untagged. `max-pages` defaults to 2/run and the schedule is daily specifically to cap spend while that backlog exists, rather than burning through it at full throughput. Consider relaxing the "uncovered" trigger (only fire on real `last_verified` staleness) before raising `max-pages` back up.
 
