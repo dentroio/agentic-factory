@@ -1,178 +1,87 @@
 ---
 title: "Daily Workflow"
-description: "Day-to-day loop for starting the factory, dispatching work orders, and reviewing results"
-last_verified: 2026-07-30
-covers_wos:
-  - WO-1002
-  - WO-1003
-  - WO-1008
-  - WO-1036
-  - WO-1038
+description: "Day-to-day loop: start the engine, dispatch Work Orders on your product, review, merge"
+last_verified: 2026-08-31
+covers_wos: []
 doc_owner: factory-team
 ---
 
 # Daily Workflow
 
-This is the loop you run every day **once the engine is up** and `GITHUB_REPO` points at your product. First-time setup: [Getting Started](Getting-Started). Two-repo model: [Adopting](Adopting).
+This is the loop **after** setup. First time: [Getting Started](Getting-Started). Two-repo model: [Adopting](Adopting). Product verify/UI: [Product Profile](Product-Profile).
 
-The factory is stateful — it remembers what's in the queue on the **product** GitHub repo, which WOs are in progress, and what the PR watchdog has seen.
+The engine remembers queue state for the **product** (`GITHUB_REPO`): open WOs, claims, PR watchdog signals. Agents implement in the product clone at `LOCAL_REPO_PATH`.
 
-## Starting the factory
+## Start the day
 
 ```bash
 make up
 open http://localhost:8099
+make agent-status    # launchd runner; or make agent-run for a foreground session
 ```
 
-That is usually all you need. The orchestrator polls **the product GitHub repo** (`GITHUB_REPO`) every 5 minutes. The PR watchdog tracks every open PR in the background. The dashboard auto-refreshes every 60 seconds by default.
+Orchestrator polls product GitHub (~5 min). Dashboard refreshes ~60s. If WOs list but nothing implements, check `LOCAL_REPO_PATH` — [Troubleshooting](Troubleshooting).
 
-First time on a new machine:
+First machine only:
 
 ```bash
-make agent-setup    # stores GitHub token, Anthropic key, ntfy topic in macOS Keychain
+make agent-setup
 make up
+make agent-install
 ```
 
-Then open **Settings → Authentication** and verify the credential badges are green.
+Confirm **Settings → Authentication** badges are green.
 
-## Checking queue health
+## Queue health (Plan + Overview)
 
-Open the **Plan** tab. You will see:
+**Plan** — priority queue, phases, milestones, hold (⏸) badges.  
+**Overview** — active claim, agent step, stale checkins (amber after ~10 min; auto-release after `CLAIM_TIMEOUT_SECONDS`, default 600).
 
-- The priority queue, sorted by position (pinned WOs float to the top)
-- Phase assignments — which WOs are in "now" vs. "backlog"
-- Milestone cards showing how many blocking WOs remain
-- Hold status — a ⏸ badge means the orchestrator is skipping that WO
+Empty queue → wrong `GITHUB_REPO`, missing specs under `docs/project_management/work_orders/`, or PAT cannot read the product.
 
-If the agent-runner is active, the **Overview** tab shows which WO is currently claimed and what step the agent is on. Jobs with no checkin for more than 10 minutes show an amber **stale Nm** badge — the orchestrator will automatically release and re-queue them after `CLAIM_TIMEOUT_SECONDS` (default: 600).
+## Create work
 
-## Starting the agent runner
+Fastest: **PM** tab — describe the change in plain language, confirm the draft, create.  
+Or **Settings → Plan → Create WO**.  
+Or label a product issue `new-wo` if you pasted `planning-agent.yml`.
 
-The agent runner is a host process, not a Docker container. It needs access to your AI CLI (Claude, Cursor, Codex, or Gemini). Start it in a separate terminal:
+Specs: [Work Orders](Work-Orders). Chat: [PM Chat](PM-Chat).
 
-```bash
-make agent-run
-```
+## Dispatch
 
-Or to claim and complete exactly one WO then stop:
+With the runner installed, it claims the next eligible WO automatically. To force one now via PM:
 
-```bash
-make agent-once
-```
+> Start WO-375 with Cursor.
 
-The runner polls the orchestrator for the next available WO, claims it, and starts working. It streams progress to the WO's thread, visible on the WO detail page (`/wo/NNN`).
+### Pre-dispatch approval
 
-## Creating a new work order
+Priorities in `REQUIRE_APPROVAL_FOR` (default `P1`) enter **pending approval** on Overview: **Approve** / **Skip** (24h cooldown) / **Hold**. P2/P3 skip this unless you widen the env var.
 
-The fastest path is to open the PM tab and describe what you want:
+### Cloud Codex (optional)
 
-> "I want to add a dark mode toggle to the settings page."
+Docs-only WOs with `services: none` can run via product `codex-dispatch.yml` + `OPENAI_API_KEY` on that repo — see [Agent Backends](Agent-Backends). Local CLI backends still need `LOCAL_REPO_PATH`.
 
-The PM drafts a structured spec — title, priority, effort, acceptance criteria — and confirms the details with you. Say "create it" and the PM writes the WO and adds it to the queue. You never write the spec yourself.
+## Watch progress
 
-Alternatively, go to **Settings → Plan → Create WO**. Describe the feature in plain language, pick which AI generates the spec, review the generated fields, and click **Save**. The WO lands in the queue immediately.
+Open `/wo/NNN` (thread link from Overview/PM):
 
-See [Work Orders](Work-Orders.md) for everything about WO specs, priority tiers, and the queue lifecycle.
+- Live agent feed and lifecycle messages  
+- Your Q&A with the agent  
+- Optional screenshots from browser tools you connect  
 
-## Dispatching a WO
+Audience views: `/` (floor), `/pm` (programs/velocity), `/ci` (runners and flaky checks).
 
-If the agent runner is running, it picks up the next available WO automatically after completing the current one. You do not need to do anything — unless the WO requires pre-dispatch approval (see below).
+## Human checkpoint
 
-To dispatch a specific WO right now, tell the PM:
-
-> "Start WO-375 with Cursor."
-
-The PM sends a dispatch signal that wakes the runner immediately, bypassing the polling interval.
-
-### Cloud dispatch via Codex (GitHub Actions)
-
-For P3 or docs-only WOs with `services: none`, the orchestrator can dispatch work through GitHub Actions instead of a local agent runner. No Docker worktree or developer machine is required.
-
-```bash
-curl -X POST http://localhost:8100/api/dispatch-codex \
-  -H "Content-Type: application/json" \
-  -d '{"wo":"WO-362","slug":"sync-in-app-help"}'
-```
-
-The orchestrator pre-claims the WO as `codex-gh-actions`, triggers the `codex-dispatch.yml` workflow in the target repo, and then detects the resulting branch and PR automatically through its normal poll loop. No callback is needed. Requires `OPENAI_API_KEY` set as a secret in the target repo.
-
-### Pre-dispatch approval (P1 WOs)
-
-P1 WOs do not dispatch immediately. Instead they enter a **pending approval** state. You will receive a push notification and the **Factory** tab will show an Approvals panel above the Active Jobs list:
-
-```
-┌─ PENDING APPROVAL ──────────────────────────────────────────── 1 ─┐
-│  WO-1036  P1  Pre-Dispatch WO Approval                             │
-│  services: orchestrator, status-site  |  effort: M                 │
-│  [View spec]  [Approve →]  [Skip]  [Hold]                          │
-└────────────────────────────────────────────────────────────────────┘
-```
-
-- **Approve** — the agent claims the WO on the next poll cycle.
-- **Skip** — the WO returns to the queue and will not re-enter pending approval for 24 hours.
-- **Hold** — the WO moves to the held state.
-
-"View spec" expands an inline markdown preview of the WO spec without navigating away. P2 and P3 WOs bypass approval and dispatch as normal. The set of priorities that require approval is configurable via `REQUIRE_APPROVAL_FOR` (default: `P1`).
-
-## Monitoring progress
-
-Navigate to the WO detail page (`/wo/375`) — linked from the Overview tab as "View thread →". You will see:
-
-- A live feed of what the agent is doing (streamed from the agent runner)
-- System messages when the WO transitions states (claimed, validation requested, approved)
-- Any Q&A exchanges between you and the agent
-- Screenshots posted via the Oryntra browser extension, if used
-
-The **Overview** tab shows the current agent step at a glance. The agent posts a checkin every time it moves to a new step.
-
-### Dashboard views
-
-The status site offers three audience-specific views, all accessible from the navigation tabs:
-
-| Route | Audience | What you see |
-|-------|----------|-------------|
-| `/` | Everyone | Health banner, alert panel, enriched WO board, active work, PR queue |
-| `/pm` | Project managers | WOs by program, velocity chart, blocked items, active agents |
-| `/ci` | CI/CD engineers | Runner utilization, queue depth, per-PR CI breakdown, flaky detection |
-
-The health banner at the top of `/` shows system state at a glance (● HEALTHY / ⚠ DEGRADED / ✖ CRITICAL). An alert panel appears below it when the PR watchdog has flagged issues — it disappears automatically when there are no active alerts.
-
-WO cards on the board show age badges (color-ramped green → amber → red past 7 days), the assigned agent name, current step, and a direct PR link when one exists. Jobs in the Active Work panel display how long the agent has been working and the time since the last git push.
-
-### Stale agent detection
-
-The orchestrator sweeps for stale claims on every poll. If a WO has been in `in_progress` or `claimed` state with no checkin for longer than `CLAIM_TIMEOUT_SECONDS` (default: 600 seconds), it is automatically moved to `stale`, a message is posted to the WO thread, and a notification fires. Stale WOs are immediately available for re-claim by the next available agent. The dashboard shows an amber **stale Nm** badge on any job whose last checkin is older than 10 minutes.
-
-## The human checkpoint
-
-Every WO — regardless of priority tier — requires your sign-off before the agent commits and opens a PR. When the agent finishes implementing and the quality gate passes, it posts a message to the WO thread asking you to verify. You get a push notification (if ntfy is configured) at high priority.
-
-Verify what the agent built: run the app, hit the endpoint, check the UI. If it looks right, reply in the thread or click the approve button on the WO detail page.
-
-If something is wrong, describe the issue in the thread. The agent reads thread messages and will iterate.
+Before commit, the agent asks you to verify the **running product** (URL/hints from [`factory.yaml`](Product-Profile)). Approve in the thread when correct; describe fixes when not — the agent iterates.
 
 ## After approval
 
-Once you approve, the agent:
-1. Commits the work
-2. Opens a PR
-3. Sets `--auto-merge` if the WO is P2
-
-GitHub CI runs. The AI code review runs. The merge advisor synthesizes everything and posts a recommendation comment.
-
-- **P2**: merges automatically once all checks pass. The watchdog monitors CI and flags anything stale.
-- **P1/P0**: you review the PR and merge manually when you're satisfied.
-
-After merge, the verifier checks the acceptance criteria against the diff. If criteria aren't met, it opens a follow-up issue. The memory agent extracts lessons and opens a memory PR.
+1. Agent commits and opens a PR on the **product**  
+2. P2/P3: often `--auto` merge after CI + review  
+3. P0/P1: you merge  
+4. Verifier / memory agents may follow on the engine or product workflows you enabled  
 
 ## End of day
 
-There is nothing to shut down if you want the watchdog to keep running overnight. The Docker services are lightweight and idle when there is no active work.
-
-If you want to stop everything:
-
-```bash
-make down
-```
-
-The queue, hold list, and all thread history persist in the Docker volume (`/data/`). Nothing is lost on restart.
+Leave Docker up overnight if you want the watchdog. Or `make down` — queue and threads live in the Docker volume and survive restart.

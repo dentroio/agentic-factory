@@ -1,109 +1,74 @@
 ---
 title: "PM Chat"
-description: "Using the AI project manager in plain language to create WOs, manage the queue, and plan phases"
-last_verified: 2026-07-11
+description: "Plain-language project lead: create WOs, dispatch, merge, phases — against your product"
+last_verified: 2026-08-31
 covers_wos: []
 doc_owner: factory-team
 ---
 
 # PM Chat
 
-The PM is your AI project lead. It sits in the PM tab and has live context about the factory and the **product** repo (`GITHUB_REPO`): the WO queue, open PRs, CI, Dependabot, phases, milestones, and agent memory. You describe what you want in plain language — the PM translates it into action.
+The PM tab is your AI project lead. Each turn includes live context for the **product** (`GITHUB_REPO`): queue, PRs, CI, Dependabot, phases, milestones, and session memory. You speak; it acts.
 
-## What the PM knows
+Needs a working Anthropic key (or another configured automation path) — [Troubleshooting](Troubleshooting) if chat says no backend.
 
-Every PM chat turn begins with a situational brief injected into the system prompt:
+## What it knows
 
-- Open WOs with their priority, effort, and status
-- The top 10 queue entries in dispatch order
-- Active phases and their target dates
-- Milestone target dates and which WOs are blocking them
-- Current PM session memory (preferred backend, recent decisions, dispatched WOs)
+- Open WOs (priority, effort, status) and top-of-queue order  
+- Phases, milestones, blockers  
+- Open PR / CI / Dependabot signals  
+- Session prefs (preferred backend, recent dispatches)  
 
-This means the PM's suggestions about priority and effort are grounded in what's actually in flight, not drafted blind.
+Suggestions are grounded in that brief, not invented cold.
 
-The PM also has access to PR state (open PRs, CI health) and Dependabot PR status.
+## Create Work Orders
 
-## Creating work orders
+> I want rate limiting on the API — 100 req/min/user, 429 + Retry-After.
 
-Tell the PM what you want to build:
+Review the drafted tier, effort, and criteria. Say “create it” or adjust first (“make it P2”). Specs land in the product WO folder and enter the queue.
 
-> "I want to add rate limiting to the API — 100 requests per minute per user, with a 429 response and a Retry-After header."
+Alternative: **Create WO** → **Settings → Plan → Create WO**. Details: [Work Orders](Work-Orders).
 
-The PM will propose a structured WO spec: title, priority tier, effort estimate, acceptance criteria. Review it. If it looks right, say "create it" or "looks good." The PM creates the WO and adds it to the queue. No separate form needed.
+## Dispatch
 
-If you want to adjust anything before creating:
+> Start WO-375 with Cursor.  
+> Dispatch WO-381 now.
 
-> "Make it P2 instead of P1, and drop the Retry-After header from the criteria."
+Wakes the runner instead of waiting for the poll. Default backend follows Settings / session memory unless you name one.
 
-The PM updates the draft and creates the revised spec.
+## Merge and Dependabot
 
-The **Create WO** button in the PM tab is an alternative: it opens the form at **Settings → Plan → Create WO** with the AI draft workflow.
+> Merge PR 308.  
+> Approve and merge all passing Dependabot PRs.  
+> Lodash Dependabot keeps failing — file a WO.
 
-## Dispatching work orders
+PM checks CI before merge and can open fix WOs for broken dependency PRs.
 
-Once a WO is in the queue, tell the PM to start it:
+## Phases and milestones
 
-> "Start WO-375 with Cursor."
-> "Dispatch WO-381 now."
+> Create a Q3 phase targeting September 30.  
+> Add milestone Beta Launch for August 15.
 
-The PM sends a dispatch signal to the orchestrator, which wakes the agent runner immediately. The WO is claimed within seconds instead of waiting for the next poll cycle.
+Changes hit the orchestrator immediately (no git). See [Phases and Milestones](Phases-and-Milestones).
 
-The PM chooses a sensible default backend based on what's available and what you've used recently. Override it explicitly if you want a specific model.
+## Images
 
-## Merging PRs
+Paste or drag screenshots/mockups into the chat input for UI bugs, designs, or error dumps.
 
-> "Merge PR 308."
-> "Approve and merge the dark mode PR."
+## Action tags (automatic)
 
-The PM uses the GitHub API to approve and merge the PR. It checks CI status first and will warn you if checks are still running or failing.
+The PM emits tags the orchestrator executes. You do not type them:
 
-## Managing Dependabot PRs
-
-Dependabot PRs with CI failures, merge conflicts, or outdated branches can be handled through the PM:
-
-> "Rebase the Dependabot PRs that have conflicts."
-> "Approve and merge all passing Dependabot PRs."
-> "The lodash Dependabot PR keeps failing — create a WO to fix it."
-
-For the last case, the PM creates a WO that describes the dependency issue and queues it for an agent to investigate.
-
-## Creating phases and milestones
-
-> "Create a Q3 phase targeting September 30."
-> "Add a milestone called 'Beta Launch' for August 15."
-> "Delete the 'backlog' phase."
-
-The PM calls the orchestrator API directly. Phases and milestones appear in the Plan tab immediately — no PR, no git operation.
-
-See [Phases and Milestones](Phases-and-Milestones.md) for how phases control dispatch order and milestones declare delivery gates.
-
-## Image support
-
-Paste or drag a screenshot or mockup directly into the PM chat input. The PM can see it and reason about it. Use this to:
-
-- Show a UI bug: "Here's what I'm seeing — the button is misaligned on mobile"
-- Describe a feature from a mockup: "Build this — here's the design"
-- Share an error screenshot: "Why is this happening?"
-
-## Action tags
-
-The PM emits structured action tags that the orchestrator processes automatically. You never type these yourself — they appear in the PM's response when it is taking an action.
-
-| Tag | What it does |
-|-----|-------------|
-| `[DISPATCH:WO-375:cursor]` | Claims WO-375 and wakes the agent runner with the Cursor backend |
-| `[PR:merge:308]` | Squash-merges GitHub PR #308 directly |
-| `[DEPENDABOT:approve-merge:308]` | Approves + merges a Dependabot PR (use only for Dependabot PRs) |
-| `[DEPENDABOT:rebase:308]` | Triggers `@dependabot rebase` on a conflicting PR |
-| `[DEPENDABOT:recreate:308]` | Triggers `@dependabot recreate` when rebase is blocked |
-| `[CREATE_PHASE:now\|Now\|2026-09-30]` | Creates a phase with ID, label, and optional target date |
-| `[DELETE_PHASE:now]` | Deletes the phase with that ID |
-| `[CREATE_MILESTONE:beta-launch\|Beta Launch\|2026-08-15]` | Creates a milestone with ID, label, and target date |
-| `[DELETE_MILESTONE:beta-launch]` | Deletes the milestone with that ID |
-
-These tags are parsed and executed server-side as soon as the PM's response completes. The action confirmation appears in the PM's next message.
+| Tag | Effect |
+|-----|--------|
+| `[DISPATCH:WO-375:cursor]` | Claim + wake runner |
+| `[PR:merge:308]` | Squash-merge PR |
+| `[DEPENDABOT:approve-merge:308]` | Dependabot only |
+| `[DEPENDABOT:rebase:308]` / `recreate` | Dependabot commands |
+| `[CREATE_PHASE:id\|Label\|YYYY-MM-DD]` | Phase CRUD |
+| `[CREATE_MILESTONE:id\|Label\|date]` | Milestone CRUD |
+| `[DELETE_PHASE:…]` / `[DELETE_MILESTONE:…]` | Remove |
 
 ## Session memory
 
-The PM remembers your preferred backend, notable decisions, and which WOs have been dispatched this session. This persists across container restarts. If you change your preferred backend mid-session ("use Gemini from now on"), the PM stores that preference and applies it to future dispatches.
+Preferred backend and notable decisions persist across orchestrator restarts within the session store. “Use Gemini from now on” sticks for later dispatches.
