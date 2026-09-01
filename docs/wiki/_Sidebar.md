@@ -5,6 +5,7 @@
 ---
 
 **Get started**
+- [Adopting](Adopting)
 - [Getting Started](Getting-Started)
 - [Daily Workflow](Daily-Workflow)
 

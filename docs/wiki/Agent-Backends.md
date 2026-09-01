@@ -12,7 +12,7 @@ doc_owner: factory-team
 
 # Agent Backends
 
-The factory supports five AI backends for executing WOs. Four are subscription-based CLI tools that run on your host machine. One calls the Anthropic API directly from Docker. Enable only the ones you use — **Settings → Agents → LLM Providers** controls which are active in your factory. A sixth backend, Antares, is a security-only reviewer used exclusively in the peer review chain (see below).
+The factory supports five AI backends for executing WOs **against the product repo** (`GITHUB_REPO`). Four are subscription CLI tools on your host. One calls the Anthropic API from Docker. Enable only the ones you use — **Settings → Agents → LLM Providers**. A sixth backend, Antares, is a security-only reviewer used exclusively in the peer review chain (see below).
 
 ## The five execution backends
 

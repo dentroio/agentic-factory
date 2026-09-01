@@ -12,7 +12,7 @@ Built 2026-07-30 after a single audit found: the Doc Writer Agent had failed 30 
 
 ## Automation Watchdog
 
-`.github/workflows/automation-watchdog.yml` (present in this repo and in the product repo it builds, e.g. Clarion) listens for `workflow_run` completion on the unattended automations — `doc-writer.yml`, `planning-agent.yml`, `dependabot-wo-bridge.yml`, `api-canary.yml`. On a workflow's **2nd consecutive failure** (not the 1st, to skip single flaky runs), it files a GitHub issue tagged `automation-failure`; further failures comment on that same issue instead of creating duplicates. The issue closes itself automatically the next time the workflow succeeds.
+`.github/workflows/automation-watchdog.yml` (in this engine, and as a paste-in for the product repo) listens for `workflow_run` completion on unattended automations — `doc-writer.yml`, `planning-agent.yml`, `dependabot-wo-bridge.yml`, `api-canary.yml`. On a workflow's **2nd consecutive failure** (not the 1st, to skip single flaky runs), it files a GitHub issue tagged `automation-failure`; further failures comment on that same issue instead of creating duplicates. The issue closes itself automatically the next time the workflow succeeds.
 
 Uses only the default `GITHUB_TOKEN` — no secrets to configure. Deliberately built on `workflow_run`, not the `issues: types: [labeled]` trigger that caused the original planning-agent failure, so a repeat of that exact bug class can't also silently take out the thing meant to alert on it.
 
@@ -30,7 +30,7 @@ Feeds into Automation Watchdog like any other monitored workflow — a real fail
 
 ## Review Outcome Tracking
 
-`ai_review.py` and `merge_advisor.py` (in the product repo, e.g. Clarion) embed a hidden metadata marker in every review comment they post:
+`ai_review.py` and `merge_advisor.py` (in this engine, or copied into the product if those workflows run there) embed a hidden metadata marker in every review comment they post:
 
 ```
 <!-- ai-review-meta: {"model": "...", "verdict": "...", "pr": 123, "sha": "...", "ts": "..."} -->

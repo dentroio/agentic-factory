@@ -1,6 +1,6 @@
 # Factory Status Site
 
-A live dashboard for any project using the Agentic Engineering Factory pattern. Reads your GitHub repository via API and displays:
+A live dashboard for any GitHub repo using the Agentic Engineering Factory pattern (`GITHUB_REPO`). Reads that repository via API and displays:
 
 - **WO Board** — Kanban (Open / In Progress / In Review / Blocked / Done), with status overridden live from branch and PR state
 - **Active Work** — Open `wo/*` branches, last push time, and agent name + step when a WO claim file is present
@@ -24,7 +24,7 @@ GITHUB_TOKEN=github_pat_your_token GITHUB_REPO=your-org/your-repo \
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GITHUB_TOKEN` | Yes | — | PAT with `contents: read` and `pull_requests: read` |
-| `GITHUB_REPO` | Yes | — | `owner/repo` e.g. `dentroio/clarion` |
+| `GITHUB_REPO` | Yes | — | Product `owner/repo` (template or your app), e.g. `you/my-app` |
 | `SITE_TITLE` | No | `AI Factory Status` | Page title |
 | `REFRESH_SECONDS` | No | `60` | Auto-refresh interval |
 | `WO_PATH` | No | `docs/project_management/work_orders` | Path to WO spec files in the repo |

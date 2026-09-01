@@ -1,18 +1,18 @@
 ---
 title: "Work Orders"
 description: "WO spec structure, priority tiers, effort sizes, and full queue lifecycle"
-last_verified: 2026-07-11
+last_verified: 2026-08-30
 covers_wos: []
 doc_owner: factory-team
 ---
 
 # Work Orders
 
-A work order (WO) is the unit of work the factory dispatches to an agent. Every WO has a structured spec file that describes the problem, what to build, and how to verify it was done correctly. Agents read the spec before starting and follow its acceptance criteria as the exit condition.
+A work order (WO) is the unit of work the factory dispatches to an agent. Specs live in the **product** repo (`GITHUB_REPO`), default path `docs/project_management/work_orders/WO-NNN-slug.md`. Generic template and synthetic examples: [docs/adopters/WO_SPEC_FORMAT.md](../adopters/WO_SPEC_FORMAT.md). Claim files: [CLAIM_SCHEMA.md](../adopters/CLAIM_SCHEMA.md).
 
 ## What a WO spec contains
 
-WO specs are markdown files stored at `docs/project_management/work_orders/WO-NNN-slug.md`. The key sections:
+WO specs are markdown files stored in the product repo at `docs/project_management/work_orders/WO-NNN-slug.md` (override with `WO_SPECS_DIR`). The key sections:
 
 | Field | Purpose |
 |-------|---------|
@@ -57,7 +57,7 @@ Effort is an estimate, not a budget. It is used for velocity tracking and for th
 
 **From the PM chat:** Describe what you want. The PM drafts the spec inline and creates the WO when you confirm. See [PM Chat](PM-Chat.md).
 
-**From a GitHub issue:** Label any issue `new-wo`. The `planning-agent.yml` workflow picks it up, calls the planning agent, and opens a PR with a structured spec. Merge the PR to add the WO to the queue. See [GitHub Integrations](GitHub-Integrations.md).
+**From a GitHub issue:** Label an issue `new-wo` **on the product repo** (if that repo has `planning-agent.yml` — paste from [templates/github/](../../templates/github/)). The planning agent opens a spec PR. See [GitHub Integrations](GitHub-Integrations.md).
 
 ## Editing a WO
 
