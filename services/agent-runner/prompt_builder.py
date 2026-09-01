@@ -1,21 +1,21 @@
 import base64
 import json
+import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 
 from config import ORCHESTRATOR_URL, GITHUB_REPO
+from factory_profile import load_patterns_text, load_profile
 
 _RUNNER_DIR = Path(__file__).parent
 MEMORY_PATH = _RUNNER_DIR / "memory" / "factory_memory.json"
-PATTERNS_FILE = _RUNNER_DIR / "clarion_patterns.md"
 
-_FALLBACK_PATTERNS = """## Clarion codebase patterns — see clarion_patterns.md for full details
-### DB write: always call db.commit() after db.execute()
-### Parameterized queries: never use f-strings in SQL
-### API route: every new endpoint needs require_role() dependency
-### Migrations: see clarion_patterns.md for current auto-discovery pattern
-"""
+_GENERIC_PATTERNS = """## Product codebase patterns
+
+Follow existing patterns in this repository exactly.
+Never hardcode secrets. Prefer parameterized queries and the project's auth helpers.
+""".strip()
 
 
 def _load_memory() -> dict:
@@ -25,15 +25,6 @@ def _load_memory() -> dict:
     except Exception:
         pass
     return {}
-
-
-def _load_patterns() -> str:
-    try:
-        if PATTERNS_FILE.exists():
-            return PATTERNS_FILE.read_text().strip()
-    except Exception:
-        pass
-    return _FALLBACK_PATTERNS.strip()
 
 
 def format_memory_context(memory: dict, wo_spec: dict) -> str:
@@ -96,14 +87,14 @@ QUALITY_MANDATE = """
 
 Before calling POST {orchestrator_url}/api/validate you MUST:
 
-1. Do NOT run `make ci-local` in this session. The runner quality gate runs it
+1. Do NOT run the product verify command in this session. The runner quality gate runs it
    once after you finish, under a lock so two WOs cannot compile at once.
    A second copy on this machine causes timeouts that look like test failures.
 
 2. SECURITY — your implementation MUST NOT contain:
    - Hardcoded secrets, API keys, or passwords in code
    - SQL string concatenation (always use parameterized queries)
-   - Missing require_role() on new API endpoints
+   - Missing auth/authorization checks on new API endpoints
    - Unvalidated user input passed to shell commands, SQL, or file paths
    - XSS vectors (unsanitized user content rendered as HTML)
    - eval(), innerHTML=, or document.write() with dynamic input (JS/TS)
@@ -143,7 +134,7 @@ POST /api/validate         Signal that you need human review. REQUIRES a GitHub 
                              "wo": "{wo_id}",
                              "agent": "{agent_name}",
                              "verify_url": "<PR URL>",
-                             "steps": ["Review PR: <PR URL>", "Verify at https://localhost"],
+                             "steps": ["Review PR: <PR URL>", "Verify at {ui_url}"],
                              "ci_passed": true,
                              "security_passed": true,
                              "thread_summary": "What I built and key decisions",
@@ -156,33 +147,27 @@ POST /api/complete          Signal that the PR has merged and the WO is done.
 
 
 PROCESS_SECTION = """
-## Required Process (follow AGENT_PROCESS.md exactly)
+## Required Process (follow AGENT_PROCESS.md / docs/adopters/PROCESS.md exactly)
 
-1.  cd to the clarion worktree (already created for you at {worktree_path})
+1.  cd to the product worktree (already created for you at {worktree_path})
 2.  Implement the WO
-3.  If backend files changed: make build-svc SVC=<service>
-4.  make wait-healthy
-5.  make smoke-test
-6.  Do not run make ci-local yourself — the runner quality gate runs it after this session
-7.  git add <specific files you changed> && git commit  (do NOT use git add -A)
-8.  git push -u origin <branch>
-9.  gh pr create — get the PR URL from the output
-10. Call POST /api/validate with ci_passed=true, security_passed=true, AND pr_url=<PR URL>
-    The orchestrator REJECTS validation without a pr_url. Steps 7-9 are mandatory first.
-11. After human approval: for P2 run gh pr merge --auto --squash
-12. Call POST /api/complete after merge
+3.  If backend/container files changed and the product uses Compose: make build-svc SVC=<service>
+4.  If the product defines wait-healthy / smoke-test: run them after rebuild
+5.  Do not run the product verify command yourself — the runner quality gate runs it after this session
+6.  git add <specific files you changed> && git commit  (do NOT use git add -A)
+7.  git push -u origin <branch>
+8.  gh pr create — get the PR URL from the output
+9.  Call POST /api/validate with ci_passed=true, security_passed=true, AND pr_url=<PR URL>
+    The orchestrator REJECTS validation without a pr_url. Steps 6-8 are mandatory first.
+10. After human approval: for P2 run gh pr merge --auto --squash
+11. Call POST /api/complete after merge
 
 ## Frontend dependency rule
-If you edit frontend/package.json, you MUST also regenerate the lock file:
-  cd frontend && npm install && cd ..
-Then commit BOTH package.json AND package-lock.json together. Never edit package.json
-without updating the lock file — `npm ci` in the Docker build will fail otherwise.
+If you edit frontend/package.json (or package.json under a UI app), you MUST also regenerate the lock file.
+Commit BOTH the package manifest AND the lock file together. Never edit package.json
+without updating the lock file — `npm ci` in Docker builds will fail otherwise.
 """.strip()
 
-
-# Loaded at import time so every prompt gets the current patterns file.
-# Hot-reload is intentional: updating clarion_patterns.md takes effect on next prompt build.
-CLARION_PATTERNS = _load_patterns()
 
 UNTRUSTED_BEGIN = "<<<UNTRUSTED_FACTORY_DATA>>>"
 UNTRUSTED_END = "<<<END_UNTRUSTED_FACTORY_DATA>>>"
@@ -262,16 +247,18 @@ def build_prompt(wo_spec: dict, wo_markdown: str, worktree_path: str, agent_name
     memory_section = format_memory_context(memory, wo_spec)
     memory_block = f"{memory_section}\n\n---\n\n" if memory_section else ""
 
-    # Re-load patterns at call time so file changes are reflected without restart
-    patterns = _load_patterns()
+    profile = load_profile(worktree_path)
+    patterns = load_patterns_text(worktree_path, profile) or _GENERIC_PATTERNS
+    product_label = GITHUB_REPO or profile.display_name
 
-    return f"""You are an AI agent working in the Clarion AI Factory.
+    return f"""You are an AI agent working on product `{product_label}` via the AI Factory engine.
 
 {retry_block}## Your Assignment
 
 {wo_id}: {title}
 Priority: {priority} | Effort: {effort}
 Worktree: {worktree_path}
+Product: {product_label}
 
 {QUALITY_MANDATE.format(orchestrator_url=ORCHESTRATOR_URL)}
 
@@ -295,6 +282,7 @@ Worktree: {worktree_path}
     orchestrator_url=ORCHESTRATOR_URL,
     wo_id=wo_id,
     agent_name=agent_name,
+    ui_url=profile.ui_url,
 )}
 
 ---

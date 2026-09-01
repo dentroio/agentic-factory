@@ -105,8 +105,8 @@ async def _analyze_failure(wo_id: str, context: str) -> str:
     """Call claude -p to produce a short root-cause diagnosis of a build/CI failure."""
     import subprocess as _sp
     prompt = (
-        f"A CI or build step just failed for work order {wo_id} in the Clarion "
-        f"worktree (not the factory repo). "
+        f"A CI or build step just failed for work order {wo_id} in the product "
+        f"worktree (not the factory engine repo). "
         "Give a 3-5 sentence root-cause diagnosis and the exact file/line fix the agent must apply. "
         "Only refer to files that exist in that worktree. Be specific and actionable — no preamble, no markdown headers.\n\n"
         f"{context}"
@@ -130,6 +130,10 @@ async def _generate_validation_steps(wo_id: str, title: str, pr_url: str, worktr
     """Ask Claude to write specific, human-readable verification steps for the validation banner."""
     import subprocess as _sp
 
+    from factory_profile import load_profile
+
+    profile = load_profile(worktree)
+
     # Get changed files
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -142,11 +146,16 @@ async def _generate_validation_steps(wo_id: str, title: str, pr_url: str, worktr
     except Exception:
         changed = []
 
-    ui_files = [f for f in changed if f.startswith("frontend/src/")]
-    api_files = [f for f in changed if any(f.startswith(p) for p in (
-        "src/clarion/api/routes/", "src/clarion/api/schemas/",
-        "services/data-service/routes/", "services/gateway/routes/",
-    ))]
+    ui_prefixes = tuple(profile.ui_paths) or ("frontend/src/",)
+    api_prefixes = tuple(profile.api_surface_paths) or (
+        "services/", "src/", "api/",
+    )
+    ui_files = [f for f in changed if any(f.startswith(p) for p in ui_prefixes)]
+    api_files = [
+        f for f in changed
+        if f not in ui_files and any(f.startswith(p) for p in api_prefixes)
+        and ("/routes/" in f or "/schemas/" in f or f.endswith("routes.py"))
+    ]
     backend_files = [f for f in changed if f not in ui_files and f not in api_files]
 
     spec_context = "\n".join(filter(None, [
@@ -159,8 +168,14 @@ async def _generate_validation_steps(wo_id: str, title: str, pr_url: str, worktr
     if api_files:  file_lines.append(f"API ({len(api_files)}): {', '.join(api_files[:4])}")
     if backend_files: file_lines.append(f"Backend ({len(backend_files)}): {', '.join(backend_files[:5])}")
 
+    ui_start = (
+        f"Start from the product app at {profile.ui_url}. "
+        f"{profile.ui_verify_hint} "
+        "Do not invent or include passwords."
+    )
+
     prompt = f"""Write a short verification checklist for a product owner reviewing this completed work order.
-They are NOT a developer. Be specific, plain English, no code.
+They are NOT a developer. Be specific, plain English, no code. Never include passwords or credentials.
 
 WO: {wo_id} — {title}
 PR: {pr_url}
@@ -168,8 +183,8 @@ Files changed: {chr(10).join(file_lines) if file_lines else 'unknown'}
 {spec_context}
 
 Write 3-5 numbered steps. Each step must:
-- Start from the Clarion app at https://localhost (login: admin / Clarion#Admin1)
-- Name the EXACT page, menu, or element (e.g. "click Devices in the top nav > open any endpoint")
+- {ui_start}
+- Name the EXACT page, menu, or element
 - State what SUCCESS looks like for that step
 
 End with one line starting "Approve when: " summarising the pass condition.
@@ -202,7 +217,9 @@ Keep the total response under 300 words."""
     # Fallback
     steps = [f"Open PR #{pr_url.split('/')[-1]}: {pr_url}"]
     if ui_files:
-        steps.append("Open https://localhost → log in as admin / Clarion#Admin1 and verify the UI changes look correct")
+        steps.append(
+            f"Open {profile.ui_url} — {profile.ui_verify_hint}"
+        )
     steps.append("Confirm the implementation matches the WO specification")
     return steps
 
@@ -764,7 +781,7 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
                 ci_analysis = await _analyze_failure(
                     wo_id,
                     f"CI/security gate failed for {wo_id} in worktree {worktree_path}.\n"
-                    f"This is the Clarion product repo, not agentic-factory.\n\n"
+                    f"This is `{GITHUB_REPO or 'the product repo'}`, not the factory engine.\n\n"
                     f"Failure: {failure_str}\n\nOutput:\n{failure_detail[-3000:]}"
                 )
                 if ci_analysis:

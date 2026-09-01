@@ -44,15 +44,14 @@ def may_auto_approve(priority: str | None, has_ui: bool, has_api_surface: bool) 
     return (priority or "").strip().upper() in {"P2", "P3"}
 
 
-# Files under these paths count as direct UI changes
+# Files under these paths count as direct UI changes — overridden by factory.yaml
 UI_PATHS = ("frontend/src/",)
 # Files under these paths are doc-writer noise — ignored in classification
 NOISE_PATHS = ("frontend/public/help/",)
 
-# Backend route files — changes here can alter the API contract consumed by the UI
+# Backend route files — changes here can alter the API contract consumed by the UI.
+# Defaults are generic; Clarion paths come from factory.yaml / legacy profile.
 API_SURFACE_PATHS = (
-    "src/clarion/api/routes/",
-    "src/clarion/api/schemas/",
     "services/data-service/routes/",
     "services/correlation-service/routes/",
     "services/connector-service/routes/",
@@ -61,10 +60,8 @@ API_SURFACE_PATHS = (
     "services/gateway/routes/",
 )
 
-# Map file prefixes to the service(s) that must be rebuilt
+# Map file prefixes to the service(s) that must be rebuilt — profile overrides.
 _SERVICE_MAP: list[tuple[str, list[str]]] = [
-    ("src/clarion/endpoints/correlation_engine.py", ["data-service", "correlation-service"]),
-    ("src/clarion/",                                ["data-service"]),
     ("services/data-service/",                      ["data-service"]),
     ("services/correlation-service/",               ["correlation-service"]),
     ("services/connector-service/",                 ["connector-service"]),
@@ -183,20 +180,24 @@ def _rebuild_and_smoke(repo_path: str, services: list[str]) -> tuple[bool, str]:
 
 def _claude_review(wo_id: str, title: str, diff: str, has_ui: bool, has_api_surface: bool) -> tuple[bool, str]:
     """Call claude -p for a focused code review. Returns (approved, notes)."""
+    from factory_profile import load_profile
+
+    profile = load_profile(LOCAL_REPO_PATH or None)
+    product = GITHUB_REPO or profile.display_name
     extra = ""
     if has_ui:
         extra += "\nNOTE: Frontend UI changes are present. Review code quality only — visual correctness verified separately."
     if has_api_surface:
         extra += "\nNOTE: API route/schema changes detected. Verify the response shapes, status codes, and field names are backward-compatible with existing UI consumers."
 
-    prompt = f"""You are a senior engineer reviewing a PR for the Clarion network security platform.
+    prompt = f"""You are a senior engineer reviewing a PR for product `{product}`.
 
 WO: {wo_id} — {title}
 
 Review for:
-1. Security (SQL injection, XSS, hardcoded secrets, missing require_role(), SSRF)
+1. Security (SQL injection, XSS, hardcoded secrets, missing auth, SSRF)
 2. Correctness (does it match the WO? missing edge cases? type errors?)
-3. Clarion patterns (db.commit() after writes, parameterized queries, no bare excepts)
+3. Existing codebase patterns (commits after writes, parameterized queries, no bare excepts)
 4. Performance (N+1 queries, unbounded result sets, blocking I/O in async handlers)
 {extra}
 
@@ -300,9 +301,14 @@ def _generate_verification_guide(
     wo_spec: dict,
 ) -> str:
     """Ask Claude to write specific, plain-English verification steps for a human reviewer."""
+    from factory_profile import load_profile
+
+    profile = load_profile(LOCAL_REPO_PATH or None)
     changed_files = _changed_files(diff)
-    ui_files  = [f for f in changed_files if any(f.startswith(p) for p in UI_PATHS)]
-    api_files = [f for f in changed_files if any(f.startswith(p) for p in API_SURFACE_PATHS)]
+    ui_paths = tuple(profile.ui_paths) or UI_PATHS
+    api_paths = tuple(profile.api_surface_paths) or API_SURFACE_PATHS
+    ui_files  = [f for f in changed_files if any(f.startswith(p) for p in ui_paths)]
+    api_files = [f for f in changed_files if any(f.startswith(p) for p in api_paths)]
     other_files = [f for f in changed_files if f not in ui_files and f not in api_files]
 
     spec_context = "\n".join(filter(None, [
@@ -321,7 +327,7 @@ def _generate_verification_guide(
         file_summary.append(f"Backend ({len(other_files)}): {', '.join(other_files[:6])}")
 
     prompt = f"""You are writing a verification checklist for a product owner who will manually test a completed feature.
-They are not a developer. Write in plain English. Be specific and concrete.
+They are not a developer. Write in plain English. Be specific and concrete. Never include passwords or credentials.
 
 Work Order: {wo_id}
 PR #{pr_num}: {pr_url}
@@ -341,11 +347,11 @@ Write a structured verification guide with these exact sections:
 2-3 plain-English sentences describing what changed and why, no code or jargon.
 
 ## How to Test
-Numbered steps. Start from "Open https://localhost → log in as **admin / Clarion#Admin1**".
+Numbered steps. Start from "Open {profile.ui_url}". Hint: {profile.ui_verify_hint}
 - Name the EXACT page, menu, button, or field to interact with
 - For each step, describe what **success looks like** and what **failure looks like**
 - Include 3-5 meaningful steps, not generic ones like "check everything works"
-- If a specific screen path applies (e.g. Devices > click endpoint > Device Profile tab), spell it out
+- Never invent or include login passwords
 
 ## Quick Sanity Checks
 2-3 bullet points verifying nothing else broke (navigation still works, no blank screens, no console errors).
@@ -379,7 +385,7 @@ and CI gates already confirmed correctness."""
         f"**PR #{pr_num}:** {pr_url}\n\n"
         f"**Changes:** {areas}\n\n"
         f"**To verify:**\n"
-        f"1. Open **https://localhost** → log in as **admin / Clarion#Admin1**\n"
+        f"1. Open **{profile.ui_url}** — {profile.ui_verify_hint}\n"
         f"2. Navigate to the area this WO affects\n"
         f"3. Confirm the described feature works correctly\n"
         f"4. Check nothing else appears broken\n\n"

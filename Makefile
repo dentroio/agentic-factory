@@ -33,7 +33,7 @@ agent-setup:  ## First-time setup — stores secrets in macOS Keychain
 test:  ## Run unit tests — must stay identical to the Unit Tests job in ci.yml
 	@$(PYTHON) -c "import pytest" 2>/dev/null || { \
 	  echo "pytest is not installed for $(PYTHON)."; \
-	  echo "Install the same set ci.yml does:  $(PYTHON) -m pip install pytest pytest-asyncio httpx"; \
+	  echo "Install the same set ci.yml does:  $(PYTHON) -m pip install pytest pytest-asyncio httpx PyYAML"; \
 	  exit 1; }
 	$(PYTHON) -m pytest tests/unit/ -v --tb=short
 	test_files=$$(find tests/unit -name 'test_*.py' | wc -l); test "$$test_files" -ge 20

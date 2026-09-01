@@ -78,7 +78,7 @@ CLAIM_TIMEOUT_SECONDS = int(os.getenv("CLAIM_TIMEOUT_SECONDS", "1200"))
 MAX_PARALLEL_WOS = int(os.getenv("MAX_PARALLEL_WOS", "2"))
 MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
 REQUIRE_APPROVAL_FOR: set[str] = {p.strip() for p in os.getenv("REQUIRE_APPROVAL_FOR", "P1").split(",") if p.strip()}
-CLARION_API_URL = os.getenv("CLARION_API_URL", "http://localhost:8000")
+CLARION_API_URL = os.getenv("CLARION_API_URL", "")  # optional; prefer factory.yaml connector_api_url
 PREFLIGHT_RETRY_SECONDS = 1800  # re-check held WOs every 30 minutes
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 SPEC_MIN_BODY_LENGTH = int(os.getenv("SPEC_MIN_BODY_LENGTH", "300"))
@@ -676,14 +676,16 @@ def _parse_requires_from_spec(spec: dict) -> dict:
     return result
 
 
-async def _query_clarion_connectors(connector_type: str) -> int:
-    """Query Clarion API for number of connected connectors of the given type.
-    Returns 0 on any error (fail-safe: treat unavailable Clarion as no connectors).
+async def _query_product_connectors(connector_type: str, api_url: str) -> int:
+    """Query product API for connected connectors of the given type.
+    Returns 0 on any error (fail-safe: treat unavailable API as no connectors).
     """
+    if not api_url:
+        return 0
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(
-                f"{CLARION_API_URL}/api/connectors",
+                f"{api_url.rstrip('/')}/api/connectors",
                 params={"type": connector_type, "status": "connected"},
             )
             if resp.status_code == 200:
@@ -693,7 +695,7 @@ async def _query_clarion_connectors(connector_type: str) -> int:
                 if isinstance(data, dict):
                     return len(data.get("connectors", data.get("items", [])))
     except Exception as e:
-        print(f"[preflight] Clarion API query failed for connector type '{connector_type}': {e}")
+        print(f"[preflight] product API query failed for connector type '{connector_type}': {e}")
     return 0
 
 
@@ -701,19 +703,25 @@ async def preflight_check(requires: dict) -> list[str]:
     """Check WO environment requirements. Returns list of unmet conditions (empty = OK)."""
     if not requires:
         return []
+    from factory_profile import load_profile
+
+    profile = load_profile(LOCAL_REPO_MOUNT or None)
+    if not profile.enable_connector_preflight:
+        # Strangers / generic products must not hit a product-specific connectors API.
+        return []
+
+    api_url = profile.connector_api_url or CLARION_API_URL
     failures: list[str] = []
     for req in requires.get("connectors", []):
         ctype = req.get("type") or req.get("connector_type", "")
         min_count = req.get("min_count", 1)
         if not ctype:
             continue
-        count = await _query_clarion_connectors(ctype)
+        count = await _query_product_connectors(ctype, api_url)
         if count < min_count:
             failures.append(f"connector '{ctype}': need {min_count} connected, found {count}")
     for svc in requires.get("services", []):
-        # For now, all Clarion services are assumed healthy (we can extend this
-        # with docker compose ps checks if the orchestrator has access).
-        # This is best-effort — service checks are advisory, not blocking.
+        # Service checks are advisory for now.
         pass
     return failures
 
@@ -1858,7 +1866,7 @@ async def get_override(wo_id: str):
 class ReserveRequest(BaseModel):
     title: str = ""
     reserved_by: str = "unknown"
-    # Defaults to GITHUB_REPO/WO_PATH (Clarion) when omitted — existing callers
+    # Defaults to GITHUB_REPO/WO_PATH when omitted — existing callers
     # are unaffected. Pass repo to number WOs in a different repo, e.g.
     # SECONDARY_REPOS entries like "dentroio/agentic-factory".
     repo: str | None = None
@@ -3495,7 +3503,7 @@ def _claim_blocks_next(wo_id: str, claim: dict, specs: dict[int, dict]) -> bool:
 
 
 def _occupancy_reason_for(wo_id: str) -> str | None:
-    """External occupancy: Clarion claim file, open PR, or dirty/wrong-branch worktree."""
+    """External occupancy: product claim file, open PR, or dirty/wrong-branch worktree."""
     num = occupancy.wo_num_from_id(wo_id)
     if num is None:
         return None
@@ -5450,15 +5458,15 @@ _PM_TOOLS: list[dict] = [
     {
         "name": "read_file",
         "description": (
-            "Read a file from the Clarion repository. Use to inspect source code, WO specs, "
-            "docs, configs, or any project file before drafting a WO or answering a question."
+            "Read a file from the product repository (GITHUB_REPO). Use to inspect source code, "
+            "WO specs, docs, configs, or any project file before drafting a WO or answering a question."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path relative to the repo root, e.g. 'src/clarion/api/routes/devices.py' or 'docs/project_management/work_orders/WO-376-canonical-entity-uuid.md'",
+                    "description": "Path relative to the repo root, e.g. 'src/api/routes/devices.py' or 'docs/project_management/work_orders/WO-001-example.md'",
                 }
             },
             "required": ["path"],
@@ -5476,7 +5484,7 @@ _PM_TOOLS: list[dict] = [
                 "pattern": {"type": "string", "description": "grep regex pattern"},
                 "path": {
                     "type": "string",
-                    "description": "Optional subdirectory or file glob to narrow the search, e.g. 'src/clarion/' or '*.md'",
+                    "description": "Optional subdirectory or file glob to narrow the search, e.g. 'src/' or '*.md'",
                 },
             },
             "required": ["pattern"],
@@ -5490,7 +5498,7 @@ _PM_TOOLS: list[dict] = [
             "properties": {
                 "directory": {
                     "type": "string",
-                    "description": "Directory path relative to repo root, e.g. 'src/clarion/api/routes/'",
+                    "description": "Directory path relative to repo root, e.g. 'src/api/routes/'",
                 },
                 "pattern": {
                     "type": "string",
@@ -6011,7 +6019,7 @@ _PM_ACTION_TOOLS: list[dict] = [
 
 
 _PM_SYSTEM = """\
-You are the AI Factory PM for the Clarion project — a sharp, decisive engineering PM who knows the codebase.
+You are the AI Factory PM for product `{product}` — a sharp, decisive engineering PM who knows the codebase.
 You coordinate AI agents (Claude, Cursor, Codex, Gemini) that autonomously implement work orders (WOs).
 
 {context}
@@ -6242,7 +6250,11 @@ async def pm_chat(req: PMChatRequest):
     if mem_summary:
         ctx_parts.append("PM memory:\n" + mem_summary)
 
-    system = _PM_SYSTEM.format(context="\n".join(ctx_parts))
+    from factory_profile import load_profile
+
+    profile = load_profile(LOCAL_REPO_MOUNT or None)
+    product_label = profile.name or (GITHUB_REPO.rsplit("/", 1)[-1] if GITHUB_REPO else "product")
+    system = _PM_SYSTEM.format(product=product_label, context="\n".join(ctx_parts))
     messages = [{"role": m["role"], "content": m["content"]} for m in req.history]
 
     # Append WO metadata hints to message if provided
