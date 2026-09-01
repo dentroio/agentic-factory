@@ -1,8 +1,10 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-08-31
-covers_wos: []
+last_verified: 2026-09-01
+covers_wos:
+  - WO-1008
+  - WO-1059
 doc_owner: factory-team
 ---
 
@@ -39,34 +41,4 @@ Your **product** is a separate GitHub repository. The engine already supports an
 | `factory.yaml` (repo root) | Verify command, UI URL, Compose project, patterns — see [Product Profile](Product-Profile) |
 | `AGENT_PROCESS.md` (or copy of adopters PROCESS) | How agents behave in *that* repo |
 | Optional `docs/factory/PLAN.json` | Dispatch queue extras |
-
-Contract details (labels, branches, secrets): [CONTRACT.md](../adopters/CONTRACT.md).
-
-## GitHub Actions: where they live
-
-| Location | Purpose |
-|----------|---------|
-| Engine `.github/workflows/` | Engine CI and specialists. **Leave them alone.** |
-| [templates/github/](../../templates/github/) | Optional copies to paste into the **product** |
-| Template `github-workflows-optional/` | Same copies, vendored beside the demo |
-
-## Adoption paths
-
-| Path | When | Start here |
-|------|------|------------|
-| **Template demo** | First time, learning the loop | [Getting Started](Getting-Started) + template WO-001 |
-| **BYO** | Existing codebase | [BYO.md](../adopters/BYO.md) + [Product Profile](Product-Profile) |
-| **Essays** | Want the “why” | [docs/blog](../blog/README.md) |
-
-## Checklist (print this)
-
-- [ ] Product repo exists (template or BYO) with WO folder + labels + branch protection  
-- [ ] Product has `factory.yaml` with a real `verify:` command  
-- [ ] Engine cloned; `make agent-setup` with product `owner/name`  
-- [ ] `LOCAL_REPO_PATH` points at the product clone  
-- [ ] Dashboard shows product WOs; runner installed  
-- [ ] One WO completed with human UI verify before commit  
-
-## Next
-
-→ [Getting Started](Getting-Started)
+| Optional `.github/workflows/codex-dispatch.yml` |
