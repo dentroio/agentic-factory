@@ -1,17 +1,27 @@
-# Factory independence — remaining work
+# Factory independence — engineering archive
 
-**Distribution:** Internal-Only (Engineering)
-**Status:** Instructions for the next agent. Docs/template are done; **runtime is not independent yet**.
-**Constraint:** Keep the live factory pointed at Clarion working. Do not change Steve’s Keychain `GITHUB_REPO` or running compose defaults. Genericize **code paths**; load Clarion behavior from a **product profile** in the Clarion worktree (or an env overlay on that machine), not from hardcoded strings in this public repo.
+**Distribution:** Internal-Only (Engineering)  
+**Status:** **Complete** (I1–I7 landed). Kept as a historical checklist — not an onboarding guide.
 
-**Pickup:** Open this file in a new chat on `dentroio/agentic-factory`. Do not edit Clarion except a later optional `factory.yaml` in the private product (WO-I6).
+**For new adopters:** use [Getting Started](../wiki/Getting-Started.md), [Adopting](../wiki/Adopting.md), and [Product Profile](../wiki/Product-Profile.md).
 
-**Already done (do not redo):**
-- Public [agentic-factory-template](https://github.com/dentroio/agentic-factory-template)
-- `docs/adopters/` (PROCESS, CONTRACT, WO format, claim schema, BYO)
-- Sanitized `docs/blog/`
-- Wiki/README two-repo model ([Adopting](../wiki/Adopting.md), [Getting Started](../wiki/Getting-Started.md))
-- Engine PR: https://github.com/dentroio/agentic-factory/pull/293 (merge if still open)
+---
+
+## What shipped
+
+| Item | Outcome |
+|------|---------|
+| Docs / template / blog | Public adopter kit + [agentic-factory-template](https://github.com/dentroio/agentic-factory-template) |
+| I1–I4 | `factory.yaml` profile loader; generic runner / quality gate / PM |
+| I5 | No product passwords in public engine; doc-writer skips unset product wiki repo |
+| I6 | Product-owned `factory.yaml` in private product repos (not engine defaults) |
+| I7 | Adopter acceptance on a template-derived repo; live Clarion-pointed instance unchanged |
+
+**Hard rule that remains true:** genericize the engine; load product behavior from `factory.yaml` (or a temporary local overlay), not from hardcoded strings in this public repo.
+
+## Original program text
+
+The sections below are the original work-order style instructions used during the program. They are retained for archaeology; do not treat “Still required” lines as open work.
 
 ---
 

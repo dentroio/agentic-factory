@@ -15,10 +15,17 @@ doc_owner: factory-team
 
 The factory **engine** ships with defaults. Adapt **your product** with files in that repo; do not edit this engine’s live workflows to match an app.
 
-- Product process: [docs/adopters/PROCESS.md](../adopters/PROCESS.md)
-- Product WO shape: [docs/adopters/WO_SPEC_FORMAT.md](../adopters/WO_SPEC_FORMAT.md)
-- Paste-in Actions: [templates/github/](../../templates/github/)
-- First-time split: [Adopting](Adopting)
+**Start with the product profile** — most “make the agent understand my app” work belongs in [`factory.yaml`](Product-Profile) and `docs/factory/patterns.md`, not in engine source.
+
+| Layer | Where | What |
+|-------|-------|------|
+| Verify / UI / Compose / patterns | Product `factory.yaml` | [Product Profile](Product-Profile) |
+| Agent process | Product `AGENT_PROCESS.md` | [PROCESS.md](../adopters/PROCESS.md) |
+| WO shape | Product WO folder | [WO_SPEC_FORMAT.md](../adopters/WO_SPEC_FORMAT.md) |
+| Optional Actions | Product `.github/workflows/` | [templates/github/](../../templates/github/) |
+| AI review invariants (engine PRs) | Engine `scripts/review_context.txt` | Below |
+
+First-time split: [Adopting](Adopting).
 
 `scripts/review_context.txt` in **this** repo is for reviews that run **here**. If AI review runs on the product, put product invariants in the product (or a copied `review_context.txt` next to that workflow).
 

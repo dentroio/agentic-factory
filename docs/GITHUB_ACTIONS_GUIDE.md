@@ -106,7 +106,7 @@ Agent pushes branch + opens PR
 **What Claude checks:**
 - Security issues (SQL injection, hardcoded secrets, missing auth)
 - Logic bugs and edge cases
-- Whether the code matches Clarion's patterns (db.commit(), require_role(), etc.)
+- Whether the code matches the product’s patterns (from `factory.yaml` / `patterns.md`, or `scripts/review_context.txt` for engine PRs)
 - Anything that looks risky or incomplete
 
 **Three possible verdicts:**

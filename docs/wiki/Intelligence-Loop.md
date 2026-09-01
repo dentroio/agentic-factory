@@ -70,7 +70,7 @@ Park-on-fail stays: a dead worktree must not silently retry forever. Before park
 
 - **`lock_timeout` / `node_modules` / `timeout`** — retry the **gate** (repair `node_modules` when needed). Do not rewrite WO code. Up to two infra retries.
 - **`code`** — one in-session agent pass with the CI excerpt, then park if it still fails.
-- Data-service-only diffs skip Clarion `frontend-check` (tsc + Jest `--runInBand` + build), which was hitting the 1800s wall on WOs that never touched `frontend/`.
+- Product-specific CI jobs can be skipped when the diff never touches those paths — configured via the product [`factory.yaml`](Product-Profile) (e.g. skip a heavy frontend job when only backend services changed).
 - `awaiting_commit` after a quality-gate fail is **Stalled** on the PM board, not In Review. The human action is Factory **Retry**, not Approve.
 
 The 10-minute intelligence job does not pick the next WO. This pass is inside the runner close-out.

@@ -1,7 +1,7 @@
 ---
 title: "Doc Writer Agent"
-description: "Autonomous agent that keeps Clarion and factory wiki pages up to date, running daily via GitHub Actions"
-last_verified: 2026-07-30
+description: "Optional engine workflow that refreshes wiki pages; adopters do not need it"
+last_verified: 2026-08-31
 covers_wos:
   - WO-1052
 doc_owner: factory-team
@@ -9,55 +9,38 @@ doc_owner: factory-team
 
 # Doc Writer Agent
 
-**Adopters:** you do not need this workflow. It is how **this engine instance** keeps its wiki current and, optionally, a second product wiki. Using the factory with [the template](https://github.com/dentroio/agentic-factory-template) or [BYO](../adopters/BYO.md) does not require `doc-writer.yml`.
+**Adopters: skip this page** unless you are operating a long-lived fork of **this engine** and want automated wiki rewrites. Pointing the factory at the [template](https://github.com/dentroio/agentic-factory-template) or a [BYO](../adopters/BYO.md) product does **not** require `doc-writer.yml`.
 
-The factory can maintain documentation without a human triggering it. `scripts/doc_writer.py`, run by `.github/workflows/doc-writer.yml` once daily, finds stale or WO-uncovered wiki pages, reads relevant WO specs, and asks Claude to write updated content.
+The workflow `.github/workflows/doc-writer.yml` (daily + manual) finds stale or WO-uncovered pages under `docs/wiki/`, gathers related WO specs, and asks Claude to propose updates.
 
-**Cost note:** each page costs roughly $0.10–0.20 (it stuffs up to 5 WO specs, up to 64KB each, into context) — paid even when Claude decides the page doesn't need changing. Clarion's wiki had 182 of 189 pages flagged "uncovered" (empty `covers_wos`) when this was tuned 2026-07-30 — most predate the `covers_wos` convention and don't actually need rewrites, they're just untagged. `max-pages` defaults to 2/run and the schedule is daily specifically to cap spend while that backlog exists, rather than burning through it at full throughput. Consider relaxing the "uncovered" trigger (only fire on real `last_verified` staleness) before raising `max-pages` back up.
+**Cost note:** each page costs roughly $0.10–0.20 (large WO context), paid even when Claude decides no change is needed. Defaults are conservative (`max-pages` ≈ 2, once daily).
 
-It has two independent jobs in the same workflow:
+## Jobs
 
-| Job | Updates | Repo pushed to |
-|-----|---------|----------------|
-| `update-clarion-wiki` | `wiki/docs/` in `dentroio/clarion` | Clarion (cross-repo) |
-| `update-factory-wiki` | `docs/wiki/` in this repo | This repo (self-maintenance) |
-
-## What it does each run
-
-1. Scans wiki pages for staleness (`last_verified` older than 180 days) or an empty `covers_wos` frontmatter field.
-2. For each candidate page (up to `--max-pages`, default 2), gathers the WO specs and design docs that look relevant by keyword match.
-3. Sends the current page + that context to Claude, with instructions to only document shipped (✅ Complete) features, never invent facts, and set `last_verified` to today.
-4. If Claude's response doesn't parse as valid frontmatter (it sometimes wraps the answer in a ` ```markdown ` fence despite being told not to — `strip_code_fence()` handles this), or if it returns the page unchanged, the page is skipped.
-5. Commits whatever changed.
+| Job | Updates | When it runs |
+|-----|---------|--------------|
+| Product wiki (optional) | `wiki/docs/` in a **second** repo | Only if repo variable `CLARION_REPO` (legacy name) is set to `owner/name`. **Unset = skip.** Stranger forks must leave it unset so they never push to someone else’s product. |
+| Factory wiki (self) | `docs/wiki/` in this engine | Always available; opens a PR (main is protected) |
 
 ## Required secret: `GH_PAT`
 
-Both jobs need `GH_PAT` set on **this repo's** GitHub secrets — a fine-grained PAT with:
+Fine-grained PAT on **this engine repo** with Contents + Pull requests write. If you enable the optional product-wiki job, the same PAT (or another) must also reach that product repo.
 
-- **Repository access:** this repo (`dentroio/agentic-factory`) *and* the Clarion repo (`dentroio/clarion`), or whichever repo `CLARION_REPO` points at
-- **Permissions:** Contents (Read and write), Pull requests (Read and write)
+Without `GH_PAT`, jobs that push fail at checkout — scheduled failures are easy to miss. See [GitHub Integrations](GitHub-Integrations).
 
-Set it in **Settings → Secrets and variables → Actions → New repository secret** on this repo.
+## Why the factory-wiki job needs a PAT
 
-Without it, the Clarion job fails immediately at checkout (`Input required and not supplied: token`) — silently, since a scheduled workflow's failures don't page anyone by default. This ran unnoticed for the agent's entire life until fixed 2026-07-29 (WO-1052 investigation): 0 of the last 30 scheduled runs had succeeded.
-
-## Why the factory-wiki job needs a PAT, not just `GITHUB_TOKEN`
-
-This repo's `main` branch requires a pull request for every change (no direct pushes, for any token). PRs opened using the default `GITHUB_TOKEN` don't trigger `pull_request`-event workflows — a GitHub anti-recursion protection — so the required `Unit Tests` check would never run and the PR would sit stuck forever. Worse, `GITHUB_TOKEN` is also blocked outright from creating PRs unless "Allow GitHub Actions to create and approve pull requests" is enabled repo-wide (Settings → Actions → General) — a guardrail intentionally left off here.
-
-`GH_PAT` (a real user identity) sidesteps both: it's not subject to the anti-recursion rule, and it's not the "Actions bot" the create/approve restriction targets. The factory-wiki job commits to a branch, opens a PR, waits (up to 5 minutes, polling every 15s) for the `Unit Tests` check to report pass, then squash-merges and deletes its own branch. On failure or timeout, it leaves the PR open for a human instead of forcing anything.
+This engine’s `main` requires a PR. PRs opened with the default `GITHUB_TOKEN` often do not retrigger required checks (anti-recursion). A user-scoped `GH_PAT` opens a normal PR, waits for **Unit Tests**, then squash-merges (or leaves the PR open on failure).
 
 ## Manual runs
 
-```
-gh workflow run doc-writer.yml --repo dentroio/agentic-factory \
+```bash
+gh workflow run "Doc Writer — Update Product + Factory Wikis" --repo OWNER/agentic-factory \
   -f max_pages=3 \
-  -f page=operator/secure/groups.md \
   -f dry_run=true
 ```
 
-All inputs are optional. `dry_run=true` runs the full pipeline and logs what would change, without committing.
-
 ## Related
 
-- [GitHub Integrations](GitHub-Integrations) — the other automated GitHub write paths (WO creation, PR watchdog)
+- [GitHub Integrations](GitHub-Integrations)
+- [Adopting](Adopting) — you do not need this for a normal product adoption
