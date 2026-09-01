@@ -1916,7 +1916,7 @@ async def api_backends():
 async def api_next_wo_number(repo: str | None = None, wo_path: str | None = None):
     """Return the next available WO number via orchestrator reservation (prevents races).
 
-    Defaults to GITHUB_REPO/WO_PATH (Clarion) when repo/wo_path are omitted —
+    Defaults to GITHUB_REPO/WO_PATH when repo/wo_path are omitted —
     pass repo (e.g. a SECONDARY_REPOS entry like "dentroio/agentic-factory")
     to number WOs in a different repo instead.
     """

@@ -80,9 +80,9 @@ async def _changed_files(worktree: str, extensions: tuple[str, ...]) -> list[str
 async def frontend_changed(worktree: str) -> bool:
     """True if this worktree touched frontend/ vs main, including uncommitted files.
 
-    Full `make ci-local` runs Clarion `frontend-check` (tsc + Jest --runInBand +
-    build). That step took 20–70 minutes on 18 Aug 2026 and hit the 1800s gate
-    timeout even for data-service-only WOs. Skip it when frontend/ is untouched.
+    Some product Makefiles run an expensive frontend-check inside `make ci-local`.
+    When verify is still `make ci-local`, we skip that path for non-frontend diffs
+    by invoking lighter Make targets when they exist.
     """
     rc, out = await _run(
         ["git", "diff", "main", "--name-only", "--", "frontend"],
@@ -152,14 +152,11 @@ _SMOKE_TEST_TIMEOUT = 240  # ~60s gateway wait + up to a dozen 10s per-check tim
 async def _with_compose_lock(svc: str, timeout: int = _COMPOSE_LOCK_TIMEOUT):
     """Acquire a per-service lock before touching that service's shared container.
 
-    All worktrees share COMPOSE_PROJECT_NAME=clarion (see run_container_rebuild)
-    so containers aren't duplicated across runners — but that means two WOs
-    quality-gating the same service concurrently race on `docker compose build`
-    + `up -d --no-deps`. One run's `up` can recreate/remove the container out
-    from under another run's already-resolved container ID mid-attach, failing
-    with "No such container" even though the build itself succeeded. Bit
-    WO-433 and WO-444 for real. Same stale-PID self-heal as the CI lock below —
-    a lock left by a killed process shouldn't block forever.
+    When the product profile sets compose_project, all worktrees share that
+    COMPOSE_PROJECT_NAME so containers aren't duplicated — but that means two
+    WOs quality-gating the same service concurrently race on `docker compose
+    build` + `up -d --no-deps`. Serialize per service. Same stale-PID self-heal
+    as the CI lock below — a lock left by a killed process shouldn't block forever.
     """
     lock_path = Path(f"/tmp/factory-compose-{svc}.lock")
     waited = 0
@@ -186,20 +183,32 @@ async def _with_compose_lock(svc: str, timeout: int = _COMPOSE_LOCK_TIMEOUT):
 
 
 async def run_ci(worktree: str) -> tuple[bool, str]:
-    """Run make ci-local in the worktree.
+    """Run the product verify command from factory.yaml (default: make ci-local).
 
     Bootstraps npm install if node_modules is absent — worktrees don't inherit
     the main checkout's node_modules so tsc would fail without this.
     Augments PATH with the repo's Python venvs so tools like black are found
     even when the runner was started by launchd with a minimal PATH.
 
-    Uses a file lock so that multiple parallel runners don't run `make ci-local`
+    Uses a file lock so that multiple parallel runners don't run verify
     simultaneously — overlapping Vite builds and pytest suites cause timeouts.
     """
+    from factory_profile import load_profile, verify_argv
+
+    profile = load_profile(worktree)
+    verify_cmd = verify_argv(profile)
+    makefile = Path(worktree) / "Makefile"
+    if verify_cmd[:2] == ["make", "ci-local"] and not makefile.is_file():
+        return False, (
+            "Product worktree has no Makefile and factory.yaml verify is "
+            f"`{profile.verify}`. Add a Makefile with ci-local, or set "
+            "`verify:` in factory.yaml to the product's check command."
+        )
+
     nm = Path(worktree) / "frontend" / "node_modules"
     tsc_bin = nm / ".bin" / "tsc"
     env = _ci_env(worktree)
-    if not tsc_bin.exists():
+    if (Path(worktree) / "frontend").is_dir() and not tsc_bin.exists():
         await _run(["npm", "install", "--silent", "--prefer-offline"], str(Path(worktree) / "frontend"), timeout=120, env=env)
 
     # Auto-fix lint before CI — black and ruff are deterministic formatters;
@@ -241,22 +250,31 @@ async def run_ci(worktree: str) -> tuple[bool, str]:
             waited += 5
 
     try:
-        if await frontend_changed(worktree):
-            rc, out = await _run(["make", "ci-local"], worktree, timeout=_CI_RUN_TIMEOUT, env=env)
+        # Fast path for make ci-local products that also expose lighter targets
+        # (skip expensive frontend-check when frontend/ is untouched).
+        if (
+            verify_cmd == ["make", "ci-local"]
+            and not await frontend_changed(worktree)
+            and profile.source in ("legacy", "file")
+        ):
+            light = ["make", "lint", "test", "check-migrations", "check-rbac", "pre-pr-check"]
+            rc, out = await _run(light, worktree, timeout=_CI_RUN_TIMEOUT, env=env)
+            # If lighter targets don't exist, fall through to full verify
+            if rc != 0 and ("No rule to make target" in out or "missing separator" in out):
+                rc, out = await _run(verify_cmd, worktree, timeout=_CI_RUN_TIMEOUT, env=env)
         else:
-            # Same contract as ci-local minus frontend-check (tsc/Jest/build).
-            rc, out = await _run(
-                ["make", "lint", "test", "check-migrations", "check-rbac", "pre-pr-check"],
-                worktree,
-                timeout=_CI_RUN_TIMEOUT,
-                env=env,
-            )
+            rc, out = await _run(verify_cmd, worktree, timeout=_CI_RUN_TIMEOUT, env=env)
     finally:
         try:
             _CI_LOCK_PATH.unlink(missing_ok=True)
         except Exception:
             pass
 
+    if rc != 0 and "No rule to make target" in out:
+        return False, (
+            f"Verify command `{profile.verify}` failed — missing Make target. "
+            f"Set `verify:` in factory.yaml to a command that exists in this product.\n{out[-2500:]}"
+        )
     return rc == 0, out[-3000:]
 
 
@@ -384,21 +402,6 @@ async def run_js_security(worktree: str) -> tuple[bool, list[dict]]:
     return len(findings) == 0, findings[:20]
 
 
-_SERVICE_PATTERNS: list[tuple[str, str]] = [
-    (r"^frontend/", "frontend"),
-    (r"^services/data-service/|^src/clarion/", "data-service"),
-    (r"^services/correlation-service/|^src/clarion/endpoints/correlation_engine", "correlation-service"),
-    (r"^services/clustering-service/", "clustering-service"),
-    (r"^services/connector-service/", "connector-service"),
-    (r"^services/user-service/", "user-service"),
-    (r"^services/gateway/", "gateway"),
-    (r"^services/ai-service/", "ai-service"),
-    (r"^services/monitoring-service/", "monitoring-service"),
-    (r"^services/telemetry-ingest-service/", "telemetry-ingest-service"),
-    (r"^services/policy-service/", "policy-service"),
-]
-
-
 # Paths that are auto-managed by the doc-writer agent and are left as
 # uncommitted noise in every worktree. Exclude them from changed-file detection
 # so they don't trigger container rebuilds or pollute validation summaries.
@@ -434,14 +437,12 @@ async def _all_changed_files(worktree: str) -> list[str]:
     return list(files)
 
 
-def _detect_services(changed: list[str]) -> list[str]:
-    """Map changed file paths to the services that need rebuilding."""
-    services: set[str] = set()
-    for path in changed:
-        for pattern, svc in _SERVICE_PATTERNS:
-            if re.match(pattern, path):
-                services.add(svc)
-    return sorted(services)
+def _detect_services(changed: list[str], worktree: str | None = None) -> list[str]:
+    """Map changed file paths to the services that need rebuilding (from profile)."""
+    from factory_profile import detect_services_from_paths, load_profile
+
+    profile = load_profile(worktree)
+    return detect_services_from_paths(changed, profile)
 
 
 # ── Improvement #4: PR size gate ─────────────────────────────────────────────
@@ -485,26 +486,36 @@ async def run_pr_size_gate(worktree: str) -> tuple[bool, str]:
 async def run_browser_smoke(worktree: str) -> tuple[bool, str]:
     """Verify the frontend loads without a white screen after a rebuild.
 
-    Only runs when frontend/src/ files changed. Uses two checks:
-    1. curl to confirm nginx returns HTML with the React root element
+    Only runs when frontend/src/ files changed and the product profile has a
+    local UI URL. Uses two checks:
+    1. curl to confirm the app returns HTML with a root element
     2. node --check on the built JS bundle to catch syntax errors in emitted code
     """
-    changed = await _all_changed_files(worktree)
-    if not any(f.startswith("frontend/src/") for f in changed):
-        return True, "no frontend/src changes — browser smoke skipped"
+    from factory_profile import load_profile
 
-    # Check 1: frontend container serves the app shell
+    profile = load_profile(worktree)
+    changed = await _all_changed_files(worktree)
+    ui_prefixes = tuple(profile.ui_paths) or ("frontend/src/",)
+    if not any(any(f.startswith(p) for p in ui_prefixes) for f in changed):
+        return True, "no UI path changes — browser smoke skipped"
+
+    ui_url = profile.ui_url or ""
+    if not ui_url.startswith(("http://", "https://")):
+        return True, "no ui_url in factory.yaml — browser smoke skipped"
+
+    # Check 1: frontend serves the app shell
     rc, html = await _run(
-        ["curl", "-sk", "--max-time", "10", "https://localhost/"],
+        ["curl", "-sk", "--max-time", "10", ui_url],
         worktree, timeout=15,
     )
     if rc != 0:
-        return False, "frontend container did not respond to https://localhost/"
-    if '<div id="root">' not in html:
-        return False, (
-            "frontend returned HTML but <div id=\"root\"> is missing — "
-            "likely a build error or nginx misconfiguration"
-        )
+        return False, f"frontend did not respond to {ui_url}"
+    if '<div id="root">' not in html and "<div id='root'>" not in html:
+        # Template/demo apps may not use React root — soft-pass if we got HTML
+        if "<html" not in html.lower():
+            return False, (
+                f"frontend returned a non-HTML response from {ui_url}"
+            )
 
     # Check 2: node syntax check on the built entry-point bundle
     dist = Path(worktree) / "frontend" / "dist" / "assets"
@@ -518,33 +529,36 @@ async def run_browser_smoke(worktree: str) -> tuple[bool, str]:
             if rc2 != 0:
                 return False, f"Built JS bundle failed syntax check:\n{out2[:800]}"
 
-    return True, "browser smoke passed: app shell loads, bundle syntax OK"
+    return True, f"browser smoke passed: {ui_url} reachable"
 
 
 async def run_container_rebuild(worktree: str) -> dict:
     """Detect which services changed, rebuild their containers, wait healthy, smoke-test.
 
     Returns a dict with 'services', 'rebuilt', 'smoke_passed', 'output'.
-    Skips entirely if only docs/scripts changed.
+    Skips entirely if only docs/scripts changed, or if the product has no
+    docker-compose.yml / no compose_project and no matching services.
     """
+    from factory_profile import apply_compose_project, load_profile
+
+    profile = load_profile(worktree)
     changed = await _all_changed_files(worktree)
-    services = _detect_services(changed)
+    services = _detect_services(changed, worktree)
 
-    if not services:
+    compose_file = Path(worktree) / "docker-compose.yml"
+    if not services or not compose_file.is_file():
         return {"services": [], "rebuilt": True, "smoke_passed": True,
-                "output": "No container changes — docs/scripts only."}
+                "output": "No container changes — docs/scripts only or no Compose file."}
 
-    env = _ci_env(worktree)
-    # Worktrees have a different directory name, which makes docker compose default to a
-    # different project name. Force it to match the main repo so containers aren't duplicated.
-    env.setdefault("COMPOSE_PROJECT_NAME", "clarion")
+    env = apply_compose_project(_ci_env(worktree), profile)
+    # Worktrees have a different directory name; only pin COMPOSE_PROJECT_NAME
+    # when the product profile sets compose_project (never default to a product name).
     output_lines: list[str] = [f"Rebuilding: {', '.join(services)}"]
 
     compose_cmd = ["docker", "compose", "-f", "docker-compose.yml"]
     for svc in services:
-        # All worktrees share the same container per service (see COMPOSE_PROJECT_NAME
-        # above) — serialize build+up for this specific service so a concurrent WO
-        # rebuilding the same service can't recreate the container out from under us.
+        # When compose_project is set, worktrees share containers — serialize
+        # build+up for this service so a concurrent WO can't recreate it under us.
         lock_path = await _with_compose_lock(svc)
         try:
             # Build the image — use cached base images (--pull=false) to avoid Docker Hub

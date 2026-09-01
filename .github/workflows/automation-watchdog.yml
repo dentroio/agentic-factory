@@ -27,7 +27,7 @@ name: Automation Watchdog
 on:
   workflow_run:
     workflows:
-      - "Doc Writer — Update Clarion + Factory Wikis"
+      - "Doc Writer — Update Product + Factory Wikis"
       - "Planning Agent — Draft WO Spec"
       - "Dependabot → WO Bridge"
       - "API Canary"

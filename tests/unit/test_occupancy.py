@@ -1,4 +1,4 @@
-"""External occupancy: Clarion claim files, open PRs, dirty/wrong-branch worktrees."""
+"""External occupancy: product claim files, open PRs, dirty/wrong-branch worktrees."""
 from __future__ import annotations
 
 import importlib.util

@@ -1,7 +1,7 @@
 """External occupancy — refuse factory claim when someone else already has the WO.
 
 Factory dispatch_state only sees factory leases. A human Cursor session, a live
-Clarion claim file, an open GitHub PR, or a dirty `.worktrees/wo-NNN-*` checkout
+product claim file, an open GitHub PR, or a dirty `.worktrees/wo-NNN-*` checkout
 are all "someone is already here" and must block `/api/next` and `/api/claim`.
 
 Importable without apscheduler — unit tests load this module directly.
@@ -61,7 +61,7 @@ def load_claim_file(repo_root: str | Path, wo_num: int, runs_path: str = "docs/f
 
 
 def reason_from_claim(claim: dict | None) -> str | None:
-    """Return a skip reason if the Clarion claim file says this WO is live."""
+    """Return a skip reason if the product claim file says this WO is live."""
     if not claim:
         return None
     status = str(claim.get("status") or "").strip().lower()
@@ -69,7 +69,7 @@ def reason_from_claim(claim: dict | None) -> str | None:
         return None
     agent = str(claim.get("agent") or "").strip() or "unknown"
     if status in LIVE_CLAIM_STATUSES or "progress" in status or status == "claimed":
-        return f"Clarion claim file is {status} (agent={agent})"
+        return f"product claim file is {status} (agent={agent})"
     return None
 
 
