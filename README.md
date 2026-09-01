@@ -8,6 +8,7 @@ This repository is the **engine** (dashboard, orchestrator, runner). Your applic
 |------------|------|
 | Two-repo model | [Adopting](docs/wiki/Adopting.md) |
 | Setup walkthrough | [Getting Started](docs/wiki/Getting-Started.md) |
+| Product profile (`factory.yaml`) | [Product Profile](docs/wiki/Product-Profile.md) |
 | Product template (Use this template) | [dentroio/agentic-factory-template](https://github.com/dentroio/agentic-factory-template) |
 | Existing app | [Bring your own repo](docs/adopters/BYO.md) |
 | Generic agent process | [docs/adopters/PROCESS.md](docs/adopters/PROCESS.md) |
@@ -77,9 +78,11 @@ Four subscription CLI backends (`claude`, `cursor`, `codex`, `gemini`) plus one 
 
 **1. Product:** create a repo from [agentic-factory-template](https://github.com/dentroio/agentic-factory-template) (or point at an existing app — [BYO](docs/adopters/BYO.md)).
 
-**2. Engine:** clone this repo, run `make agent-setup`, set `GITHUB_REPO` to `owner/your-product`, then `make up`.
+**2. Engine:** clone this repo, run `make agent-setup`, set `GITHUB_REPO` to `owner/your-product`, set `LOCAL_REPO_PATH` to that product’s local clone, then `make up` + `make agent-install`.
 
-**3. Manual walkthrough:** [Getting Started](docs/wiki/Getting-Started.md).
+**3. Profile:** keep a root [`factory.yaml`](docs/wiki/Product-Profile.md) in the product (the template already has one).
+
+**4. Manual walkthrough:** [Getting Started](docs/wiki/Getting-Started.md).
 
 **Developing this engine** (not a product): open Claude Code *here* and say:
 

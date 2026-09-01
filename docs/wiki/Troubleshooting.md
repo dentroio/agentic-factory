@@ -1,7 +1,7 @@
 ---
 title: "Troubleshooting"
 description: "Diagnosing and resolving common factory issues: startup, agents, CI failures, and Docker"
-last_verified: 2026-07-21
+last_verified: 2026-08-31
 covers_wos: []
 doc_owner: factory-team
 ---
@@ -9,6 +9,27 @@ doc_owner: factory-team
 # Troubleshooting
 
 Engine vs product: [Adopting](Adopting). If Work Orders do not appear, confirm `GITHUB_REPO` is the **product** `owner/name` and that specs exist under `docs/project_management/work_orders/`.
+
+## Dashboard shows WOs but agents never implement
+
+**Symptom:** Plan/Overview lists Work Orders; runner is “online”; no branches or PRs appear on the product.
+
+**Check `LOCAL_REPO_PATH`:**
+
+```bash
+grep LOCAL_REPO_PATH ~/.config/factory-agent/prefs
+ls -la "$(grep LOCAL_REPO_PATH ~/.config/factory-agent/prefs | cut -d= -f2)"
+```
+
+The path must be an absolute clone of the **same** repo as `GITHUB_REPO`. Empty or pointing at the engine checkout is the usual mistake. Fix prefs, then `make agent-install` (or restart the runner).
+
+**Check `factory.yaml`:** At the product root, confirm `verify:` is a command that works in that clone (`make ci-local`, `npm test`, …). Missing yaml → generic prompts and a fragile default gate. See [Product Profile](Product-Profile).
+
+**Check GitHub identity:** Prefs `GITHUB_REPO=owner/name` must match the product where specs and PRs live — not `dentroio/agentic-factory` unless you are developing the engine.
+
+## Agents mention the wrong product or UI URL
+
+Prompts come from the product worktree’s [`factory.yaml`](Product-Profile). Commit a correct profile (and `patterns_file`) in the product, or temporarily set `FACTORY_PROFILE=/absolute/path/to/profile.yaml`. Do not put passwords in `ui_verify_hint`.
 
 ## Factory won't start
 

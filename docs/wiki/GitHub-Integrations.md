@@ -1,7 +1,7 @@
 ---
 title: "GitHub Integrations"
 description: "Automated code review, planning, verification, and observability via GitHub Actions workflows"
-last_verified: 2026-08-30
+last_verified: 2026-08-31
 covers_wos: []
 doc_owner: factory-team
 ---

@@ -7,6 +7,7 @@
 **Get started**
 - [Adopting](Adopting)
 - [Getting Started](Getting-Started)
+- [Product Profile](Product-Profile)
 - [Daily Workflow](Daily-Workflow)
 
 **Using the factory**

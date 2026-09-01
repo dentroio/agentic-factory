@@ -1,143 +1,144 @@
 ---
 title: "Getting Started"
-description: "Run the engine, point GITHUB_REPO at a product (template or BYO), dispatch the first work order"
-last_verified: 2026-08-30
-covers_wos:
-  - WO-1003
-  - WO-1008
-  - WO-1026
-  - WO-1032
-  - WO-1044
+description: "From zero to first Work Order: product repo, engine setup, LOCAL_REPO_PATH, factory.yaml"
+last_verified: 2026-08-31
+covers_wos: []
 doc_owner: factory-team
 ---
 
 # Getting Started
 
-Two pieces: **this engine** (clone and run), and a **product GitHub repo** the engine watches. You do not copy this repository to start an app. See [Adopting](Adopting) for the split.
+Goal: in about **20–30 minutes**, run the factory engine, point it at a product repo, and complete (or watch) one Work Order.
 
-The whole process takes about 20 minutes.
+You need **two** Git checkouts:
+
+| Checkout | Repo | Role |
+|----------|------|------|
+| Engine | [dentroio/agentic-factory](https://github.com/dentroio/agentic-factory) | Dashboard, orchestrator, agent runner |
+| Product | Your app (or the [template](https://github.com/dentroio/agentic-factory-template)) | Code + Work Order specs + PRs |
+
+If that split is unclear, read [Adopting](Adopting) first.
 
 ## Prerequisites
 
-- **Docker Desktop** — dashboard, orchestrator, and PR watchdog run in Docker
-- **macOS** — secrets live in Keychain; Linux requires editing `.env` manually
-- **GitHub account** — the factory opens PRs on the **product** repo
-- **An AI backend** — at least one of: Claude Pro/Max (CLI), Cursor Pro, Codex, Gemini Advanced, or an Anthropic API key
+| Need | Why |
+|------|-----|
+| **macOS + Docker Desktop** | Supported path today. Secrets go in Keychain; services run in Docker |
+| **GitHub account** | Agents open PRs on the **product** repo |
+| **Fine-grained PAT** (`github_pat_...`) | Contents, Pull requests, Issues, Actions on the product repo **and** this engine. No `gist`. Classic `ghp_` tokens are rejected |
+| **One AI backend** | Claude Pro/Max CLI (recommended), or Cursor / Codex / Gemini, or an Anthropic API key |
 
-## 1. Product repo (template or BYO)
+Linux: you can run Docker services, but you must put secrets in `.env` yourself — there is no Keychain helper yet.
 
-**Fastest:** GitHub → [dentroio/agentic-factory-template](https://github.com/dentroio/agentic-factory-template) → **Use this template**. That gives you a tiny demo app, sample Work Orders, `PROCESS.md`, and `SETUP.md`.
+## Step 1 — Create the product repo
 
-**Existing app:** follow [Bring your own repo](../adopters/BYO.md) — add a WO folder, claim-file folder, labels, and copy [PROCESS.md](../adopters/PROCESS.md) to `AGENT_PROCESS.md`.
+**Fastest path (recommended for first time):**
 
-Clone the **product** repo wherever you work on the app. Clone **this** engine separately:
+1. Open [agentic-factory-template](https://github.com/dentroio/agentic-factory-template) → **Use this template**.
+2. Clone **your** new repo somewhere you will edit code, e.g. `~/src/my-factory-demo`.
+3. In that repo: labels `new-wo`, `agent-pr`, `pm-sync`; protect `main` requiring the **CI** check (see template [SETUP.md](https://github.com/dentroio/agentic-factory-template/blob/main/SETUP.md)).
+
+**Existing app:** follow [Bring your own repo](../adopters/BYO.md) — WO folder, claim files, `AGENT_PROCESS.md`, labels, and a root [`factory.yaml`](Product-Profile).
+
+## Step 2 — Clone and set up the engine
 
 ```bash
 git clone https://github.com/dentroio/agentic-factory.git
 cd agentic-factory
-```
-
-## 2. Labels and protection on the **product** repo
-
-Apply these to `owner/your-product` (the repo you will put in `GITHUB_REPO`), not only to the engine.
-
-**Labels** (Issues → Labels): `new-wo`, `agent-pr`, `pm-sync`. Optional: `documentation`, `breaking-change`.
-
-**Branch protection** on `main`: require a pull request; add your product CI as a required check (the template’s job is named `CI`).
-
-**Actions** (if you paste workflows from [templates/github/](../../templates/github/) into the product): allow Actions, read/write workflow permissions, and “Allow GitHub Actions to create and approve pull requests.” Secrets: `ANTHROPIC_API_KEY` (planning / AI review), optional `GH_PAT` (auto-update PRs), optional `OPENAI_API_KEY` (cloud Codex).
-
-You do **not** need to enable a Wiki tab on the product for the factory to run. Wiki sync on this engine is optional (see [Doc Writer Agent](Doc-Writer-Agent)).
-
-## 3. First-time engine setup
-
-From the **agentic-factory** clone:
-
-```bash
 make agent-setup
 ```
 
-The script stores secrets in macOS Keychain. When it asks for **GitHub repo**, enter the **product** `owner/name` (the template clone or your app) — not `dentroio/agentic-factory` unless you are developing the engine itself.
+When prompted for **GitHub repo**, enter the **product** `owner/name` (the template-derived repo or your app) — **not** `dentroio/agentic-factory` unless you are developing the engine itself.
 
-It also prompts for:
+Also provide:
 
-- **GitHub token** — fine-grained PAT (`github_pat_...`) limited to the product repo and this engine. Contents, Pull requests, Issues, and Actions (read/write). No `gist`. Classic `ghp_` and GitHub CLI `gho_` tokens are rejected.
-- **Cursor API key** — only if `PREFERRED_AGENT=cursor`; press Enter to skip
-- **ntfy** / **Slack** — optional
-- **Anthropic API key** — WO spec generation in the orchestrator
-- **Agent backend** — claude (default), cursor, codex, or gemini
+- Fine-grained GitHub PAT
+- Optional Cursor / Slack / ntfy
+- Anthropic API key (PM + WO drafting)
+- Preferred agent backend (`claude` is the default)
 
-Services start after setup; the dashboard opens in the browser. An `API_SECRET` bearer token is generated and stored in Keychain for orchestrator writes.
+`make agent-setup` starts Docker services and opens the dashboard.
 
-## 4. Verify the dashboard
+## Step 3 — Point the runner at your product checkout
 
-Open [http://localhost:8099](http://localhost:8099). **Settings → Authentication**: GitHub token and Anthropic key badges should be green. If not, re-run `make agent-setup`.
+The dashboard lists Work Orders from GitHub. The **agent runner** needs a **local clone** of that same product to create worktrees and run `verify`.
 
-Confirm the dashboard is listing Work Orders from the **product** repo (template sample WOs, or yours).
+Set this once (prefs file — not Keychain):
 
-## 5. Install the agent runner (recommended)
+```bash
+# ~/.config/factory-agent/prefs  (created by agent-setup)
+GITHUB_REPO=you/your-product
+LOCAL_REPO_PATH=/absolute/path/to/your-product-clone
+PREFERRED_AGENT=claude
+```
+
+Or set `LOCAL_REPO_PATH` in the environment before `make agent-install` / `make agent-once`.
+
+If `LOCAL_REPO_PATH` is wrong or empty, agents cannot implement WOs even when the dashboard shows them.
+
+## Step 4 — Confirm the dashboard
+
+Open [http://localhost:8099](http://localhost:8099).
+
+1. **Settings → Authentication** — GitHub token and Anthropic key look healthy.
+2. **Overview / Plan** — you see Work Orders from the **product** (template ships WO-001 … WO-004).
+3. If the list is empty: wrong `GITHUB_REPO`, missing specs under `docs/project_management/work_orders/`, or token cannot read that repo.
+
+## Step 5 — Install the agent runner
 
 ```bash
 make agent-install
 make agent-status
-make agent-logs
+make agent-logs   # optional: watch claims
 ```
 
-The runner executes WOs on your machine against the product checkout the engine is configured for. It idles when the queue is empty.
+The runner polls the orchestrator and claims open WOs. It idles when the queue is empty.
 
-## 6. Review rules (optional)
-
-`scripts/review_context.txt` in **this** engine is used by workflows that run **here**. If you paste `ai-review.yml` into the **product** repo, put project-specific checks in that repo (copy the script or the file next to the workflow). See [Customization](Customization).
-
-## 7. First work order
-
-**Template demo:** open `docs/project_management/work_orders/WO-001-change-greeting.md` in the product repo. An agent claims it, changes the heading, you open http://localhost:8765 (`make run` in the template), then the PR.
-
-**Any product:** open the **PM** tab at [http://localhost:8099](http://localhost:8099) and describe what you want. Confirm the spec. With the runner installed, watch **Overview**.
-
-When the agent asks you to verify the running product, do that **before** it commits. P2 WOs may auto-merge after CI.
-
-## How the orchestrator manages the queue
-
-The **orchestrator** (WO-1003) polls every `POLL_INTERVAL` seconds (default: 300), reads the WO board from GitHub (`GITHUB_REPO`), and produces a dispatch advisory. It:
-
-- Resolves WO dependencies — a WO is not dispatched until all `Depends on:` entries are marked Done
-- Tracks runner capacity (`MAX_PARALLEL_WOS`)
-- Detects circular dependencies
-- Writes `orchestrator.json` for the **Dispatch Queue** and **Recommendations** panels
-- Optionally posts a daily board summary (`DAILY_SUMMARY_HOUR` and `SUMMARY_ISSUE_NUMBER` in your `.env`)
-
-The orchestrator is advisory in the current release — it recommends actions but does not always autonomously trigger agents. The dashboard still requires a human to approve dispatch when configured that way.
-
-## Cloud agent path (Codex via GitHub Actions)
-
-For WOs with `services: none` (docs-only or lightweight specs), the factory can dispatch work in the cloud without a local runner (WO-1008):
-
-1. POST `workflow_dispatch` to `codex-dispatch.yml` in the **product** repo
-2. The workflow checks out a branch, runs `codex exec`, opens a PR
-3. The orchestrator’s poll loop sees the branch and PR
-
-The product repo needs `.github/workflows/codex-dispatch.yml` and `OPENAI_API_KEY`. Trigger:
+One-shot test without the daemon:
 
 ```bash
-curl -X POST http://localhost:8100/api/dispatch-codex \
-  -H "Content-Type: application/json" \
-  -d '{"wo":"WO-001","slug":"change-greeting"}'
+make agent-once
 ```
 
-## Automatic PR queue management
+## Step 6 — Product profile
 
-`auto-update-prs.yml` (WO-1044) lives in this engine and as a [paste-in](../../templates/github/auto-update-prs.yml) for the product. On push to `main` it updates open auto-merge PRs. Use `GH_PAT` so pushes retrigger CI.
+At the root of the **product** repo, keep a `factory.yaml`. The template already has one. Confirm it before the first WO:
 
-## Automatic WO completion on PR merge
+```yaml
+name: my-app
+verify: "make ci-local"
+ui_url: "http://localhost:8765"
+ui_verify_hint: "Open the demo; confirm the change matches the WO."
+compose_project: ""
+patterns_file: "docs/factory/patterns.md"
+```
 
-When a PR with `WO-NNN` in the title merges, the PR watchdog (WO-1026) updates the claim file and spec on the **product** repo.
+Details and optional fields: [Product Profile](Product-Profile). Agent prompts use these fields — never another company’s product name or login.
 
-## Next steps
+## Step 7 — First Work Order (template demo)
 
-- [Adopting](Adopting) — engine vs product, what not to copy
+1. In the **product** repo, open `docs/project_management/work_orders/WO-001-change-greeting.md`.
+2. With the runner installed, wait for a claim (or dispatch from the PM / Overview UI).
+3. When the agent asks you to verify: in the product clone run `make run`, open [http://localhost:8765](http://localhost:8765), confirm the heading.
+4. Approve; the agent opens a PR on the **product** repo (not on agentic-factory).
+
+## What success looks like
+
+| Check | OK when |
+|-------|---------|
+| Dashboard | Lists product WOs; settings green |
+| Runner | `make agent-status` shows loaded; logs show polling |
+| First WO | PR opens on **product** GitHub; verify URL is your app |
+| Engine prefs | `GITHUB_REPO` is your product, not a random private app |
+
+## Next reading
+
 - [Daily Workflow](Daily-Workflow) — day-to-day loop
-- [Work Orders](Work-Orders) — spec shape and queue
-- [GitHub Integrations](GitHub-Integrations) — engine workflows vs product paste-ins
-- [Customization](Customization) — review rules and CI
-- [Adopter kit](../adopters/README.md) — PROCESS, contract, BYO
+- [Work Orders](Work-Orders) — specs and risk tiers
+- [Product Profile](Product-Profile) — `factory.yaml`
+- [Troubleshooting](Troubleshooting) — empty queue, offline runner, auth
+- [Essay series](../blog/README.md) — why Work Orders look like this
+
+## Optional: paste product GitHub Actions
+
+Planning-agent, AI review, etc. are **optional**. Copy from [templates/github/](../../templates/github/) into the **product** `.github/workflows/` only. Never replace this engine’s live workflows with those files.

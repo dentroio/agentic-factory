@@ -1,16 +1,19 @@
-# CONTRACT.md — what the factory engine already expects
+# CONTRACT.md — what the factory engine expects from a product repo
 
-The dashboard and orchestrator read GitHub. They do **not** require a private product repo. Set `GITHUB_REPO` (or the dashboard Settings equivalent) to **your** `owner/name`.
+Set `GITHUB_REPO` (or dashboard Settings) to your product `owner/name`. The dashboard and orchestrator read GitHub; the agent runner uses `LOCAL_REPO_PATH` for a local clone of that same repo.
 
-This document names the **shapes** already in use. Do not change factory services to “support” them — they already do.
+This document names the **shapes** already supported. You do not need to change engine services to “enable” them.
 
-## Paths in the target repo
+## Paths in the product repo
 
 | Path | Role |
 |------|------|
-| `docs/project_management/work_orders/WO-NNN-slug.md` | WO spec markdown (override with repo variable `WO_SPECS_DIR` if needed) |
+| `docs/project_management/work_orders/WO-NNN-slug.md` | WO spec markdown (override with `WO_SPECS_DIR` if needed) |
 | `docs/factory/runs/WO-NNN.json` | Claim file on the WO branch |
+| `factory.yaml` | Product profile — verify, UI, Compose, patterns ([wiki](../wiki/Product-Profile.md)) |
+| `docs/factory/patterns.md` | Optional patterns file referenced by `factory.yaml` |
 | `docs/factory/PLAN.json` | Optional dispatch queue |
+| `AGENT_PROCESS.md` | Process for agents working **in this product** |
 
 ## Branches
 
@@ -20,7 +23,7 @@ This document names the **shapes** already in use. Do not change factory service
 | `fix/short-description` | Hotfix |
 | `docs/short-description` | Docs-only |
 
-## GitHub labels (create on the **target** repo)
+## GitHub labels (on the **product** repo)
 
 | Label | Used by |
 |-------|---------|
@@ -28,7 +31,7 @@ This document names the **shapes** already in use. Do not change factory service
 | `agent-pr` | CI auto-fix / review applier may commit back |
 | `pm-sync` | Bookkeeping PRs that must not retrigger mark-done |
 
-## Secrets (on the **target** repo, if you enable those workflows)
+## Secrets (on the **product** repo, only if you paste those workflows)
 
 | Secret | Used by |
 |--------|---------|
@@ -37,11 +40,12 @@ This document names the **shapes** already in use. Do not change factory service
 
 ## Status checks
 
-Protect `main` with a required check you actually run (often named **PR Gate**). The factory does not replace your language-specific CI.
+Protect `main` with a required check you actually run (template uses **CI**). The factory does not replace your language-specific CI — put the command agents must pass in `factory.yaml` → `verify:`.
 
-## Engine vs target
+## Engine vs product
 
-| This repo (`agentic-factory`) | Target repo (`GITHUB_REPO`) |
-|-------------------------------|-----------------------------|
-| Status site, orchestrator, runner | WO specs, code, PRs |
-| Keep existing workflows as-is | Copy paste-ins from `templates/github/` if you want planning-agent etc. |
+| This repo (`agentic-factory`) | Product (`GITHUB_REPO`) |
+|-------------------------------|-------------------------|
+| Status site, orchestrator, runner | WO specs, application code, PRs |
+| Keep existing workflows as-is | Optional paste-ins from `templates/github/` |
+| Prefs: `GITHUB_REPO` + `LOCAL_REPO_PATH` | Root `factory.yaml` |
