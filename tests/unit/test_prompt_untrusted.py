@@ -71,9 +71,11 @@ def test_build_prompt_tells_agent_not_to_run_ci_local():
         "/tmp/worktree",
         "cursor",
     )
-    assert "Do NOT run `make ci-local` in this session" in prompt
-    assert "Do not run make ci-local yourself" in prompt
+    assert "Do NOT run the product verify command in this session" in prompt
+    assert "Do not run the product verify command yourself" in prompt
     assert "← MUST PASS before proceeding" not in prompt
+    assert "Clarion" not in prompt
+    assert "Clarion#Admin" not in prompt
 
 
 def test_format_prior_context_wraps_rejection_and_ci_analysis():
