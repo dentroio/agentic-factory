@@ -1,127 +1,84 @@
 ---
 title: "Work Orders"
-description: "WO spec structure, priority tiers, effort sizes, and full queue lifecycle"
-last_verified: 2026-08-30
+description: "Spec shape, risk tiers, effort, and queue lifecycle in the product repo"
+last_verified: 2026-08-31
 covers_wos: []
 doc_owner: factory-team
 ---
 
 # Work Orders
 
-A work order (WO) is the unit of work the factory dispatches to an agent. Specs live in the **product** repo (`GITHUB_REPO`), default path `docs/project_management/work_orders/WO-NNN-slug.md`. Generic template and synthetic examples: [docs/adopters/WO_SPEC_FORMAT.md](../adopters/WO_SPEC_FORMAT.md). Claim files: [CLAIM_SCHEMA.md](../adopters/CLAIM_SCHEMA.md).
+A Work Order (WO) is one unit of agent work. Specs live in the **product** (`GITHUB_REPO`), default path:
 
-## What a WO spec contains
+`docs/project_management/work_orders/WO-NNN-slug.md`
 
-WO specs are markdown files stored in the product repo at `docs/project_management/work_orders/WO-NNN-slug.md` (override with `WO_SPECS_DIR`). The key sections:
+Override with `WO_SPECS_DIR` if needed. Format and examples: [WO_SPEC_FORMAT.md](../adopters/WO_SPEC_FORMAT.md). Claims: [CLAIM_SCHEMA.md](../adopters/CLAIM_SCHEMA.md). Process: [PROCESS.md](../adopters/PROCESS.md). Verify command: product [`factory.yaml`](Product-Profile).
 
-| Field | Purpose |
-|-------|---------|
-| **Title** | Short description of what's being built |
-| **Priority** | P0–P3 — controls merge workflow (see below) |
-| **Effort** | XS / S / M / L / XL — size estimate |
-| **Problem** | What's broken or missing, and why it matters |
-| **What to Build** | Concrete description of the implementation |
-| **Acceptance Criteria** | Verifiable checklist — the agent uses this as the exit condition, and the post-merge verifier checks it against the diff |
-| **Documentation Required** | Files that must be updated as part of this WO (optional) |
-| **Execution** | Agent instructions injected at the start of every prompt — project-specific rules, service names, make targets |
-| **Notes** | Context that helps but does not gate completion |
+## Spec sections
+
+| Section | Purpose |
+|---------|---------|
+| **Title / Priority / Effort** | Identity and merge policy |
+| **Problem** | Why this exists |
+| **What to Build** | Concrete implementation — agents should not invent architecture |
+| **Acceptance Criteria** | Verifiable checklist (agent exit + post-merge verifier) |
+| **Documentation Required** | Optional doc files that must change |
+| **Execution** | Branch name, risk tier, PR title, PM updates — follow exactly |
+| **Notes** | Context that helps but does not gate done |
 
 ## Priority tiers
 
-Priority determines what the agent does after opening a PR.
-
-| Tier | Use for | After PR is opened |
+| Tier | Use for | After the PR opens |
 |------|---------|-------------------|
-| **P0** | Auth changes, security fixes, data loss risk | Human reviews and approves manually |
-| **P1** | Core features, schema changes, API contracts | Human reviews and approves manually |
-| **P2** | Additive features, tests, refactors, docs | Agent sets `--auto-merge`; merges when CI passes |
-| **P3** | Docs and PM files only, no code | Agent opens PR → `gh pr merge --auto --squash` |
+| **P0** | Auth, security, data-loss risk | Human merges |
+| **P1** | Core features, schema, API contracts | Human merges |
+| **P1** pre-dispatch | Same | Often needs Approve on Overview first |
+| **P2** | Additive features, tests, refactors | Agent may `--auto` after CI |
+| **P3** | Docs / PM only | Agent `--auto` after CI |
 
-When in doubt, use P1 for anything you would want to read before it lands in main. Use P2 for anything where CI passing is sufficient validation.
+Prefer P1 when you want to read the diff before merge; P2 when green CI is enough.
 
-## Effort sizes
+## Effort
 
-Effort is an estimate, not a budget. It is used for velocity tracking and for the PM assistant's planning context.
+XS → XL estimates for velocity and PM planning — not hard budgets. Split XL work.
 
-| Size | Rough scope |
-|------|------------|
-| XS | A few lines — config change, copy fix |
-| S | A single focused function or endpoint |
-| M | A feature with tests, typically 1–3 hours of agent work |
-| L | Multiple services or files, likely requires iteration |
-| XL | Multi-session, large scope — consider splitting |
+## Create
 
-## Creating a WO
+| Path | How |
+|------|-----|
+| UI | **Settings → Plan → Create WO** — plain language → AI draft → Save |
+| PM | Describe → confirm → create ([PM Chat](PM-Chat)) |
+| GitHub | Product issue labeled `new-wo` + pasted `planning-agent.yml` |
 
-**From the UI (recommended):** Go to **Settings → Plan → Create WO**. Write a plain-language description of what you want to build. Choose which AI backend generates the structured spec. The AI produces a draft with all fields pre-filled based on your description and the current queue context. Review and edit the fields, then click **Save**. The WO is written to disk and registered in the queue immediately.
+## Edit / hold
 
-**From the PM chat:** Describe what you want. The PM drafts the spec inline and creates the WO when you confirm. See [PM Chat](PM-Chat.md).
+**Settings → Plan:** ✎ edit markdown; ⏸ hold (no claim); ▶ resume. Holds survive restarts. For an in-flight WO, also post in the thread so the agent sees the change.
 
-**From a GitHub issue:** Label an issue `new-wo` **on the product repo** (if that repo has `planning-agent.yml` — paste from [templates/github/](../../templates/github/)). The planning agent opens a spec PR. See [GitHub Integrations](GitHub-Integrations.md).
+## Lifecycle
 
-## Editing a WO
-
-Each WO row in **Settings → Plan** has an ✎ button. Clicking it opens the raw markdown spec in an editor. Saving writes the updated file to disk. The agent picks up the updated spec on its next poll cycle — no restart needed.
-
-Changes to a WO that is already in progress (status `in_progress`) take effect if the agent has not yet reached the step they affect. For in-flight changes, post a message in the WO thread to let the agent know what changed.
-
-## Holding and resuming a WO
-
-**⏸ Hold** prevents the orchestrator from claiming a WO. Use it when:
-- A dependency is not merged yet
-- You want to defer work without removing it from the queue
-- You need to block dispatch until external conditions are met
-
-**▶ Resume** re-enables a held WO. The hold state persists across factory restarts.
-
-Hold and resume buttons appear on each WO row in **Settings → Plan**.
-
-## How a WO moves through the queue
-
-```
+```text
 open → claimed → in_progress → review → done
 ```
 
 | Status | Meaning |
 |--------|---------|
-| `open` | In the queue, waiting to be claimed |
-| `claimed` | Agent has created the claim file and started the branch |
-| `in_progress` | Agent is actively implementing; sending heartbeats |
-| `review` | Quality gate passed; waiting for your approval |
-| `done` | PR merged; verifier ran |
+| `open` | Eligible when deps and phase allow |
+| `claimed` | Claim file on the WO branch; agent started |
+| `in_progress` | Heartbeats / checkins |
+| `review` | Quality gate passed; waiting on you |
+| `done` | Merged; verifier may run |
 
-The orchestrator auto-removes WOs from the queue when their spec file shows a done status (✅ Complete, ⏸ Deferred). No manual cleanup needed.
+Stuck `claimed` with no heartbeats → restart runner (`make agent-install` / `make agent-run`). See [Troubleshooting](Troubleshooting).
 
-If a WO is stuck at `claimed` but the agent is not sending heartbeats (visible in the Overview tab), the runner may have crashed. Restart it with `make agent-run`. The WO will be re-claimed.
+## `depends_on` and `blocks_milestones`
 
-## The `blocks_milestones` field
-
-A WO can declare that it must complete before certain milestones are considered done:
-
-```
-blocks_milestones: ["beta-launch", "q3-release"]
-```
-
-The milestone progress card in the Plan tab counts down WOs with `blocks_milestones` referencing that milestone. When all blocking WOs are done, the milestone is complete.
-
-Set this field in the WO edit form or when creating via the PM chat ("this should block the Beta Launch milestone").
-
-## The `depends_on` field
-
-A WO can declare prerequisites:
-
-```
+```text
 depends_on: ["WO-370", "WO-371"]
+blocks_milestones: ["beta-launch"]
 ```
 
-The orchestrator skips a WO when any of its dependencies have not yet reached `done`. Once all dependencies complete, the WO becomes eligible and will be picked up in normal queue order.
-
-The PM assistant reads `depends_on` from the queue and includes this context in planning conversations.
+Orchestrator skips WOs with unfinished dependencies. Milestone cards count blocking WOs — [Phases and Milestones](Phases-and-Milestones).
 
 ## Programs
 
-Programs are a free-text label on WOs that group related work into an initiative. Examples: `"Launch Program"`, `"Identity-to-Policy"`, `"Q3 Hardening"`.
-
-Set the program label in the WO spec's metadata. The PM tab groups WOs by program label and shows velocity and progress per program. There is no programs management screen — the label is all you need.
-
-Programs do not affect dispatch order or merge behavior. They are purely organizational.
+Free-text initiative labels (e.g. `Launch`). Organizational only — PM tab groups by program; no effect on merge rules.
