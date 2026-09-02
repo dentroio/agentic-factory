@@ -1,11 +1,12 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-01
+last_verified: 2026-09-02
 covers_wos:
   - WO-1008
   - WO-1053
   - WO-1082
+  - WO-1083
 doc_owner: factory-team
 ---
 
@@ -37,6 +38,12 @@ Disable unused providers so dispatch never selects them. Preferred backend: **Se
 | `claude-api` only | No host CLI; still needs product checkout for real code WOs |
 
 If the dashboard shows WOs but host backends never claim, fix `LOCAL_REPO_PATH` first ([Troubleshooting](Troubleshooting)).
+
+### Runner agent start/stop and pause
+
+`POST /api/runner/agents/{name}/start` and `PUT /api/runner/agents/{name}` (used to configure a host runner agent, including toggling `start: true`) only accept allowlisted agent names — `claude` / `cursor` / `codex` / `gemini` — and allowlisted configure keys (`api_key`, `domain_filter`, `start`). Unknown names or keys return `400`.
+
+Both routes are gated by the factory's pause state: while the factory is paused, starting or configure-starting a runner agent returns `423`, the same way `/api/claim` already refuses while paused. Stop and delete remain allowed while paused so an in-progress drain can finish cleanly.
 
 ## Cloud Codex (GitHub Actions)
 
