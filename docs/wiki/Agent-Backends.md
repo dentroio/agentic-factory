@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-02
+last_verified: 2026-09-03
 covers_wos:
   - WO-1008
   - WO-1053
