@@ -12,7 +12,6 @@ This repository is the **engine** (dashboard, orchestrator, runner). Your applic
 | Product template (Use this template) | [dentroio/agentic-factory-template](https://github.com/dentroio/agentic-factory-template) |
 | Existing app | [Bring your own repo](docs/adopters/BYO.md) |
 | Generic agent process | [docs/adopters/PROCESS.md](docs/adopters/PROCESS.md) |
-| Essays | [docs/blog](docs/blog/README.md) |
 | Full wiki | [docs/wiki/Home.md](docs/wiki/Home.md) |
 
 Do **not** use this engine repo’s GitHub “Use this template” button to start an app. That copies Docker services. Use [agentic-factory-template](https://github.com/dentroio/agentic-factory-template) for a demo product, then replace `demo/` with your code.
@@ -56,7 +55,6 @@ Four subscription CLI backends (`claude`, `cursor`, `codex`, `gemini`) plus one 
 | File / Dir | Purpose |
 |------------|---------|
 | `docs/adopters/` | Generic process, contract, BYO checklist — for **product** repos |
-| `docs/blog/` | Public essay series on Work Orders and agents |
 | `templates/github/` | Workflow **copies** to paste into a product repo (do not replace this engine’s live Actions) |
 | `AGENT_PROCESS.md` | Process for agents working **on this engine** |
 | `CLAUDE.md` / `AGENTS.md` / `.cursor/rules/agent-process.mdc` | Engine front doors |

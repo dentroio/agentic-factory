@@ -12,7 +12,6 @@ This folder is the **product-side** process: how to specify work, claim it, and 
 | [CLAIM_SCHEMA.md](CLAIM_SCHEMA.md) | `docs/factory/runs/WO-NNN.json` |
 | [BYO.md](BYO.md) | Checklist for an existing codebase |
 | [../wiki/Product-Profile.md](../wiki/Product-Profile.md) | `factory.yaml` — verify, UI URL, patterns |
-| [../blog/README.md](../blog/README.md) | Essay series on why this process exists |
 
 ## Start here
 
