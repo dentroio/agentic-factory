@@ -15,8 +15,15 @@
     <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
     Credentials saved. Active connections will use the new values on next call.
     {% if restart_required %}
-    <span class="ml-auto text-[10px] font-mono text-amber-400">restart may be needed for some services</span>
+    <span class="ml-auto text-[10px] font-mono text-amber-400">Path changed — run make restart to remount</span>
     {% endif %}
+  </div>
+  {% endif %}
+
+  {% if restart_required %}
+  <div class="mb-4 p-3 border border-amber-500/30 bg-amber-950/10 rounded text-sm text-amber-200">
+    Local product path was updated. Run <code class="font-mono text-amber-100">make restart</code> so Docker remounts the checkout, then
+    <code class="font-mono text-amber-100">make agent-stop &amp;&amp; make agent-start</code> so the runner reloads prefs.
   </div>
   {% endif %}
 
@@ -59,10 +66,59 @@
             placeholder="owner/repo"
             class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
           <p class="text-[10px] text-slate-600 mt-1">
-            The repository where WO specs and PLAN.json live.
+            The product repository where WO specs and PRs live.
           </p>
         </div>
 
+      </div>
+    </div>
+
+    {# ── Product checkout (host prefs via agent-runner) ─────────────── #}
+    <div class="glass-panel overflow-hidden">
+      <div class="px-5 py-3 border-b border-slate-800/40 flex items-center justify-between">
+        <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Product checkout</span>
+        {% if product and product.ready_for_agents %}
+        <span class="text-[10px] font-mono text-emerald-400">ready</span>
+        {% elif product_runner_offline %}
+        <span class="text-[10px] font-mono text-amber-400">agent-runner offline</span>
+        {% else %}
+        <span class="text-[10px] font-mono text-slate-500">not ready</span>
+        {% endif %}
+      </div>
+      <div class="px-5 py-4 space-y-4">
+        <p class="text-[10px] text-slate-500">
+          Agents need a local clone on this machine. Set an absolute path, or clone from GitHub.
+          No need to edit prefs or env files by hand.
+        </p>
+
+        <div>
+          <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">Local directory</label>
+          <input type="text" name="local_repo_path" value="{{ product.local_repo_path if product else '' }}"
+            placeholder="/Users/you/src/my-app"
+            class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+          <p class="text-[10px] text-slate-600 mt-1">
+            Absolute path under your home directory. After changing this, run <code class="text-slate-400">make restart</code> so Docker remounts the checkout.
+          </p>
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+            <input type="checkbox" name="clone_product" value="1" class="rounded border-slate-600 bg-slate-900">
+            Clone repository into the default location if the path is empty or missing
+          </label>
+          <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+            <input type="checkbox" name="scaffold_product" value="1" {% if not product or not product.has_factory_yaml %}checked{% endif %}
+              class="rounded border-slate-600 bg-slate-900">
+            Prepare factory files (<code class="text-slate-400">factory.yaml</code>, WO folders, <code class="text-slate-400">AGENT_PROCESS.md</code>)
+          </label>
+        </div>
+
+        {% if product %}
+        <div class="text-[10px] font-mono text-slate-500 space-y-0.5">
+          <div>path exists: {{ product.exists }} · git: {{ product.is_git }} · factory.yaml: {{ product.has_factory_yaml }} · WO dir: {{ product.has_wo_dir }}</div>
+          {% if product.local_path_error %}<div class="text-rose-400">{{ product.local_path_error }}</div>{% endif %}
+        </div>
+        {% endif %}
       </div>
     </div>
 

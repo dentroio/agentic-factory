@@ -76,9 +76,9 @@ Four subscription CLI backends (`claude`, `cursor`, `codex`, `gemini`) plus one 
 
 **1. Product:** create a repo from [agentic-factory-template](https://github.com/dentroio/agentic-factory-template) (or point at an existing app — [BYO](docs/adopters/BYO.md)).
 
-**2. Engine:** clone this repo, run `make agent-setup`, set `GITHUB_REPO` to `owner/your-product`, set `LOCAL_REPO_PATH` to that product’s local clone, then `make up` + `make agent-install`.
+**2. Engine:** clone this repo, `make up` + `make agent-install`, open the dashboard. Use **Settings → Get Started** for GitHub, product checkout, and agent/LLM. Run `make doctor` before dispatching.
 
-**3. Profile:** keep a root [`factory.yaml`](docs/wiki/Product-Profile.md) in the product (the template already has one).
+**3. Profile:** Get Started can scaffold root [`factory.yaml`](docs/wiki/Product-Profile.md). CLI fallback: `make init PRODUCT=/path/to/app`.
 
 **4. Manual walkthrough:** [Getting Started](docs/wiki/Getting-Started.md).
 

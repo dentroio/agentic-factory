@@ -1,6 +1,6 @@
 # Dentro AI Factory — Progress Tracker
 
-_Last updated: 2026-08-30_
+_Last updated: 2026-09-04_
 
 ---
 
@@ -19,6 +19,7 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
+| WO-1091 | Adoption DX: factory doctor, init, stranger-clone checks | P2 | ✅ Complete | 2026-09-04 |
 | WO-1090 | Agent Runner Authentication & Zero-Trust Hardening | P2 | 🟡 In Progress | — |
 | WO-1089 | Multi-Repo Autonomous Orchestrator Dispatch | P2 | ✅ Complete | 2026-08-30 |
 | WO-1088 | Durable Orchestrator Run History & Audit Trail | P2 | ✅ Complete | 2026-08-30 |

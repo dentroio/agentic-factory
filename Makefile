@@ -5,7 +5,7 @@ LOG_DIR := $(HOME)/Library/Logs/factory-agent
 PYTHON ?= python3
 
 .PHONY: help \
-        agent-setup \
+        agent-setup doctor init \
         test pre-pr-check secrets ci-local \
         up down logs restart \
         agent-install agent-remove agent-start agent-stop agent-logs agent-status agent-once \
@@ -18,6 +18,15 @@ help:  ## Show this help
 
 agent-setup:  ## First-time setup — stores secrets in macOS Keychain
 	@bash scripts/agent-setup.sh
+
+doctor:  ## Validate engine prefs + product wiring (optional: DOCTOR_ARGS='--product /path')
+	@$(PYTHON) scripts/factory_doctor.py $(DOCTOR_ARGS)
+
+init:  ## Scaffold factory.yaml + WO dirs into a product repo (PRODUCT=/path/to/app)
+	@test -n "$(PRODUCT)" || { \
+	  echo "Usage: make init PRODUCT=/absolute/path/to/your-app [INIT_ARGS='--sample-wo']"; \
+	  exit 2; }
+	@$(PYTHON) scripts/factory_init.py --path "$(PRODUCT)" --non-interactive $(INIT_ARGS)
 
 # ── CI gate ──────────────────────────────────────────────────────────────────
 # `make ci-local` is documented across AGENT_PROCESS.md, README.md, CLAUDE.md,

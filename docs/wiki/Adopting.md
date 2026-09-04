@@ -6,6 +6,7 @@ covers_wos:
   - WO-1008
   - WO-1052
   - WO-1058
+  - WO-1091
 doc_owner: factory-team
 ---
 
@@ -30,6 +31,8 @@ Your **product** is a separate GitHub repository. The engine already supports an
 |------|------------|-------------|
 | `agentic-factory` (engine) | Dashboard, orchestrator, agent-runner, and the GitHub Actions that keep the engine itself healthy | Clone it once and run it — do not fork or duplicate it per product. Keep it updated from upstream. |
 | `you/app` (product) | Your actual application — where Work Orders, code, and PRs live | Point the engine at it with `GITHUB_REPO` (for the orchestrator/status site) and `LOCAL_REPO_PATH` (for the local agent-runner). This can be a brand-new repo created for the factory or an existing repo you already maintain (bring-your-own). |
+
+**Validate wiring:** prefer **Settings → Get Started** (GitHub → product → agent/LLM). From the engine checkout, `make doctor` checks the prefs that flow writes. CLI fallback: `make init PRODUCT=/path/to/app` (see [BYO](../adopters/BYO.md)).
 
 The orchestrator reads WO spec files from a configurable path in the product repo (`WO_PATH`, default `docs/project_management/work_orders`) — set this if your product keeps specs somewhere else.
 

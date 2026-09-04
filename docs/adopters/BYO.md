@@ -6,7 +6,22 @@ The engine already takes any GitHub repo via `GITHUB_REPO`. It does **not** need
 
 ## Checklist
 
+### 0. Scaffold (recommended)
+
+**Preferred — dashboard:** Settings → Get Started (GitHub, product checkout, agent/LLM). Then `make doctor`.
+
+**CLI fallback** from your **engine** checkout:
+
+```bash
+make init PRODUCT=/absolute/path/to/your-app INIT_ARGS='--sample-wo'
+make doctor DOCTOR_ARGS="--product /absolute/path/to/your-app --skip-network"
+```
+
+That writes `factory.yaml`, `AGENT_PROCESS.md` (from [PROCESS.md](PROCESS.md)), WO/claim folders, and an optional docs-only WO-001. Then finish the GitHub steps below.
+
 ### 1. Folders and process
+
+If you skipped `make init`, create these by hand:
 
 - [ ] `docs/project_management/work_orders/` — WO markdown (or set `WO_SPECS_DIR`)
 - [ ] `docs/factory/runs/` — claim JSON (gitkeep is fine)
@@ -37,10 +52,12 @@ patterns_file: "docs/factory/patterns.md"
 
 ### 4. Point the engine
 
-- [ ] Engine: `make agent-setup` → `GITHUB_REPO=owner/your-app`
-- [ ] Prefs: `LOCAL_REPO_PATH=/absolute/path/to/your-app-clone`
-- [ ] `make up` + `make agent-install`
+- [ ] Engine: `make up` + `make agent-install`
+- [ ] **Settings → Get Started** — PAT, repo, local path/clone, agent/LLM
+- [ ] `make doctor` — all hard checks green
 - [ ] Dashboard lists your WOs; run one sample WO end-to-end
+
+(CLI alternative: `make agent-setup` + prefs — not required when using Get Started.)
 
 ## What “done” means for BYO
 
