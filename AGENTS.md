@@ -15,9 +15,10 @@ Read `ENGINEER.md` and act as the Project Engineer. Run `python3 scripts/factory
 ## What you need to know
 
 - All work is organized into Work Orders (WOs) in `docs/project_management/work_orders/`
-- Every WO has a `## Execution` section — that tells you the branch name, risk tier, PR title, and what PM docs to update
+- Dispatch-ready WOs use the canonical shape: `Problem`, `What to Build`, `Out of scope` / `Do NOT change`, `Acceptance Criteria`, and `Execution`
+- Every WO has `**Services:**` metadata and a `## Execution` section — together they tell you what to rebuild or verify, the branch name, risk tier, PR title, and human checkpoint
 - Run `make ci-local` before opening any PR — it mirrors the GitHub Actions gate exactly
-- Risk tier determines merge authority: P0/P1 = human merge, P2/P3 = auto-merge after CI (both go through a PR — the branch ruleset rejects direct pushes to `main` for any tier)
+- Risk tier determines merge authority: P0/P1 = human merge, P2 = human verifies the running product before commit, then auto-merge after CI + review, P3 = docs-only PR with no product checkpoint
 
 ## Quick start
 
@@ -30,13 +31,15 @@ git checkout -b wo/NNN-slug
 
 # 3. Implement
 
-# 4. Gate
+# 4. Verify running behavior and stop for human checkpoint on P0-P2
+
+# 5. Gate
 make ci-local
 
-# 5. PR
+# 6. PR
 gh pr create --title "feat(scope): WO-NNN — Title" --body "..."
 
-# 6. Merge (P2 only)
+# 7. Merge (P2 only, after CI + review)
 gh pr merge --auto --squash
 ```
 

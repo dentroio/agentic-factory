@@ -141,6 +141,23 @@ COMPLETION_CASES = [
         {"head": {"ref": "wo/493-backfill-wo489-wo491-docs"}, "title": "WO-493: Backfill WO-489 spec doc; document abandoned WO-491"},
         [],
     ),
+    (
+        "docs(pm) spec PR on a docs/ branch does not complete the WO it specs "
+        "(orphan-closer WO-547 regression)",
+        {
+            "head": {"ref": "docs/wo-547-communication-cohesion-check-spec"},
+            "title": "docs(pm): WO-547 — communication-cohesion split check spec",
+        },
+        [],
+    ),
+    (
+        "a docs(pm) title still completes the WO when it rides its own wo/NNN- branch",
+        {
+            "head": {"ref": "wo/551-enforcement-runbook"},
+            "title": "docs(pm): WO-551 — write the enforcement runbook",
+        },
+        [551],
+    ),
 ]
 
 

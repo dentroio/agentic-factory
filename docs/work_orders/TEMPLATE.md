@@ -1,14 +1,14 @@
 # WO-NNN — Title
 
 **Created:** YYYY-MM-DD
-**Priority:** P1 | P2 | P3
+**Priority:** P0 | P1 | P2 | P3
 **Effort:** XS | S | M | L | XL
 **Services:** frontend | data-service | connector-service | correlation-service | docs | none
 **Depends on:** WO-NNN (or —)
 
 ---
 
-## Background
+## Problem
 
 Why this exists. What pain it solves. What went wrong without it.
 Reference the specific incident, failure mode, or user need that drives this work.
@@ -17,6 +17,14 @@ Reference the specific incident, failure mode, or user need that drives this wor
 
 Concrete implementation spec. Pseudo-code for key logic. Exact file names and function signatures.
 No ambiguity — the agent should not need to make significant design decisions.
+
+## Out of scope
+
+Tempting adjacent work this WO deliberately refuses.
+
+## Do NOT change
+
+Hard invariants the implementation must preserve, if any.
 
 ## Requirements
 
@@ -51,3 +59,13 @@ Exhaustive list of files to create or modify. No surprises for the agent.
 |--------|------|---------|
 | Create | `path/to/new_file.py` | What it does |
 | Modify | `path/to/existing.py` | What changes |
+
+## Execution
+
+- **Branch:** `wo/NNN-slug`
+- **Risk tier:** P0 | P1 | P2 | P3
+- **Services:** frontend | data-service | connector-service | correlation-service | docs | none
+- **PR title:** `type(scope): WO-NNN — Title`
+- **Pre-PR gate:** `make ci-local`
+- **Depends on:** none | WO-NNN
+- **User verification required:** Yes — exact steps / No
