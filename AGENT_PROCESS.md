@@ -19,7 +19,7 @@ Every work order (WO) is assigned a risk tier that determines who can merge.
 |------|-------|-----------------|-----------------|
 | **P0** | Auth, security, multi-tenant data isolation, breaking API contracts | Yes (`fix/` or `wo/`) | **Human must approve and merge — no exceptions** |
 | **P1** | DB schema migrations, new API routes, cross-service interfaces | Yes (`wo/`) | **Human must approve and merge** |
-| **P2** | Feature additions, UI changes, new tests, refactors | Yes (`wo/`) | Auto-merge after CI passes (`gh pr merge --auto --squash`) |
+| **P2** | Feature additions, UI changes, new tests, refactors | Yes (`wo/`) | Human verifies running product, then auto-merge after CI + review |
 | **P3** | Docs, PM files, comments, typos | Yes (`docs/` or `wo/`) | Auto-merge after CI passes (`gh pr merge --auto --squash`) |
 
 **Hotfix track:** For urgent bug fixes that don't need a full WO spec, use a `fix/` branch. See §5.
@@ -193,30 +193,39 @@ The `ci-local` target should include:
 Every WO spec lives at `docs/project_management/work_orders/WO-NNN-slug.md` and includes:
 
 ```markdown
-# WO-NNN: Title
+# WO-NNN — Title
 
 **Status:** 📋 Open | 🔄 In Progress | ✅ Complete (YYYY-MM-DD)
 **Priority:** P0 | P1 | P2 | P3
-**Effort:** ~Xh
+**Effort:** S | M | L | XL
+**Services:** service-name | docs | none
+**Depends on:** none | WO-NNN
 
-## Background
-Why this work is needed.
+## Problem
+Why this work is needed. Describe the visible symptom, file path, route,
+error message, or operator pain. Do not smuggle the fix into this section.
 
-## What Needs to Happen
-Specific, actionable steps.
+## What to Build / What to Fix
+Specific, actionable steps: files, functions, API contracts, schema, UI behavior,
+and technical verification.
+
+## Out of scope
+Tempting extras this WO deliberately refuses.
+
+## Do NOT change
+Hard invariants the implementation must preserve, if any.
 
 ## Acceptance Criteria
 Numbered, machine-checkable conditions for done.
 
-## Testing
-| Check | How |
-
 ## Execution
 - **Branch:** `wo/NNN-slug`
-- **Risk tier:** P2 — auto-merge after CI passes
+- **Risk tier:** P2 — human verifies running product, then auto-merge after CI + review
+- **Services:** service-name | docs | none
 - **PR title:** `feat(...): WO-NNN — Title`
 - **Pre-PR gate:** `make ci-local`
 - **Depends on:** none | WO-NNN
+- **User verification required:** Yes — exact steps / No
 - **PM docs to update:** PROGRESS.md row, CAPABILITY_STATUS.md section
 
 ### UI Verification
@@ -226,10 +235,12 @@ Numbered, machine-checkable conditions for done.
 4. Expected: {{exact result — label, badge, row in table}}
 5. Confirm no errors in browser DevTools console
 
-(Replace with "No UI changes — backend / API only." for backend-only WOs.)
+(Replace with "No UI changes — backend / API only; paste curl output." for backend-only WOs.)
 ```
 
 The `## Execution` section is what allows any agent to pick up a WO cold without asking questions. The `### UI Verification` subsection is what the developer (or QA) follows in the browser to confirm the feature works — write it before implementation so the acceptance target is clear.
+
+Older factory WOs sometimes use narrative headings such as `Background`, `Scope`, or `Approach`. Those can be useful context, but they are not a substitute for dispatch metadata. New WOs should normalize to the canonical shape above so agents and automation can reliably find `Services`, acceptance criteria, and the human checkpoint.
 
 ### PR body template
 

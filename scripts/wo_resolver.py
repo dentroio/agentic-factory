@@ -136,6 +136,13 @@ _FILING_TITLE_RE = re.compile(
     r"|WO-\d+\s*[:—]\s*backfill\b)"
 )
 
+# A 'docs(...)' / 'chore(...)'-scoped conventional-commit title documents or
+# tracks the WOs it names; it does not implement them. Used to keep the loose
+# 'WO-NNN:' / 'WO-NNN —' title scan in wos_completed_by_merged_pr from marking a
+# WO complete off a spec/PM/planning PR — the orphan-closer false-positive where
+# a merged 'docs(pm): WO-547 — … spec' auto-closed the real WO-547 impl PR.
+_DOCS_SCOPE_PREFIX_RE = re.compile(r"(?i)^(?:docs|chore)(?:\([^)]*\))?:\s")
+
 
 def classify_wo_status(status: str) -> str:
     """Map a spec Status: line to a board column.
@@ -169,8 +176,12 @@ def wos_completed_by_merged_pr(pr: dict) -> list[int]:
 
     A title mention is not completion: 'docs(wo): file WO-508' and
     'docs(pm): program — WO-449–456' name WOs they did not implement.
-    Completion requires a wo/NNN- branch or a 'WO-NNN:' / mark-done title.
-    Spec-filing titles never complete, even on a wo/NNN- branch.
+    Completion requires a wo/NNN- branch or a bare 'WO-NNN:' / mark-done
+    title. A 'docs(...)' / 'chore(...)'-scoped title never completes a WO by
+    mention alone ('docs(pm): WO-547 — … spec' filed the spec, it did not
+    implement the WO); those are credited only via a wo/NNN- branch or an
+    explicit mark-done. Spec-filing titles never complete, even on a
+    wo/NNN- branch.
     """
     title = (pr.get("title") or "").strip()
     head_ref = (pr.get("head") or {}).get("ref", "") or ""
@@ -180,8 +191,9 @@ def wos_completed_by_merged_pr(pr: dict) -> list[int]:
     branch_n = extract_wo_from_branch(head_ref)
     if branch_n is not None:
         nums.add(branch_n)
-    for m in re.finditer(r"(?i)\bWO-(\d+)\s*[:—]", title):
-        nums.add(int(m.group(1)))
+    if not _DOCS_SCOPE_PREFIX_RE.match(title):
+        for m in re.finditer(r"(?i)\bWO-(\d+)\s*[:—]", title):
+            nums.add(int(m.group(1)))
     if re.search(r"(?i)\bmark(?:ed)?\b", title) and re.search(
         r"(?i)\b(?:complete|done)\b", title
     ):

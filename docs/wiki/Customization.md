@@ -73,12 +73,14 @@ The `observability.yml` workflow polls `METRICS_ENDPOINT` every 15 minutes and c
 `docs/work_orders/TEMPLATE.md` is the canonical reference for what a complete Work Order spec must contain. New WOs (written by a human or by the planning agent) should follow it so agents have everything they need without guessing:
 
 - **Header** — `Created`, `Priority`, `Effort`, `Services`, `Depends on`, `Status`
-- **Background** — why this exists, what pain it solves
+- **Problem** — why this exists, what visible symptom or pain it solves
 - **What to Build** — a concrete implementation spec with no ambiguity; the agent should not have to make significant design decisions
+- **Out of scope / Do NOT change** — adjacent ideas and hard invariants the agent must not cross
 - **Requirements** — a `requires:` YAML block listing needed connectors/services
 - **Acceptance Criteria** — at least 3 items, each independently verifiable by the agent or CI (no "looks good" items)
 - **Files** — every file to be created or modified, so there are no surprises for the agent
 - **Domain Notes** — gotchas specific to the services touched, known conflict risks, recently changed dependencies, patterns to copy from
+- **Execution** — branch, risk tier, services, PR title, pre-PR gate, dependencies, and user verification
 
 If you're adding WOs to a **product** repo, start from [docs/adopters/WO_SPEC_FORMAT.md](../adopters/WO_SPEC_FORMAT.md) (or the samples in [agentic-factory-template](https://github.com/dentroio/agentic-factory-template)). `docs/work_orders/TEMPLATE.md` in **this** engine is for factory-internal WOs.
 
