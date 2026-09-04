@@ -34,18 +34,17 @@ into structured Work Order (WO) specifications that AI agents can execute.
 
 A good WO spec has:
 - A clear Problem (symptoms, not solutions)
-- A Goal (what "done" looks like from the user's perspective)
-- Scope (in/out of scope, explicitly stated)
-- Approach (technical plan with file names, not vague)
+- A What to Build section (technical plan with file names, not vague)
+- Out of scope / Do NOT change boundaries
 - Acceptance Criteria (verifiable checklist items, not vague)
 - Verification Steps (runnable commands)
-- An Execution section (branch name, risk tier, PR title, files to touch)
+- Services metadata and an Execution section (branch name, risk tier, PR title, human checkpoint, files to touch)
 
 Risk tier rules:
 - P0: auth, security, data loss risk → human merges
 - P1: core features, schema changes → human merges
-- P2: additive features, tests, docs → auto-merge allowed
-- P3: docs/PM files only → commit directly to main
+- P2: additive features, UI, tests → human verifies running product before commit, then auto-merge allowed after CI + review
+- P3: docs/PM files only → PR required on protected main; no product checkpoint
 
 Return ONLY the filled WO spec in markdown. No preamble, no explanation.
 """
@@ -55,6 +54,8 @@ WO_TEMPLATE = """\
 
 **Status:** 🔵 Open
 **Priority:** {priority}
+**Effort:** S | M | L | XL
+**Services:** service-name | docs | none
 **Assigned:** Agent
 **Target:** {{YYYY-MM-DD}}
 **Depends on:** —
@@ -65,21 +66,13 @@ WO_TEMPLATE = """\
 
 {problem}
 
-## Goal
-
-{goal}
-
-## Scope
-
-**In scope:**
-{in_scope}
-
-**Out of scope:**
-{out_of_scope}
-
-## Approach
+## What to Build
 
 {approach}
+
+## Out of scope
+
+{out_of_scope}
 
 ## Acceptance Criteria
 
@@ -99,8 +92,10 @@ WO_TEMPLATE = """\
 
 **Branch:** `wo/{num:03d}-{branch_slug}`
 **Risk tier:** {priority}
+**Services:** service-name | docs | none
 **PR title:** `{commit_type}({scope}): WO-{num:03d} — {title}`
 **Auto-merge:** {auto_merge}
+**User verification required:** Yes for P0-P2 running behavior; No for P3 docs-only
 
 **PM docs to update after merge:**
 - `docs/project_management/PROGRESS.md` — mark WO-{num:03d} complete
