@@ -5004,8 +5004,11 @@ async def clone_product(request: Request):
                 dispatch_control.atomic_write_json(SECRETS_PATH, secrets)
             _secrets_cache = secrets
             GITHUB_REPO = repo
-        except SecretPolicyError:
-            pass
+        except SecretPolicyError as e:
+            print(
+                f"[orchestrator] clone succeeded on runner but "
+                f"GITHUB_REPO secret update rejected: {e}"
+            )
     return resp
 
 

@@ -40,9 +40,16 @@ def test_init_does_not_clobber_without_force(tmp_path):
 
 
 def test_main_refuses_engine_root(monkeypatch):
-    monkeypatch.setattr(finit, "ENGINE_ROOT", Path("/tmp/engine-fake").resolve())
-    # Point --path at the real engine so refusal triggers when path == ENGINE_ROOT
-    # Override ENGINE_ROOT to ROOT for this assertion.
     monkeypatch.setattr(finit, "ENGINE_ROOT", ROOT)
     rc = finit.main(["--path", str(ROOT), "--name", "nope", "--non-interactive"])
     assert rc == 2
+
+
+def test_main_non_interactive_derives_name(tmp_path):
+    """make init PRODUCT=… uses --non-interactive without --name."""
+    product = tmp_path / "demo-app"
+    product.mkdir()
+    rc = finit.main(["--path", str(product), "--non-interactive"])
+    assert rc == 0
+    yaml = (product / "factory.yaml").read_text(encoding="utf-8")
+    assert "name: demo-app" in yaml

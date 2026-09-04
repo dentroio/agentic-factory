@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
 
     name = (args.name or "").strip()
     if not name:
-        if args.non-interactive:
+        if args.non_interactive:
             name = args.path.expanduser().resolve().name
         else:
             try:

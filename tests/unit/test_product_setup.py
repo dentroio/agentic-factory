@@ -48,9 +48,46 @@ def test_resolve_local_path_rejects_relative(monkeypatch):
 
 def test_resolve_local_path_home_guard(monkeypatch, tmp_path):
     monkeypatch.delenv("FACTORY_ALLOW_ANY_PATH", raising=False)
-    outside = Path("/tmp/factory-product-setup-outside")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    outside = tmp_path / "outside-home" / "repo"
+    outside.mkdir(parents=True)
     with pytest.raises(ps.ProductSetupError, match="home"):
         ps.resolve_local_path(str(outside))
+
+
+def test_redact_secrets_strips_token_and_url_creds():
+    token = "github_pat_EXAMPLE_SECRET_VALUE"
+    raw = (
+        f"fatal: could not read Username for "
+        f"'https://x-access-token:{token}@github.com/acme/demo': terminal prompts disabled\n"
+        f"AUTHORIZATION: bearer {token}"
+    )
+    cleaned = ps._redact_secrets(raw, token)
+    assert token not in cleaned
+    assert "***" in cleaned
+
+
+def test_clone_product_scrubs_token_on_failure(tmp_path, monkeypatch):
+    token = "github_pat_EXAMPLE_SECRET_VALUE"
+    dest = tmp_path / "cloned"
+    monkeypatch.setattr(ps.shutil, "which", lambda _name: None)
+
+    class _Proc:
+        returncode = 1
+        stderr = f"fatal: https://x-access-token:{token}@github.com/acme/demo.git"
+        stdout = ""
+
+    def _fake_run(cmd, **_kwargs):
+        assert "http.extraheader=AUTHORIZATION: bearer " + token in " ".join(cmd)
+        assert f"x-access-token:{token}" not in " ".join(cmd)
+        return _Proc()
+
+    monkeypatch.setattr(ps.subprocess, "run", _fake_run)
+    with pytest.raises(ps.ProductSetupError) as exc:
+        ps.clone_product("acme/demo", dest=str(dest), token=token, scaffold=False)
+    assert token not in str(exc.value)
 
 
 def test_configure_product_scaffolds(tmp_path):
@@ -66,7 +103,8 @@ def test_configure_product_scaffolds(tmp_path):
     assert (app / "AGENT_PROCESS.md").is_file()
     assert result["restart_required"] is True
     assert result["github_repo"] == "acme/demo"
-    assert "factory.yaml" in result["scaffolded"] or result["has_factory_yaml"]
+    assert "factory.yaml" in result["scaffolded"]
+    assert result["has_factory_yaml"] is True
 
 
 def test_default_clone_dest_prefers_existing_parent(tmp_path, monkeypatch):

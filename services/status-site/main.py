@@ -503,25 +503,14 @@ async def dashboard(request: Request):
             pass
         return False
 
-    async def _load_product_ready() -> bool:
-        """True when host product wiring is ready (or unknown / runner down)."""
-        try:
-            async with httpx.AsyncClient(timeout=3) as client:
-                r = await client.get(f"{ORCHESTRATOR_URL}/api/product", headers=_orch_headers())
-                if r.status_code == 200:
-                    return bool(r.json().get("ready_for_agents"))
-                return True
-        except Exception:
-            return True
-
     async def _load_onboarding_needed() -> bool:
         """Show Get Started when product or agent wiring is incomplete."""
         try:
             status = await _onboarding_status()
             return not bool(status.get("ready"))
         except Exception:
-            product_ok = await _load_product_ready()
-            return not product_ok
+            # Fail closed: show the banner when status cannot be determined.
+            return True
 
     wos_result, branches, prs, merged_window, ci, agent_runner_online, dispatch, onboarding_needed = await asyncio.gather(
         _load_wos(),
@@ -1735,8 +1724,8 @@ async def _onboarding_status() -> dict:
                 backends = back_r.json()
             if not isinstance(agents_r, Exception) and agents_r.status_code == 200:
                 runner_agents = agents_r.json().get("agents") or {}
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[status-site] onboarding status fetch failed: {exc}")
     preferred = (
         (product.get("preferred_agent") if product else "")
         or cfg.get("preferred")

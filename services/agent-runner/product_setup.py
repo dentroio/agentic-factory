@@ -234,6 +234,26 @@ def configure_product(
     return result
 
 
+def _redact_secrets(text: str, *secrets: str) -> str:
+    """Strip credentials from subprocess output before surfacing to callers."""
+    out = text or ""
+    for secret in secrets:
+        if secret and secret in out:
+            out = out.replace(secret, "***")
+    # Also scrub common URL-embedded token shapes if they leaked into stderr.
+    out = re.sub(
+        r"(https?://)[^/@\s]+@",
+        r"\1***@",
+        out,
+    )
+    out = re.sub(
+        r"(?i)(authorization:\s*bearer\s+)\S+",
+        r"\1***",
+        out,
+    )
+    return out
+
+
 def clone_product(
     github_repo: str,
     dest: str | None = None,
@@ -255,13 +275,21 @@ def clone_product(
         target.parent.mkdir(parents=True, exist_ok=True)
         url = f"https://github.com/{repo}.git"
         env = os.environ.copy()
-        # Prefer gh when available (uses user login); else git with optional token.
+        # Prefer gh when available (uses user login); else git with optional token
+        # via http.extraheader so the PAT never appears in the remote URL.
         if shutil.which("gh"):
             cmd = ["gh", "repo", "clone", repo, str(target)]
         else:
-            if token.startswith("github_pat_"):
-                url = f"https://x-access-token:{token}@github.com/{repo}.git"
             cmd = ["git", "clone", url, str(target)]
+            if token.startswith("github_pat_"):
+                cmd = [
+                    "git",
+                    "-c",
+                    f"http.extraheader=AUTHORIZATION: bearer {token}",
+                    "clone",
+                    url,
+                    str(target),
+                ]
         try:
             proc = subprocess.run(
                 cmd,
@@ -271,10 +299,12 @@ def clone_product(
                 env=env,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ProductSetupError(f"clone failed: {exc}") from exc
+            raise ProductSetupError(
+                _redact_secrets(f"clone failed: {exc}", token)
+            ) from exc
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout or "clone failed").strip()
-            raise ProductSetupError(err[:500])
+            raise ProductSetupError(_redact_secrets(err, token)[:500])
 
     result = configure_product(
         github_repo=repo,
