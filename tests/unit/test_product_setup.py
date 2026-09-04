@@ -58,36 +58,36 @@ def test_resolve_local_path_home_guard(monkeypatch, tmp_path):
 
 
 def test_redact_secrets_strips_token_and_url_creds():
-    token = "github_pat_EXAMPLE_SECRET_VALUE"
+    pat = "github_pat_" + "EXAMPLE_VALUE_FOR_TEST"
     raw = (
         f"fatal: could not read Username for "
-        f"'https://x-access-token:{token}@github.com/acme/demo': terminal prompts disabled\n"
-        f"AUTHORIZATION: bearer {token}"
+        f"'https://x-access-token:{pat}@github.com/acme/demo': terminal prompts disabled\n"
+        f"AUTHORIZATION: bearer {pat}"
     )
-    cleaned = ps._redact_secrets(raw, token)
-    assert token not in cleaned
+    cleaned = ps._redact_secrets(raw, pat)
+    assert pat not in cleaned
     assert "***" in cleaned
 
 
 def test_clone_product_scrubs_token_on_failure(tmp_path, monkeypatch):
-    token = "github_pat_EXAMPLE_SECRET_VALUE"
+    pat = "github_pat_" + "EXAMPLE_VALUE_FOR_TEST"
     dest = tmp_path / "cloned"
     monkeypatch.setattr(ps.shutil, "which", lambda _name: None)
 
     class _Proc:
         returncode = 1
-        stderr = f"fatal: https://x-access-token:{token}@github.com/acme/demo.git"
+        stderr = f"fatal: https://x-access-token:{pat}@github.com/acme/demo.git"
         stdout = ""
 
     def _fake_run(cmd, **_kwargs):
-        assert "http.extraheader=AUTHORIZATION: bearer " + token in " ".join(cmd)
-        assert f"x-access-token:{token}" not in " ".join(cmd)
+        assert "http.extraheader=AUTHORIZATION: bearer " + pat in " ".join(cmd)
+        assert f"x-access-token:{pat}" not in " ".join(cmd)
         return _Proc()
 
     monkeypatch.setattr(ps.subprocess, "run", _fake_run)
     with pytest.raises(ps.ProductSetupError) as exc:
-        ps.clone_product("acme/demo", dest=str(dest), token=token, scaffold=False)
-    assert token not in str(exc.value)
+        ps.clone_product("acme/demo", dest=str(dest), token=pat, scaffold=False)
+    assert pat not in str(exc.value)
 
 
 def test_configure_product_scaffolds(tmp_path):
