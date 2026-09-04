@@ -50,4 +50,4 @@ You describe a change. The PM can draft a spec. An agent claims it, writes code,
 | [Reliability](Reliability) | Security / monitoring |
 | [Notifications](Notifications) | ntfy / Slack |
 
-Process for **product** agents: [docs/adopters/PROCESS.md](../adopters/PROCESS.md). Essays: [docs/blog](../blog/README.md).
+Process for **product** agents: [docs/adopters/PROCESS.md](../adopters/PROCESS.md).

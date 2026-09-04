@@ -137,7 +137,6 @@ Details and optional fields: [Product Profile](Product-Profile). Agent prompts u
 - [Work Orders](Work-Orders) — specs and risk tiers
 - [Product Profile](Product-Profile) — `factory.yaml`
 - [Troubleshooting](Troubleshooting) — empty queue, offline runner, auth
-- [Essay series](../blog/README.md) — why Work Orders look like this
 
 ## Optional: paste product GitHub Actions
 
