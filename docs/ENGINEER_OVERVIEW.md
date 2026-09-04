@@ -12,7 +12,7 @@ The factory is built around a single principle: **gate on risk, not on trust.**
 
 Agents are capable of handling the majority of engineering work autonomously. But the cost of a false autonomy — an agent breaks production, corrupts data, ships a security regression — vastly exceeds the cost of a false gate — a human reviews a change that would have been safe to auto-merge. The factory encodes this asymmetry into a risk tier model that determines, per work order, whether a human approves or an agent merges.
 
-The corollary is that for work below the risk threshold, the system should not slow things down for the sake of process. A P2 work order — additive feature, new test, minor refactor — should go from implementation to merged without a human ever looking at it, as long as CI passes and the AI review is clean. That is the target state for routine work.
+The corollary is that for work below the risk threshold, the system should not slow things down for the sake of process. A P2 work order — additive feature, new test, minor refactor — should go from implementation to merged without a human clicking the GitHub merge button, as long as the human has already verified the running product, CI passes, and the AI review is clean. That is the target state for routine work.
 
 The second principle: **the CI gate is the contract.** `make ci-local` mirrors the GitHub Actions CI pipeline exactly. An agent that runs the local gate before pushing will never surprise CI. An agent that skips it eventually breaks the main branch and erodes the team's trust in the system.
 
@@ -29,7 +29,7 @@ Work orders are the unit of work the factory dispatches. There are two ways to c
 1. Open **Settings → Plan → Create WO** at `http://localhost:8099/settings/plan/wos/new`
 2. Describe what you want to build in plain language — one paragraph is enough
 3. Choose which AI generates the structured spec (Claude, Cursor, Codex, Gemini via subscription CLI, or Anthropic API)
-4. Review and edit the generated fields: title, priority, effort, services, problem, what to build, acceptance criteria
+4. Review and edit the generated fields: title, priority, effort, services, problem, what to build, out-of-scope boundaries, acceptance criteria, and execution notes
 5. Optionally set dependencies (Depends On) and milestone associations (Blocks)
 6. Click **Open PR** — the factory creates the spec file and adds the WO to PLAN.json in one PR
 
@@ -125,7 +125,7 @@ All scripts are in `scripts/` and are callable both from GitHub Actions and from
 
 **`ai_review.py`** — Core review logic. Loads the diff, builds a system prompt from seven universal checks plus project-specific checks from `review_context.txt`, calls Claude (max_tokens=2048), writes a structured markdown review to `--output`. Anchors verdict search to the `### Verdict` section to prevent false matches from suggestion text. Exits 1 for "Review required"; exits 0 for "LGTM" and "Needs attention" (informational).
 
-**`planning_agent.py`** — Converts issue title and body into a filled WO spec. Uses the WO template defined in the script and passes project context from `review_context.txt` as additional signal. The model fills every section of the spec including risk tier assignment, file paths, and the `## Execution` section that agents read before starting implementation.
+**`planning_agent.py`** — Converts issue title and body into a filled WO spec. Uses the WO template defined in the script and passes project context from `review_context.txt` as additional signal. The model fills every canonical dispatch field: `Priority`, `Effort`, `Services`, `Problem`, `What to Build`, boundaries, acceptance criteria, verification, and the `## Execution` section that agents read before starting implementation.
 
 **`verifier_agent.py`** — Auto-discovers the linked WO spec by parsing the `WO-NNN` reference in the PR title, extracts the `## Acceptance Criteria` section, and asks Claude to evaluate each criterion against the diff. Exits 1 if the verdict is "Criteria not met."
 
@@ -151,7 +151,7 @@ Every work order is assigned one of four risk tiers. The tier determines the mer
 |------|-------|-----------|
 | P0 | Auth, security, multi-tenant data isolation, breaking API contracts | Human must approve and merge — no exceptions |
 | P1 | DB schema migrations, new API routes, cross-service interfaces | Human must approve and merge |
-| P2 | Feature additions, UI changes, new tests, refactors | Agent enables auto-merge after CI passes |
+| P2 | Feature additions, UI changes, new tests, refactors | Human verifies running product, then agent enables auto-merge after CI + review |
 | P3 | Docs, PM files, comments, typos | Agent opens PR → `gh pr merge --auto --squash` |
 
 The planning agent (or the AI draft in the factory UI) assigns a tier when creating the WO spec. The human reviewing the spec confirms or adjusts it. From that point, the tier is embedded in the spec and all downstream agents read it before starting work.
