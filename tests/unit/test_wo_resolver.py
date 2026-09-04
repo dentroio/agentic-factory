@@ -189,6 +189,35 @@ def test_wos_completed_by_merged_pr_counts_implementation():
     }) == []
 
 
+def test_wos_completed_by_merged_pr_ignores_docs_scoped_title_mentions():
+    """Regression: the orphan-closer auto-closed the real WO-547 implementation
+    PR three times because a merged spec PR titled
+    'docs(pm): WO-547 — … spec' (branch docs/wo-547-…, not wo/547-) matched
+    the loose 'WO-NNN —' title scan and marked WO-547 complete. A 'docs(...)'
+    / 'chore(...)'-scoped title documents WOs, it does not implement them."""
+    from wo_resolver import wos_completed_by_merged_pr
+
+    assert wos_completed_by_merged_pr({
+        "title": "docs(pm): WO-547 — communication-cohesion split check spec",
+        "head": {"ref": "docs/wo-547-communication-cohesion-check-spec"},
+    }) == []
+    assert wos_completed_by_merged_pr({
+        "title": "docs(pm): WO-201 — grouping design notes; supersedes WO-198",
+        "head": {"ref": "docs/grouping-design"},
+    }) == []
+    # …but a docs-scoped title on the WO's own wo/NNN- branch still counts
+    # (a doc-only WO delivered through the normal branch flow).
+    assert wos_completed_by_merged_pr({
+        "title": "docs(pm): WO-551 — write the enforcement runbook",
+        "head": {"ref": "wo/551-enforcement-runbook"},
+    }) == [551]
+    # …and an explicit mark-done docs PR still counts regardless of prefix.
+    assert wos_completed_by_merged_pr({
+        "title": "docs(pm): mark WO-499 and WO-504 done",
+        "head": {"ref": "docs/mark-499-504-done"},
+    }) == [499, 504]
+
+
 def test_classify_wo_status_strips_leading_emoji():
     from wo_resolver import classify_wo_status
 

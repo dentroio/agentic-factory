@@ -73,14 +73,15 @@ Audience views: `/` (floor), `/pm` (programs/velocity), `/ci` (runners and flaky
 
 ## Human checkpoint
 
-Before commit, the agent asks you to verify the **running product** (URL/hints from [`factory.yaml`](Product-Profile)). Approve in the thread when correct; describe fixes when not — the agent iterates.
+Before commit on P0-P2 work, the agent asks you to verify the **running product** (URL/hints from [`factory.yaml`](Product-Profile)). Approve in the thread when correct; describe fixes when not — the agent iterates. P3 docs-only work skips this because no running behavior changed.
 
 ## After approval
 
 1. Agent commits and opens a PR on the **product**  
-2. P2/P3: often `--auto` merge after CI + review  
-3. P0/P1: you merge  
-4. Verifier / memory agents may follow on the engine or product workflows you enabled  
+2. P2: often `--auto` merge after CI + review because the product checkpoint already happened  
+3. P3: often `--auto` merge after CI; no product checkpoint  
+4. P0/P1: you merge  
+5. Verifier / memory agents may follow on the engine or product workflows you enabled  
 
 ## End of day
 

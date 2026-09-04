@@ -18,13 +18,16 @@ Override with `WO_SPECS_DIR` if needed. Format and examples: [WO_SPEC_FORMAT.md]
 
 | Section | Purpose |
 |---------|---------|
-| **Title / Priority / Effort** | Identity and merge policy |
-| **Problem** | Why this exists |
+| **Title / Priority / Effort / Services** | Identity, merge policy, and what to rebuild or verify |
+| **Problem** | Why this exists: visible symptom, route, file, error, or operator pain |
 | **What to Build** | Concrete implementation — agents should not invent architecture |
+| **Out of scope / Do NOT change** | Adjacent work and hard invariants the agent must preserve |
 | **Acceptance Criteria** | Verifiable checklist (agent exit + post-merge verifier) |
 | **Documentation Required** | Optional doc files that must change |
-| **Execution** | Branch name, risk tier, PR title, PM updates — follow exactly |
+| **Execution** | Branch name, risk tier, services, PR title, pre-PR gate, dependencies, user verification, PM updates — follow exactly |
 | **Notes** | Context that helps but does not gate done |
+
+Drafts may use narrative headings such as `Motivation`, `Background`, `Scope`, or `Approach`. Before dispatch, normalize the spec so agents and automation can find `Priority`, `Effort`, `Services`, dependencies, acceptance criteria, and `Execution`.
 
 ## Priority tiers
 
@@ -33,10 +36,10 @@ Override with `WO_SPECS_DIR` if needed. Format and examples: [WO_SPEC_FORMAT.md]
 | **P0** | Auth, security, data-loss risk | Human merges |
 | **P1** | Core features, schema, API contracts | Human merges |
 | **P1** pre-dispatch | Same | Often needs Approve on Overview first |
-| **P2** | Additive features, tests, refactors | Agent may `--auto` after CI |
-| **P3** | Docs / PM only | Agent `--auto` after CI |
+| **P2** | Additive features, UI, tests, refactors | Human verifies running product before commit; agent may `--auto` after CI + review |
+| **P3** | Docs / PM only | Agent may `--auto` after CI; no product checkpoint |
 
-Prefer P1 when you want to read the diff before merge; P2 when green CI is enough.
+Prefer P1 when you need to read the diff before merge; P2 when the running product checkpoint plus green CI and review are enough. One line of application code makes a WO at least P2; P3 is only for docs and PM markdown.
 
 ## Effort
 
