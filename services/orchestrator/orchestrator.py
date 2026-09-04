@@ -82,7 +82,11 @@ CLARION_API_URL = os.getenv("CLARION_API_URL", "")  # optional; prefer factory.y
 PREFLIGHT_RETRY_SECONDS = 1800  # re-check held WOs every 30 minutes
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 SPEC_MIN_BODY_LENGTH = int(os.getenv("SPEC_MIN_BODY_LENGTH", "300"))
-SPEC_REQUIRED_SECTIONS = ["## Background", "## What to Build", "## Acceptance Criteria"]
+SPEC_REQUIRED_SECTION_GROUPS = [
+    ("## Problem", "## Background", "## Motivation", "## Scope"),
+    ("## What to Build", "## What to Fix", "## What Needs to Happen", "## Approach"),
+    ("## Acceptance Criteria",),
+]
 SPEC_MIN_AC_ITEMS = int(os.getenv("SPEC_MIN_AC_ITEMS", "3"))
 
 # Configured repositories for multi-repo dispatch
@@ -3874,9 +3878,9 @@ def _validate_spec(wo_num: int, spec: dict) -> list[str]:
     if len(raw) < SPEC_MIN_BODY_LENGTH:
         errors.append(f"spec too short ({len(raw)} chars < {SPEC_MIN_BODY_LENGTH} minimum) — likely a stub")
     raw_lower = raw.lower()
-    for section in SPEC_REQUIRED_SECTIONS:
-        if section.lower() not in raw_lower:
-            errors.append(f"missing section: {section}")
+    for section_group in SPEC_REQUIRED_SECTION_GROUPS:
+        if not any(section.lower() in raw_lower for section in section_group):
+            errors.append(f"missing section: one of {', '.join(section_group)}")
     ac_lines = [ln for ln in raw.splitlines() if ln.strip().startswith("- [ ]")]
     if len(ac_lines) < SPEC_MIN_AC_ITEMS:
         errors.append(
@@ -5101,7 +5105,8 @@ _DRAFT_SYSTEM_BASE = (
     "- acceptance_criteria: array of 3-6 verifiable checklist items\n"
     "- notes: any constraints or context (empty string if none)\n\n"
     "Risk tiers: P1=core/schema changes (human merge required), "
-    "P2=additive features/UI (auto-merge allowed), P3=docs only (direct to main).\n"
+    "P2=additive features/UI (human verifies running product before commit; auto-merge allowed after CI + review), "
+    "P3=docs only (PR required on protected main; no product checkpoint).\n"
     "Effort: XS<1h | S~2h | M=half day | L=full day | XL=2-3 days"
 )
 

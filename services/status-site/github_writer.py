@@ -104,6 +104,12 @@ def render_wo_template(wo_data: dict) -> str:
 
 ---
 
+## Out of scope
+
+Adjacent product ideas or implementation paths not included in this WO.
+
+---
+
 ## Quality & Security Requirements
 
 - [ ] `make ci-local` passes clean
@@ -123,7 +129,12 @@ def render_wo_template(wo_data: dict) -> str:
 ## Execution
 
 - **Branch:** `wo/{number}-{slug}`
-- **Priority:** {priority}
+- **Risk tier:** {priority}
+- **Services:** {services}
+- **PR title:** `type(scope): WO-{number} — {title}`
+- **Pre-PR gate:** `make ci-local`
+- **Depends on:** {depends_str}
+- **User verification required:** Yes for P0-P2 running behavior; No for P3 docs-only
 - **Notes:** {notes or "—"}
 """
 

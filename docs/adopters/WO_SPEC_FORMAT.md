@@ -12,6 +12,7 @@ Copy this into the target repo (default path `docs/project_management/work_order
 **Status:** Open
 **Priority:** P0 | P1 | P2 | P3
 **Effort:** S | M | L | XL
+**Services:** service-name | docs | none
 
 ## Problem
 WHY. The symptom. File paths, routes, error messages. Not the fix.
@@ -22,6 +23,9 @@ Files, signatures, API contracts. Enough to implement.
 ## Out of scope
 Tempting extras you are deliberately not doing.
 
+## Do NOT change
+Hard invariants the implementation must preserve, if any.
+
 ## Acceptance Criteria
 1. A command, URL, or visible UI result
 2. Local CI gate passes
@@ -29,6 +33,7 @@ Tempting extras you are deliberately not doing.
 ## Execution
 - **Branch:** `wo/NNN-short-name`
 - **Risk tier:** P0 | P1 | P2 | P3
+- **Services:** what to rebuild, deploy, or verify
 - **PR title:** `type(scope): WO-NNN — description`
 - **Pre-PR gate:** `make ci-local` (or your equivalent)
 - **Depends on:** none | WO-NNN
@@ -36,6 +41,8 @@ Tempting extras you are deliberately not doing.
 ```
 
 **First commit on the branch:** [claim file](CLAIM_SCHEMA.md).
+
+Narrative headings are allowed in drafts, not as an excuse for missing dispatch data. `Motivation` can carry `Problem`, `Scope` can carry `What to Build`, and `Do NOT change` can sharpen `Out of scope`. Before a WO is dispatched, normalize the spec so agents and automation can find the operational fields: `Priority`, `Effort`, `Services`, dependencies, acceptance criteria, and `Execution`.
 
 ## Risk tiers
 
@@ -81,4 +88,6 @@ Tempting extras you are deliberately not doing.
 | “The map is broken” | Symptom + path + likely cause |
 | Solution in Problem | Problem = symptom; Build = chosen fix |
 | “Works correctly” | A command or a URL |
-| Missing Execution | Branch, PR title, risk tier |
+| Missing Services | Name the affected service, or `docs` / `none` |
+| Missing Execution | Branch, PR title, risk tier, user verification |
+| Narrative headings only | Keep useful context, but normalize the dispatch fields |

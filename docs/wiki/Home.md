@@ -10,7 +10,7 @@ doc_owner: factory-team
 
 This repository is the **engine**: Docker services and a host agent runner that orchestrate AI agents (Claude, Cursor, Codex, Gemini) to implement **Work Orders** in a GitHub repo **you** choose.
 
-You describe a change. The PM can draft a spec. An agent claims it, writes code, runs your product’s verify command, opens a PR, and asks you to confirm the running product before commit. Low-risk (P2/P3) work can auto-merge after CI; P0/P1 wait for you.
+You describe a change. The PM can draft a spec. An agent claims it, writes code, runs your product’s verify command, and asks you to confirm the running product before commit. Then it opens a PR. P2 work can auto-merge after the human product checkpoint, CI, and review; P3 docs-only work can auto-merge after CI; P0/P1 wait for you.
 
 | | |
 |-|-|
