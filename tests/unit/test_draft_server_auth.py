@@ -39,6 +39,10 @@ def test_draft_server_gates_every_method():
         assert f"def {method}" in text
     assert text.count("if not self._require_auth():") >= 4
     assert '"127.0.0.1"' in text
+    assert "/api/product" in text
+    assert "_handle_product_get" in text
+    assert "_handle_product_put" in text
+    assert "_handle_product_clone" in text
 
 
 def test_orchestrator_sends_bearer_to_the_runner():
@@ -57,3 +61,4 @@ def test_orchestrator_sends_bearer_to_the_runner():
             missing.append(window.splitlines()[0].strip())
         idx = i + len(needle)
     assert missing == [], f"runner calls missing headers=_runner_headers(): {missing}"
+    assert "/api/product" in text

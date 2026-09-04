@@ -119,6 +119,10 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | `.agents/` entry point for Google Antigravity / Gemini | ✅ | Skills + workflows subdirs | — |
 | Docker Compose single-command deploy | ✅ | `docker compose -f docker-compose.status.yml up -d` | — |
 | Codex workflow dispatch (`.github/workflows/codex-dispatch.yml`) | ✅ | Triggered via `/api/dispatch-codex` | WO-1008 |
+| Factory doctor (`make doctor`) | ✅ | Prefs + product profile + remote match; UI-first hints | WO-1091 |
+| Factory init (`make init PRODUCT=…`) | ✅ | BYO scaffold for factory.yaml / WO dirs / PROCESS | WO-1091 |
+| UI product onboarding (Auth path/clone/scaffold + Get Started) | ✅ | Host prefs via agent-runner `/api/product` | WO-1091 |
+| Stranger-clone / no-Clarion default-path regression | ✅ | Unit tests gate default profile + public surfaces | WO-1091 |
 
 ## Dimension 6: Oryntra Chrome Extension (dentroio/Oryntra)
 

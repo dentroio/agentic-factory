@@ -211,6 +211,8 @@ class _DraftHandler(BaseHTTPRequestHandler):
             self._json(200, {"status": "ok", "port": DRAFT_PORT, "backends": _probe_backends(), "exhausted_backends": exhausted})
         elif self.path == "/api/agents":
             self._get_agents_status()
+        elif self.path == "/api/product":
+            self._handle_product_get()
         else:
             self._json(404, {"error": "not found"})
 
@@ -222,6 +224,9 @@ class _DraftHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/chat":
             self._handle_chat()
+            return
+        if self.path == "/api/product/clone":
+            self._handle_product_clone()
             return
         if self.path.startswith("/api/agents/"):
             parts = self.path.split("/")
@@ -379,6 +384,9 @@ class _DraftHandler(BaseHTTPRequestHandler):
     def do_PUT(self):
         if not self._require_auth():
             return
+        if self.path == "/api/product":
+            self._handle_product_put()
+            return
         if self.path.startswith("/api/agents/"):
             parts = self.path.split("/")
             if len(parts) == 4:
@@ -387,6 +395,72 @@ class _DraftHandler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "not found"})
         else:
             self._json(404, {"error": "not found"})
+
+    def _handle_product_get(self) -> None:
+        try:
+            import product_setup as setup
+            self._json(200, setup.product_status())
+        except Exception as e:
+            self._json(500, {"error": str(e)})
+
+    def _read_json_body(self) -> dict | None:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            return json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._json(400, {"error": "invalid JSON body"})
+            return None
+
+    def _handle_product_put(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+        try:
+            import product_setup as setup
+            result = setup.configure_product(
+                github_repo=body.get("github_repo"),
+                local_repo_path=body.get("local_repo_path"),
+                preferred_agent=body.get("preferred_agent"),
+                scaffold=bool(body.get("scaffold", False)),
+                force_scaffold=bool(body.get("force_scaffold", False)),
+            )
+            self._json(200, result)
+        except Exception as e:
+            import product_setup as setup
+            if isinstance(e, setup.ProductSetupError):
+                self._json(400, {"error": str(e)})
+            else:
+                self._json(500, {"error": str(e)})
+
+    def _handle_product_clone(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+        try:
+            import product_setup as setup
+            repo = str(body.get("github_repo") or body.get("repo") or "").strip()
+            if not repo:
+                self._json(400, {"error": "github_repo is required"})
+                return
+            dest = body.get("dest") or body.get("local_repo_path")
+            token = (
+                str(body.get("github_token") or "").strip()
+                or os.environ.get("GITHUB_TOKEN", "")
+            )
+            scaffold = body.get("scaffold", True)
+            result = setup.clone_product(
+                repo,
+                dest=str(dest).strip() if dest else None,
+                token=token,
+                scaffold=bool(scaffold),
+            )
+            self._json(200, result)
+        except Exception as e:
+            import product_setup as setup
+            if isinstance(e, setup.ProductSetupError):
+                self._json(400, {"error": str(e)})
+            else:
+                self._json(500, {"error": str(e)})
 
     def do_DELETE(self):
         if not self._require_auth():

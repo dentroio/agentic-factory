@@ -503,7 +503,16 @@ async def dashboard(request: Request):
             pass
         return False
 
-    wos_result, branches, prs, merged_window, ci, agent_runner_online, dispatch = await asyncio.gather(
+    async def _load_onboarding_needed() -> bool:
+        """Show Get Started when product or agent wiring is incomplete."""
+        try:
+            status = await _onboarding_status()
+            return not bool(status.get("ready"))
+        except Exception:
+            # Fail closed: show the banner when status cannot be determined.
+            return True
+
+    wos_result, branches, prs, merged_window, ci, agent_runner_online, dispatch, onboarding_needed = await asyncio.gather(
         _load_wos(),
         _load_active_branches(),
         _load_open_prs(),
@@ -511,6 +520,7 @@ async def dashboard(request: Request):
         _load_ci_health(),
         _load_runner_status(),
         _load_dispatch(),
+        _load_onboarding_needed(),
     )
     wos, wos_available = wos_result
     merged_prs_board = merged_window.prs
@@ -598,6 +608,7 @@ async def dashboard(request: Request):
             "wos_without_specs": wos_without_specs,
             "pending_validations": pending_validations,
             "agent_runner_online": agent_runner_online,
+            "product_setup_needed": onboarding_needed,
         },
     )
 
@@ -1504,28 +1515,39 @@ async def health():
 
 
 @app.get("/settings/authentication", response_class=HTMLResponse)
-async def settings_authentication(request: Request, saved: str = "", error: str = ""):
+async def settings_authentication(request: Request, saved: str = "", error: str = "", restart: str = ""):
     secrets: dict = {}
     ntfy_config: dict = {}
+    product: dict = {}
+    product_runner_offline = False
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            sec_r, ntfy_r = await asyncio.gather(
+            sec_r, ntfy_r, prod_r = await asyncio.gather(
                 client.get(f"{ORCHESTRATOR_URL}/api/secrets", headers=_orch_headers()),
                 client.get(f"{ORCHESTRATOR_URL}/api/notifications/config", headers=_orch_headers()),
+                client.get(f"{ORCHESTRATOR_URL}/api/product", headers=_orch_headers()),
                 return_exceptions=True,
             )
             if not isinstance(sec_r, Exception) and sec_r.status_code == 200:
                 secrets = sec_r.json()
             if not isinstance(ntfy_r, Exception) and ntfy_r.status_code == 200:
                 ntfy_config = ntfy_r.json()
+            if not isinstance(prod_r, Exception) and prod_r.status_code == 200:
+                product = prod_r.json()
+            elif isinstance(prod_r, Exception) or (
+                not isinstance(prod_r, Exception) and prod_r.status_code >= 400
+            ):
+                product_runner_offline = True
     except Exception:
-        pass
+        product_runner_offline = True
     ntfy_topic = ntfy_config.get("ntfy_topic", "")
     ntfy_server = ntfy_config.get("ntfy_server", "https://ntfy.sh")
+    display_repo = (product.get("github_repo") if product else "") or GITHUB_REPO
+    display_path = product.get("local_repo_path", "") if product else ""
     return templates.TemplateResponse(request=request, name="settings_authentication.html", context={
         "site_title": SITE_TITLE,
         "refresh_seconds": 3600,
-        "github_repo": GITHUB_REPO,
+        "github_repo": display_repo,
         "saved": saved,
         "error": error,
         "github_token_set": bool(GITHUB_TOKEN) or secrets.get("GITHUB_TOKEN", False),
@@ -1535,7 +1557,9 @@ async def settings_authentication(request: Request, saved: str = "", error: str 
         "slack_app_token_set": secrets.get("SLACK_APP_TOKEN", False),
         "ntfy_topic": ntfy_topic,
         "ntfy_server": ntfy_server or "https://ntfy.sh",
-        "restart_required": False,
+        "restart_required": restart == "1",
+        "product": product or {"local_repo_path": display_path},
+        "product_runner_offline": product_runner_offline,
     })
 
 
@@ -1545,6 +1569,9 @@ async def settings_authentication_save(request: Request):
     form = await request.form()
     github_token = str(form.get("github_token", "")).strip()
     github_repo = str(form.get("github_repo", "")).strip()
+    local_repo_path = str(form.get("local_repo_path", "")).strip()
+    clone_product = str(form.get("clone_product", "")).strip() in {"1", "on", "true", "yes"}
+    scaffold_product = str(form.get("scaffold_product", "")).strip() in {"1", "on", "true", "yes"}
     slack_webhook = str(form.get("slack_webhook", "")).strip()
     slack_bot_token = str(form.get("slack_bot_token", "")).strip()
     slack_app_token = str(form.get("slack_app_token", "")).strip()
@@ -1583,7 +1610,347 @@ async def settings_authentication_save(request: Request):
                 status_code=303,
             )
 
-    return RedirectResponse(url="/settings/authentication?saved=1", status_code=303)
+    restart_required = False
+    product_error = ""
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            if clone_product and github_repo:
+                clone_body = {
+                    "github_repo": github_repo,
+                    "scaffold": scaffold_product,
+                }
+                if local_repo_path:
+                    clone_body["dest"] = local_repo_path
+                r = await client.post(
+                    f"{ORCHESTRATOR_URL}/api/product/clone",
+                    json=clone_body,
+                    headers=_orch_headers(),
+                )
+                if r.status_code >= 400:
+                    detail = r.json().get("error") if r.headers.get("content-type", "").startswith("application/json") else r.text
+                    product_error = str(detail or f"clone failed ({r.status_code})")[:200]
+                else:
+                    data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+                    restart_required = bool(data.get("restart_required"))
+            elif local_repo_path or scaffold_product or github_repo:
+                put_body: dict = {"scaffold": scaffold_product}
+                if github_repo:
+                    put_body["github_repo"] = github_repo
+                if local_repo_path:
+                    put_body["local_repo_path"] = local_repo_path
+                r = await client.put(
+                    f"{ORCHESTRATOR_URL}/api/product",
+                    json=put_body,
+                    headers=_orch_headers(),
+                )
+                if r.status_code >= 400:
+                    try:
+                        detail = r.json().get("error") or r.json().get("detail")
+                    except Exception:
+                        detail = r.text
+                    product_error = str(detail or f"product save failed ({r.status_code})")[:200]
+                else:
+                    data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+                    restart_required = bool(data.get("restart_required"))
+    except Exception as e:
+        product_error = f"Agent runner unreachable — start it with make agent-install ({e})"[:200]
+
+    if product_error:
+        from urllib.parse import quote
+        return RedirectResponse(
+            url=f"/settings/authentication?error={quote(product_error)}",
+            status_code=303,
+        )
+
+    qs = "saved=1"
+    if restart_required:
+        qs += "&restart=1"
+    return RedirectResponse(url=f"/settings/authentication?{qs}", status_code=303)
+
+
+# ── Interactive Get Started wizard (product + agent) ───────────────────────────
+
+_BACKEND_META = [
+    {
+        "name": "claude",
+        "label": "Claude (CLI)",
+        "hint": "Recommended. Uses your Claude Code / Claude Pro-Max CLI login on this Mac.",
+        "install": "Install: https://docs.anthropic.com/en/docs/claude-code — then sign in with `claude`.",
+    },
+    {
+        "name": "cursor",
+        "label": "Cursor Agent",
+        "hint": "Uses the Cursor `agent` CLI on this machine.",
+        "install": "Install Cursor agent CLI, then ensure `agent` is on PATH.",
+    },
+    {
+        "name": "codex",
+        "label": "Codex",
+        "hint": "OpenAI Codex CLI — subscription or API key.",
+        "install": "Install Codex CLI and authenticate, or set OPENAI_API_KEY under Agents.",
+    },
+    {
+        "name": "gemini",
+        "label": "Gemini",
+        "hint": "Google Gemini CLI on this machine.",
+        "install": "Install the Gemini CLI and sign in.",
+    },
+]
+
+
+async def _onboarding_status() -> dict:
+    secrets: dict = {}
+    product: dict = {}
+    cfg: dict = {}
+    backends: dict = {}
+    runner_agents: dict = {}
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            sec_r, prod_r, cfg_r, back_r, agents_r = await asyncio.gather(
+                client.get(f"{ORCHESTRATOR_URL}/api/secrets", headers=_orch_headers()),
+                client.get(f"{ORCHESTRATOR_URL}/api/product", headers=_orch_headers()),
+                client.get(f"{ORCHESTRATOR_URL}/api/config", headers=_orch_headers()),
+                client.get(f"{ORCHESTRATOR_URL}/api/backends", headers=_orch_headers()),
+                client.get(f"{ORCHESTRATOR_URL}/api/runner/agents", headers=_orch_headers()),
+                return_exceptions=True,
+            )
+            if not isinstance(sec_r, Exception) and sec_r.status_code == 200:
+                secrets = sec_r.json()
+            if not isinstance(prod_r, Exception) and prod_r.status_code == 200:
+                product = prod_r.json()
+            if not isinstance(cfg_r, Exception) and cfg_r.status_code == 200:
+                cfg = cfg_r.json()
+            if not isinstance(back_r, Exception) and back_r.status_code == 200:
+                backends = back_r.json()
+            if not isinstance(agents_r, Exception) and agents_r.status_code == 200:
+                runner_agents = agents_r.json().get("agents") or {}
+    except Exception as exc:
+        print(f"[status-site] onboarding status fetch failed: {exc}")
+    preferred = (
+        (product.get("preferred_agent") if product else "")
+        or cfg.get("preferred")
+        or "claude"
+    )
+    return {
+        "github_token_set": bool(GITHUB_TOKEN) or bool(secrets.get("GITHUB_TOKEN")),
+        "github_repo": (product.get("github_repo") if product else "") or GITHUB_REPO,
+        "product": product,
+        "preferred": preferred,
+        "agent_runner_online": bool(backends.get("agent_runner_online")),
+        "cli": {b: bool(backends.get(b)) for b in ("claude", "cursor", "codex", "gemini")},
+        "runner_agents": runner_agents,
+        "ready": bool(
+            (bool(GITHUB_TOKEN) or secrets.get("GITHUB_TOKEN"))
+            and ((product.get("github_repo") if product else GITHUB_REPO))
+            and product.get("ready_for_agents")
+            and preferred
+            and backends.get("agent_runner_online")
+        ),
+    }
+
+
+def _infer_start_step(status: dict) -> int:
+    if not status.get("github_token_set") or not status.get("github_repo"):
+        return 1
+    product = status.get("product") or {}
+    if not product.get("ready_for_agents"):
+        return 2
+    if not status.get("preferred") or not status.get("agent_runner_online"):
+        return 3
+    return 4
+
+
+@app.get("/settings/get-started", response_class=HTMLResponse)
+async def settings_get_started(request: Request, step: str = "", error: str = ""):
+    status = await _onboarding_status()
+    try:
+        start_step = int(step) if step else _infer_start_step(status)
+    except ValueError:
+        start_step = _infer_start_step(status)
+    start_step = max(1, min(4, start_step))
+    backends_meta = []
+    cli = status.get("cli") or {}
+    for meta in _BACKEND_META:
+        backends_meta.append({
+            **meta,
+            "cli": bool(cli.get(meta["name"])),
+        })
+    return templates.TemplateResponse(request=request, name="settings_get_started.html", context={
+        "site_title": SITE_TITLE,
+        "refresh_seconds": 3600,
+        "github_repo": status.get("github_repo") or "",
+        "github_token_set": status.get("github_token_set"),
+        "product": status.get("product") or {},
+        "preferred": status.get("preferred") or "claude",
+        "agent_runner_online": status.get("agent_runner_online"),
+        "backends_meta": backends_meta,
+        "start_step": start_step,
+        "error": error,
+        "status_json": json.dumps(status),
+    })
+
+
+@app.get("/api/onboarding/status")
+async def api_onboarding_status():
+    return await _onboarding_status()
+
+
+@app.post("/settings/get-started/github")
+async def get_started_github(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    token = str(body.get("github_token") or "").strip()
+    repo = str(body.get("github_repo") or "").strip()
+    secrets_payload: dict = {}
+    if token:
+        secrets_payload["GITHUB_TOKEN"] = token
+    if repo:
+        secrets_payload["GITHUB_REPO"] = repo
+    if not secrets_payload:
+        return JSONResponse({"error": "Provide a token and/or repository"}, status_code=400)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.put(
+                f"{ORCHESTRATOR_URL}/api/secrets",
+                json=secrets_payload,
+                headers=_orch_headers(),
+            )
+            if r.status_code != 200:
+                detail = r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else r.text
+                return JSONResponse({"error": str(detail or f"save failed ({r.status_code})")}, status_code=400)
+            if repo:
+                await client.put(
+                    f"{ORCHESTRATOR_URL}/api/product",
+                    json={"github_repo": repo},
+                    headers=_orch_headers(),
+                )
+    except Exception as e:
+        return JSONResponse({"error": f"Orchestrator unreachable: {e}"}, status_code=503)
+    status = await _onboarding_status()
+    return {"ok": True, "status": status}
+
+
+@app.post("/settings/get-started/product")
+async def get_started_product(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    repo = str(body.get("github_repo") or "").strip()
+    path = str(body.get("local_repo_path") or "").strip()
+    do_clone = bool(body.get("clone"))
+    scaffold = bool(body.get("scaffold"))
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            if do_clone and repo:
+                payload = {"github_repo": repo, "scaffold": scaffold}
+                if path:
+                    payload["dest"] = path
+                r = await client.post(
+                    f"{ORCHESTRATOR_URL}/api/product/clone",
+                    json=payload,
+                    headers=_orch_headers(),
+                )
+            else:
+                payload = {"scaffold": scaffold}
+                if repo:
+                    payload["github_repo"] = repo
+                if path:
+                    payload["local_repo_path"] = path
+                r = await client.put(
+                    f"{ORCHESTRATOR_URL}/api/product",
+                    json=payload,
+                    headers=_orch_headers(),
+                )
+            if r.status_code >= 400:
+                try:
+                    detail = r.json().get("error") or r.json().get("detail")
+                except Exception:
+                    detail = r.text
+                return JSONResponse(
+                    {"error": str(detail or f"product save failed ({r.status_code})")[:300]},
+                    status_code=400,
+                )
+            data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    except Exception as e:
+        return JSONResponse(
+            {"error": f"Agent runner unreachable — run make agent-install ({e})"},
+            status_code=503,
+        )
+    status = await _onboarding_status()
+    return {
+        "ok": True,
+        "status": status,
+        "product": data if isinstance(data, dict) else status.get("product"),
+        "local_repo_path": (data.get("local_repo_path") if isinstance(data, dict) else None)
+        or (data.get("cloned_to") if isinstance(data, dict) else None),
+        "restart_required": bool(isinstance(data, dict) and data.get("restart_required")),
+    }
+
+
+@app.post("/settings/get-started/agent")
+async def get_started_agent(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    preferred = str(body.get("preferred") or "claude").strip().lower()
+    start = bool(body.get("start", True))
+    if preferred not in {"claude", "cursor", "codex", "gemini", "claude-api"}:
+        return JSONResponse({"error": "Invalid preferred backend"}, status_code=400)
+    started = False
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            # Orchestrator agent config (preferred backend for dispatch)
+            cfg_r = await client.get(f"{ORCHESTRATOR_URL}/api/config", headers=_orch_headers())
+            cfg = cfg_r.json() if cfg_r.status_code == 200 else {}
+            cfg["preferred"] = preferred if preferred != "claude-api" else "claude"
+            put_cfg = await client.put(
+                f"{ORCHESTRATOR_URL}/api/config",
+                json={
+                    "preferred": cfg["preferred"],
+                    "name": cfg.get("name") or "factory-agent",
+                    "timeout": int(cfg.get("timeout") or 7200),
+                    "force_cross_llm_review": bool(cfg.get("force_cross_llm_review", False)),
+                    "reviewers": cfg.get("reviewers") or {
+                        "security": "claude",
+                        "architecture": "claude",
+                        "correctness": "claude",
+                        "performance": "claude",
+                        "documentation": "claude",
+                    },
+                },
+                headers=_orch_headers(),
+            )
+            if put_cfg.status_code != 200:
+                detail = put_cfg.json().get("detail") if put_cfg.headers.get("content-type", "").startswith("application/json") else put_cfg.text
+                return JSONResponse({"error": str(detail or "config save failed")}, status_code=400)
+
+            # Mirror into host prefs for the runner process
+            await client.put(
+                f"{ORCHESTRATOR_URL}/api/product",
+                json={"preferred_agent": preferred if preferred != "claude-api" else "claude"},
+                headers=_orch_headers(),
+            )
+
+            if start and preferred in {"claude", "cursor", "codex", "gemini"}:
+                # Ensure plist exists then start
+                await client.put(
+                    f"{ORCHESTRATOR_URL}/api/runner/agents/{preferred}",
+                    json={"start": True},
+                    headers=_orch_headers(),
+                )
+                start_r = await client.post(
+                    f"{ORCHESTRATOR_URL}/api/runner/agents/{preferred}/start",
+                    headers=_orch_headers(),
+                )
+                started = start_r.status_code < 400
+    except Exception as e:
+        return JSONResponse({"error": f"Failed to configure agent: {e}"}, status_code=503)
+    status = await _onboarding_status()
+    return {"ok": True, "status": status, "started": started}
 
 
 # ── Plan Authoring UI (WO-373) ────────────────────────────────────────────────

@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+{% block page_title %}Get Started — {{ site_title }}{% endblock %}
+{% block content %}
+
+<div class="max-w-2xl mx-auto">
+
+  <div class="flex items-center gap-2 text-xs text-slate-500 mb-4">
+    <a href="/settings" class="hover:text-slate-300 transition-colors">Settings</a>
+    <span>›</span>
+    <span class="text-slate-300">Get Started</span>
+  </div>
+
+  <div class="mb-6">
+    <h1 class="text-xl font-display font-bold text-slate-100">Get Started</h1>
+    <p class="text-xs text-slate-400 mt-1">
+      Interactive setup — GitHub, product checkout, then an agent/LLM so the factory can do the rest.
+      You can finish any step yourself or come back later.
+    </p>
+  </div>
+
+  {% if error %}
+  <div class="mb-4 p-3 border border-rose-500/30 bg-rose-950/10 rounded text-sm text-rose-200" id="page-error">{{ error }}</div>
+  {% endif %}
+  <div class="mb-4 p-3 border border-rose-500/30 bg-rose-950/10 rounded text-sm text-rose-200 hidden" id="live-error"></div>
+  <div class="mb-4 p-3 border border-emerald-500/30 bg-emerald-950/10 rounded text-sm text-emerald-200 hidden" id="live-ok"></div>
+  <div class="mb-4 p-3 border border-amber-500/30 bg-amber-950/10 rounded text-sm text-amber-200 hidden" id="restart-banner">
+    Local path changed. Run <code class="font-mono text-amber-100">make restart</code> then
+    <code class="font-mono text-amber-100">make agent-stop &amp;&amp; make agent-start</code>.
+  </div>
+
+  {# Step indicator #}
+  <div class="flex items-center gap-2 mb-8 text-[10px] font-mono uppercase tracking-wider" id="step-rail">
+    <button type="button" class="step-pill px-2.5 py-1 rounded border" data-step="1">1 · GitHub</button>
+    <span class="text-slate-700">→</span>
+    <button type="button" class="step-pill px-2.5 py-1 rounded border" data-step="2">2 · Product</button>
+    <span class="text-slate-700">→</span>
+    <button type="button" class="step-pill px-2.5 py-1 rounded border" data-step="3">3 · Agent</button>
+    <span class="text-slate-700">→</span>
+    <button type="button" class="step-pill px-2.5 py-1 rounded border" data-step="4">4 · Ready</button>
+  </div>
+
+  {# ── Step 1: GitHub ─────────────────────────────────────────────────── #}
+  <section id="step-1" class="gs-step glass-panel overflow-hidden mb-4">
+    <div class="px-5 py-3 border-b border-slate-800/40">
+      <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Step 1 — GitHub access</span>
+    </div>
+    <div class="px-5 py-5 space-y-4">
+      <p class="text-xs text-slate-400">Fine-grained PAT for the product repo and this engine. No classic <code class="text-slate-500">ghp_</code> tokens.</p>
+      <div>
+        <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">
+          Personal Access Token
+          {% if github_token_set %}<span class="ml-2 normal-case font-sans text-emerald-400">● set</span>{% endif %}
+        </label>
+        <input type="password" id="gs-token" autocomplete="off" placeholder="github_pat_… (leave blank to keep current)"
+          class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+      </div>
+      <div>
+        <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">Product repository</label>
+        <input type="text" id="gs-repo" value="{{ github_repo }}" placeholder="owner/repo"
+          class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+      </div>
+      <div class="flex justify-end gap-2">
+        <button type="button" onclick="saveGithub()" class="px-4 py-2 text-xs font-mono rounded bg-sky-600/80 text-white hover:bg-sky-500 transition-colors">
+          Save &amp; continue
+        </button>
+      </div>
+    </div>
+  </section>
+
+  {# ── Step 2: Product ────────────────────────────────────────────────── #}
+  <section id="step-2" class="gs-step glass-panel overflow-hidden mb-4 hidden">
+    <div class="px-5 py-3 border-b border-slate-800/40 flex items-center justify-between">
+      <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Step 2 — Product checkout</span>
+      <span class="text-[10px] font-mono {% if product and product.ready_for_agents %}text-emerald-400{% else %}text-slate-500{% endif %}" id="product-ready-badge">
+        {% if product and product.ready_for_agents %}ready{% else %}not ready{% endif %}
+      </span>
+    </div>
+    <div class="px-5 py-5 space-y-4">
+      <p class="text-xs text-slate-400">Agents need a local clone on this machine. Point at an existing directory or clone from GitHub — the factory can scaffold <code class="text-slate-500">factory.yaml</code> for you.</p>
+      <div>
+        <label class="block text-[10px] font-mono text-slate-400 uppercase tracking-widest mb-1.5">Local directory</label>
+        <input type="text" id="gs-path" value="{{ product.local_repo_path if product else '' }}" placeholder="/Users/you/src/my-app"
+          class="w-full bg-slate-900 border border-slate-700/60 rounded px-3 py-2 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500/50">
+      </div>
+      <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+        <input type="checkbox" id="gs-clone" class="rounded border-slate-600 bg-slate-900">
+        Clone into default location if path is empty/missing
+      </label>
+      <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+        <input type="checkbox" id="gs-scaffold" class="rounded border-slate-600 bg-slate-900" {% if not product or not product.has_factory_yaml %}checked{% endif %}>
+        Prepare factory files (factory.yaml, WO folders, AGENT_PROCESS.md)
+      </label>
+      <div class="text-[10px] font-mono text-slate-500" id="product-status-line">
+        {% if product %}
+        path: {{ product.exists }} · git: {{ product.is_git }} · yaml: {{ product.has_factory_yaml }}
+        {% endif %}
+      </div>
+      <div class="flex justify-between gap-2">
+        <button type="button" onclick="showStep(1)" class="px-3 py-2 text-xs font-mono text-slate-400 hover:text-slate-200">Back</button>
+        <button type="button" onclick="saveProduct()" class="px-4 py-2 text-xs font-mono rounded bg-sky-600/80 text-white hover:bg-sky-500 transition-colors">
+          Save &amp; continue
+        </button>
+      </div>
+    </div>
+  </section>
+
+  {# ── Step 3: Agent / LLM ────────────────────────────────────────────── #}
+  <section id="step-3" class="gs-step glass-panel overflow-hidden mb-4 hidden">
+    <div class="px-5 py-3 border-b border-slate-800/40">
+      <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Step 3 — Agent / LLM</span>
+    </div>
+    <div class="px-5 py-5 space-y-4">
+      <p class="text-xs text-slate-400">
+        Pick how Work Orders get implemented. Subscription CLIs (Claude, Cursor, Codex, Gemini) run on this Mac.
+        Once an agent is online, it can finish remaining setup (labels, first WO) — or you can do those steps yourself.
+      </p>
+
+      {% if not agent_runner_online %}
+      <div class="p-3 rounded border border-amber-500/20 bg-amber-500/5 text-xs text-amber-200">
+        Agent-runner is offline. Start it with <code class="font-mono">make agent-install</code> (or <code class="font-mono">make agent-start</code>), then refresh this page.
+      </div>
+      {% endif %}
+
+      <div class="space-y-2" id="backend-cards">
+        {% for meta in backends_meta %}
+        <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors
+                       {% if preferred == meta.name %}border-violet-500/40 bg-violet-500/10{% else %}border-slate-800 bg-slate-950/40 hover:border-slate-700{% endif %}">
+          <input type="radio" name="gs-backend" value="{{ meta.name }}" class="mt-1" {% if preferred == meta.name %}checked{% endif %}>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-mono font-bold text-slate-100">{{ meta.label }}</span>
+              {% if meta.cli %}
+              <span class="text-[9px] font-mono text-emerald-400 uppercase">CLI found</span>
+              {% else %}
+              <span class="text-[9px] font-mono text-slate-500 uppercase">CLI missing</span>
+              {% endif %}
+            </div>
+            <p class="text-[10px] text-slate-500 mt-0.5">{{ meta.hint }}</p>
+            {% if not meta.cli and meta.install %}
+            <p class="text-[10px] text-amber-400/90 mt-1 font-mono">{{ meta.install }}</p>
+            {% endif %}
+          </div>
+        </label>
+        {% endfor %}
+      </div>
+
+      <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+        <input type="checkbox" id="gs-start-agent" class="rounded border-slate-600 bg-slate-900" checked>
+        Start / enable the selected agent daemon on this machine
+      </label>
+
+      <div class="flex justify-between gap-2">
+        <button type="button" onclick="showStep(2)" class="px-3 py-2 text-xs font-mono text-slate-400 hover:text-slate-200">Back</button>
+        <button type="button" onclick="saveAgent()" class="px-4 py-2 text-xs font-mono rounded bg-violet-600/80 text-white hover:bg-violet-500 transition-colors">
+          Save &amp; continue
+        </button>
+      </div>
+    </div>
+  </section>
+
+  {# ── Step 4: Ready ──────────────────────────────────────────────────── #}
+  <section id="step-4" class="gs-step glass-panel overflow-hidden mb-4 hidden">
+    <div class="px-5 py-3 border-b border-slate-800/40">
+      <span class="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Step 4 — You’re set · what’s next</span>
+    </div>
+    <div class="px-5 py-5 space-y-4">
+      <ul class="space-y-2 text-xs" id="ready-checklist">
+        <li class="flex items-center gap-2" data-check="token">
+          <span class="check-dot w-2 h-2 rounded-full bg-slate-600"></span>
+          <span>GitHub token</span>
+        </li>
+        <li class="flex items-center gap-2" data-check="repo">
+          <span class="check-dot w-2 h-2 rounded-full bg-slate-600"></span>
+          <span>Product repository</span>
+        </li>
+        <li class="flex items-center gap-2" data-check="product">
+          <span class="check-dot w-2 h-2 rounded-full bg-slate-600"></span>
+          <span>Local checkout + factory.yaml</span>
+        </li>
+        <li class="flex items-center gap-2" data-check="agent">
+          <span class="check-dot w-2 h-2 rounded-full bg-slate-600"></span>
+          <span>Agent / LLM preferred backend</span>
+        </li>
+        <li class="flex items-center gap-2" data-check="runner">
+          <span class="check-dot w-2 h-2 rounded-full bg-slate-600"></span>
+          <span>Agent-runner online</span>
+        </li>
+      </ul>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+        <a href="/pm" class="block p-4 rounded-lg border border-violet-500/30 bg-violet-500/10 hover:bg-violet-500/15 transition-colors">
+          <div class="text-xs font-bold text-violet-200">Let an agent help</div>
+          <p class="text-[10px] text-slate-400 mt-1">Open PM chat — ask it to draft your first Work Order, check labels, or walk remaining GitHub setup.</p>
+        </a>
+        <div class="p-4 rounded-lg border border-slate-800 bg-slate-950/40">
+          <div class="text-xs font-bold text-slate-200">Do it yourself</div>
+          <ul class="text-[10px] text-slate-500 mt-1 space-y-1 list-disc list-inside">
+            <li>GitHub labels: <code class="text-slate-400">new-wo</code>, <code class="text-slate-400">agent-pr</code>, <code class="text-slate-400">pm-sync</code></li>
+            <li>Protect <code class="text-slate-400">main</code> with your CI check</li>
+            <li>Run <code class="text-slate-400">make doctor</code> in the engine</li>
+            <li>Create a WO under <a href="/settings/plan" class="text-sky-400 hover:text-sky-300">Plan</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="flex justify-between gap-2 pt-2">
+        <button type="button" onclick="showStep(3)" class="px-3 py-2 text-xs font-mono text-slate-400 hover:text-slate-200">Back</button>
+        <a href="/" class="px-4 py-2 text-xs font-mono rounded bg-emerald-600/80 text-white hover:bg-emerald-500 transition-colors">
+          Go to Overview
+        </a>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<style>
+  .step-pill { color: #64748b; border-color: #1e293b; background: transparent; }
+  .step-pill.active { color: #e2e8f0; border-color: #38bdf8; background: rgba(14,165,233,0.1); }
+  .step-pill.done { color: #6ee7b7; border-color: #065f46; }
+</style>
+
+<script>
+const INITIAL = {{ status_json | safe }};
+let status = INITIAL;
+
+function showErr(msg) {
+  const el = document.getElementById('live-error');
+  const ok = document.getElementById('live-ok');
+  ok.classList.add('hidden');
+  if (!msg) { el.classList.add('hidden'); return; }
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+function showOk(msg) {
+  const el = document.getElementById('live-ok');
+  document.getElementById('live-error').classList.add('hidden');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function showStep(n) {
+  document.querySelectorAll('.gs-step').forEach(s => s.classList.add('hidden'));
+  const sec = document.getElementById('step-' + n);
+  if (sec) sec.classList.remove('hidden');
+  document.querySelectorAll('.step-pill').forEach(p => {
+    const s = Number(p.dataset.step);
+    p.classList.toggle('active', s === n);
+    p.classList.toggle('done', s < n);
+  });
+  if (n === 4) refreshChecklist();
+  history.replaceState(null, '', '?step=' + n);
+}
+
+document.querySelectorAll('.step-pill').forEach(p => {
+  p.addEventListener('click', () => showStep(Number(p.dataset.step)));
+});
+
+async function postJson(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  let data = {};
+  try { data = await r.json(); } catch (_) {}
+  if (!r.ok) throw new Error(data.error || data.detail || ('HTTP ' + r.status));
+  return data;
+}
+
+async function saveGithub() {
+  showErr('');
+  try {
+    const data = await postJson('/settings/get-started/github', {
+      github_token: document.getElementById('gs-token').value,
+      github_repo: document.getElementById('gs-repo').value,
+    });
+    status = { ...status, ...data.status };
+    showOk('GitHub settings saved.');
+    showStep(2);
+  } catch (e) { showErr(e.message); }
+}
+
+async function saveProduct() {
+  showErr('');
+  try {
+    const data = await postJson('/settings/get-started/product', {
+      github_repo: document.getElementById('gs-repo').value,
+      local_repo_path: document.getElementById('gs-path').value,
+      clone: document.getElementById('gs-clone').checked,
+      scaffold: document.getElementById('gs-scaffold').checked,
+    });
+    status = { ...status, ...data.status };
+    if (data.local_repo_path) document.getElementById('gs-path').value = data.local_repo_path;
+    const line = document.getElementById('product-status-line');
+    if (line && data.product) {
+      line.textContent = `path: ${data.product.exists} · git: ${data.product.is_git} · yaml: ${data.product.has_factory_yaml}`;
+    }
+    const badge = document.getElementById('product-ready-badge');
+    if (badge) {
+      badge.textContent = data.product && data.product.ready_for_agents ? 'ready' : 'not ready';
+      badge.className = 'text-[10px] font-mono ' + (data.product && data.product.ready_for_agents ? 'text-emerald-400' : 'text-slate-500');
+    }
+    if (data.restart_required) document.getElementById('restart-banner').classList.remove('hidden');
+    showOk('Product checkout saved.');
+    showStep(3);
+  } catch (e) { showErr(e.message); }
+}
+
+async function saveAgent() {
+  showErr('');
+  const selected = document.querySelector('input[name="gs-backend"]:checked');
+  if (!selected) { showErr('Pick an agent backend.'); return; }
+  try {
+    const data = await postJson('/settings/get-started/agent', {
+      preferred: selected.value,
+      start: document.getElementById('gs-start-agent').checked,
+    });
+    status = { ...status, ...data.status };
+    showOk('Agent preference saved' + (data.started ? ' and daemon start requested.' : '.'));
+    showStep(4);
+  } catch (e) { showErr(e.message); }
+}
+
+function refreshChecklist() {
+  const map = {
+    token: !!status.github_token_set,
+    repo: !!(status.github_repo),
+    product: !!(status.product && status.product.ready_for_agents),
+    agent: !!(status.preferred),
+    runner: !!status.agent_runner_online,
+  };
+  document.querySelectorAll('#ready-checklist [data-check]').forEach(li => {
+    const ok = map[li.dataset.check];
+    const dot = li.querySelector('.check-dot');
+    if (dot) {
+      dot.className = 'check-dot w-2 h-2 rounded-full ' + (ok ? 'bg-emerald-400' : 'bg-slate-600');
+    }
+  });
+}
+
+const params = new URLSearchParams(location.search);
+const startStep = Number(params.get('step') || '{{ start_step }}') || 1;
+showStep(startStep);
+refreshChecklist();
+</script>
+{% endblock %}

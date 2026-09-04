@@ -1,14 +1,15 @@
 ---
 title: "Getting Started"
-description: "From zero to first Work Order: product repo, engine setup, LOCAL_REPO_PATH, factory.yaml"
-last_verified: 2026-08-31
-covers_wos: []
+description: "From zero to first Work Order: UI product setup, engine, LOCAL_REPO_PATH, factory.yaml"
+last_verified: 2026-09-04
+covers_wos:
+  - WO-1091
 doc_owner: factory-team
 ---
 
 # Getting Started
 
-Goal: in about **20–30 minutes**, run the factory engine, point it at a product repo, and complete (or watch) one Work Order.
+Goal: in about **15–20 minutes**, run the factory engine, point it at a product repo from the dashboard, and complete (or watch) one Work Order.
 
 You need **two** Git checkouts:
 
@@ -35,64 +36,49 @@ Linux: you can run Docker services, but you must put secrets in `.env` yourself 
 **Fastest path (recommended for first time):**
 
 1. Open [agentic-factory-template](https://github.com/dentroio/agentic-factory-template) → **Use this template**.
-2. Clone **your** new repo somewhere you will edit code, e.g. `~/src/my-factory-demo`.
+2. Note the `owner/name` — you will paste it in the dashboard (or let the factory clone it).
 3. In that repo: labels `new-wo`, `agent-pr`, `pm-sync`; protect `main` requiring the **CI** check (see template [SETUP.md](https://github.com/dentroio/agentic-factory-template/blob/main/SETUP.md)).
 
-**Existing app:** follow [Bring your own repo](../adopters/BYO.md) — WO folder, claim files, `AGENT_PROCESS.md`, labels, and a root [`factory.yaml`](Product-Profile).
+**Existing app:** you can skip cloning yourself — the dashboard can clone into `~/src/<repo>` (or point at an existing path). See [Bring your own repo](../adopters/BYO.md).
 
 ## Step 2 — Clone and set up the engine
 
 ```bash
 git clone https://github.com/dentroio/agentic-factory.git
 cd agentic-factory
-make agent-setup
+make agent-setup   # optional if you prefer to enter secrets only in the UI
+make up
+make agent-install
+open http://localhost:8099
 ```
 
-When prompted for **GitHub repo**, enter the **product** `owner/name` (the template-derived repo or your app) — **not** `dentroio/agentic-factory` unless you are developing the engine itself.
+`make agent-setup` can store a token and a default repo; you can also finish entirely in the UI.
 
-Also provide:
+## Step 3 — Interactive Get Started (preferred)
 
-- Fine-grained GitHub PAT
-- Optional Cursor / Slack / ntfy
-- Anthropic API key (PM + WO drafting)
-- Preferred agent backend (`claude` is the default)
+1. Open **Settings → Get Started** (or the Overview banner).
+2. **GitHub** — paste fine-grained PAT + `owner/your-product`.
+3. **Product** — set a local directory **or** clone; leave Prepare factory files checked when needed.
+4. **Agent / LLM** — pick Claude / Cursor / Codex / Gemini (CLI detected when possible) and start the daemon.
+5. **Ready** — either open **PM chat** and ask the agent to finish remaining setup (labels, first WO), or follow the self-serve checklist.
+6. If the path changed, run `make restart` when prompted, then `make doctor`.
 
-`make agent-setup` starts Docker services and opens the dashboard.
-
-## Step 3 — Point the runner at your product checkout
-
-The dashboard lists Work Orders from GitHub. The **agent runner** needs a **local clone** of that same product to create worktrees and run `verify`.
-
-Set this once (prefs file — not Keychain):
-
-```bash
-# ~/.config/factory-agent/prefs  (created by agent-setup)
-GITHUB_REPO=you/your-product
-LOCAL_REPO_PATH=/absolute/path/to/your-product-clone
-PREFERRED_AGENT=claude
-```
-
-Or set `LOCAL_REPO_PATH` in the environment before `make agent-install` / `make agent-once`.
-
-If `LOCAL_REPO_PATH` is wrong or empty, agents cannot implement WOs even when the dashboard shows them.
+You should **not** need to hand-edit prefs or `.env` for day-to-day adoption.
 
 ## Step 4 — Confirm the dashboard
 
 Open [http://localhost:8099](http://localhost:8099).
 
-1. **Settings → Authentication** — GitHub token and Anthropic key look healthy.
+1. **Settings → Authentication** — GitHub token and product checkout look healthy.
 2. **Overview / Plan** — you see Work Orders from the **product** (template ships WO-001 … WO-004).
-3. If the list is empty: wrong `GITHUB_REPO`, missing specs under `docs/project_management/work_orders/`, or token cannot read that repo.
+3. If the list is empty: wrong repo, missing specs under `docs/project_management/work_orders/`, or token cannot read that repo.
 
-## Step 5 — Install the agent runner
+## Step 5 — Agent runner
 
 ```bash
-make agent-install
 make agent-status
 make agent-logs   # optional: watch claims
 ```
-
-The runner polls the orchestrator and claims open WOs. It idles when the queue is empty.
 
 One-shot test without the daemon:
 
@@ -102,7 +88,7 @@ make agent-once
 
 ## Step 6 — Product profile
 
-At the root of the **product** repo, keep a `factory.yaml`. The template already has one. Confirm it before the first WO:
+The UI **Prepare factory files** step writes a root `factory.yaml` when missing. Confirm it:
 
 ```yaml
 name: my-app
@@ -113,23 +99,30 @@ compose_project: ""
 patterns_file: "docs/factory/patterns.md"
 ```
 
-Details and optional fields: [Product Profile](Product-Profile). Agent prompts use these fields — never another company’s product name or login.
+CLI fallback (power users):
+
+```bash
+make init PRODUCT=/absolute/path/to/your-product INIT_ARGS='--sample-wo'
+make doctor DOCTOR_ARGS="--product /absolute/path/to/your-product --skip-network"
+```
+
+Details: [Product Profile](Product-Profile).
 
 ## Step 7 — First Work Order (template demo)
 
-1. In the **product** repo, open `docs/project_management/work_orders/WO-001-change-greeting.md`.
+1. In the **product** repo, open `docs/project_management/work_orders/WO-001-change-greeting.md` (or the smoke WO from init).
 2. With the runner installed, wait for a claim (or dispatch from the PM / Overview UI).
-3. When the agent asks you to verify: in the product clone run `make run`, open [http://localhost:8765](http://localhost:8765), confirm the heading.
+3. When the agent asks you to verify: in the product clone run `make run`, open the UI URL from `factory.yaml`, confirm the change.
 4. Approve; the agent opens a PR on the **product** repo (not on agentic-factory).
 
 ## What success looks like
 
 | Check | OK when |
 |-------|---------|
-| Dashboard | Lists product WOs; settings green |
+| Dashboard | Lists product WOs; Auth product checkout “ready” |
 | Runner | `make agent-status` shows loaded; logs show polling |
 | First WO | PR opens on **product** GitHub; verify URL is your app |
-| Engine prefs | `GITHUB_REPO` is your product, not a random private app |
+| Doctor | `make doctor` hard checks pass |
 
 ## Next reading
 

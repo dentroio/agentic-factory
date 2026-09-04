@@ -4911,7 +4911,7 @@ async def get_secrets():
 
 @app.put("/api/secrets")
 async def put_secrets(request: Request):
-    global _secrets_cache
+    global _secrets_cache, GITHUB_REPO
     try:
         incoming = await request.json()
     except Exception:
@@ -4925,7 +4925,91 @@ async def put_secrets(request: Request):
     else:
         dispatch_control.atomic_write_json(SECRETS_PATH, secrets)
     _secrets_cache = secrets
+    # Live-update so Settings → Authentication "save without restart" is true for repo.
+    if "GITHUB_REPO" in incoming:
+        new_repo = (secrets.get("GITHUB_REPO") or "").strip()
+        if new_repo:
+            GITHUB_REPO = new_repo
     return {k: bool(v) for k, v in secrets.items()}
+
+
+async def _proxy_runner(method: str, path: str, *, json_body: dict | None = None, timeout: float = 60):
+    """Forward a request to the host agent-runner draft server."""
+    await _refresh_agent_runner_url()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.request(
+                method,
+                f"{AGENT_RUNNER_URL}{path}",
+                json=json_body,
+                headers=_runner_headers(),
+            )
+            try:
+                payload = r.json()
+            except Exception:
+                payload = {"error": r.text[:500] or f"runner returned {r.status_code}"}
+            return JSONResponse(content=payload, status_code=r.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Agent runner unreachable: {e}")
+
+
+@app.get("/api/product")
+async def get_product():
+    """Product wiring status from the host runner (prefs + local path)."""
+    return await _proxy_runner("GET", "/api/product", timeout=10)
+
+
+@app.put("/api/product")
+async def put_product(request: Request):
+    """Set GITHUB_REPO / LOCAL_REPO_PATH in host prefs; optional scaffold."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    # Keep Vault/in-memory GITHUB_REPO in sync when the product form sets it.
+    repo = str(body.get("github_repo") or "").strip()
+    if repo:
+        global GITHUB_REPO, _secrets_cache
+        try:
+            secrets = apply_secret_updates(_secrets_cache, {"GITHUB_REPO": repo})
+            if VAULT_ADDR and _vault_token:
+                await _vault_write(secrets)
+            else:
+                dispatch_control.atomic_write_json(SECRETS_PATH, secrets)
+            _secrets_cache = secrets
+            GITHUB_REPO = repo
+        except SecretPolicyError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    return await _proxy_runner("PUT", "/api/product", json_body=body, timeout=120)
+
+
+@app.post("/api/product/clone")
+async def clone_product(request: Request):
+    """Clone the product repo on the host and point prefs at it."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if not body.get("github_token"):
+        body = {**body, "github_token": _get_github_token()}
+    repo = str(body.get("github_repo") or body.get("repo") or "").strip()
+    resp = await _proxy_runner("POST", "/api/product/clone", json_body=body, timeout=300)
+    if repo and getattr(resp, "status_code", 500) == 200:
+        global GITHUB_REPO, _secrets_cache
+        try:
+            secrets = apply_secret_updates(_secrets_cache, {"GITHUB_REPO": repo})
+            if VAULT_ADDR and _vault_token:
+                await _vault_write(secrets)
+            else:
+                dispatch_control.atomic_write_json(SECRETS_PATH, secrets)
+            _secrets_cache = secrets
+            GITHUB_REPO = repo
+        except SecretPolicyError as e:
+            print(
+                f"[orchestrator] clone succeeded on runner but "
+                f"GITHUB_REPO secret update rejected: {e}"
+            )
+    return resp
 
 
 # ── WO Draft generation ────────────────────────────────────────────────────────

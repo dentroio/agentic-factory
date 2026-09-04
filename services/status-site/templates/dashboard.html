@@ -17,6 +17,21 @@
 </div>
 {% endset %}
 
+{% if product_setup_needed %}
+<div class="flex items-center justify-between gap-4 mb-6 px-6 py-4 rounded-xl border bg-sky-500/10 border-sky-500/20 text-sky-200">
+  <div class="min-w-0">
+    <div class="font-display font-bold tracking-wider text-xs uppercase text-sky-300">Finish setup</div>
+    <p class="text-xs text-slate-400 mt-1">
+      Connect GitHub, point at (or clone) your product, and pick an agent/LLM — then the factory can help with the rest.
+    </p>
+  </div>
+  <a href="/settings/get-started"
+     class="flex-shrink-0 px-3 py-2 text-xs font-mono rounded border border-sky-500/40 bg-sky-500/10 text-sky-200 hover:bg-sky-500/20 transition-colors">
+    Get Started →
+  </a>
+</div>
+{% endif %}
+
 {# ── Health banner ────────────────────────────────────────────────────── #}
 {% if health_status == "healthy" %}
 <div id="health-banner" class="flex items-center justify-between gap-4 mb-6 px-6 py-4 rounded-xl backdrop-blur-md border bg-emerald-500/10 border-emerald-500/20 text-emerald-300 shadow-lg">

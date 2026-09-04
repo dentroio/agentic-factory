@@ -10,10 +10,11 @@ doc_owner: factory-team
 
 Open [http://127.0.0.1:8099](http://127.0.0.1:8099) (loopback only). No human login. `API_SECRET` is a machine bearer for scripts/orchestrator — browser same-origin writes are allowed; bare `curl` writes get 401. Page auto-refreshes ~60s.
 
-Data is for the product in `GITHUB_REPO`. Wrong repo → empty or foreign WOs. Runner needs `LOCAL_REPO_PATH` — [Getting Started](Getting-Started).
+Data is for the product in `GITHUB_REPO`. Wrong repo → empty or foreign WOs. First-time setup: **[Settings → Get Started](http://127.0.0.1:8099/settings/get-started)** (GitHub, product checkout, agent/LLM).
 
 ## Overview
 
+- **Get Started banner** — shown until product + preferred agent + runner look ready; links to the interactive wizard  
 - **Health banner** — HEALTHY / DEGRADED / CRITICAL; agent count, PRs, weekly completions  
 - **Alerts** — watchdog issues (hidden when empty)  
 - **Active WO** — claim, backend, step, age, last push, CI badge  
@@ -47,15 +48,21 @@ No separate Threads tab. From Overview/PM “View thread →”:
 - Optional screenshots from connected tools  
 - Peer-review findings after the quality gate  
 
+## Settings → Get Started
+
+Interactive four-step wizard: GitHub token/repo → product checkout (path/clone/scaffold) → agent/LLM (detect CLI, set preferred, start daemon) → ready checklist with **PM chat** (agent helps) or self-serve remaining GitHub steps. Overview shows a banner until onboarding looks complete.
+
 ## Settings → Authentication
 
-| Secret | Role |
-|--------|------|
+| Field | Role |
+|-------|------|
 | GitHub fine-grained PAT (`github_pat_...`) | Product + engine: Contents, PRs, Issues, Actions. No `gist`. Classic `ghp_` / `gho_` rejected |
-| Anthropic API key | `claude-api`, PM, drafting, many Actions scripts |
+| Repository (`owner/name`) | Product repo for WO specs and PRs — saved via orchestrator secrets and mirrored to host prefs |
+| Local directory / Clone / Prepare files | Host product checkout — written by the agent-runner into `~/.config/factory-agent/prefs`; optional `factory.yaml` scaffold |
+| Anthropic API key | `claude-api`, PM, drafting, many Actions scripts (managed under Settings → Agents for presence) |
 | ntfy / Slack webhook / Slack bot tokens | [Notifications](Notifications) |
 
-Presence badges only — values stay in Vault. **`GITHUB_REPO` is not edited here** — set via `make agent-setup` / prefs / restart.
+Presence badges only for secret values — tokens stay in Vault. Changing **Local directory** requires `make restart` so Docker remounts `${LOCAL_REPO_PATH}`. For first-time users prefer **Get Started** over editing these fields piecemeal.
 
 ## Settings → Agents
 
@@ -66,7 +73,7 @@ Presence badges only — values stay in Vault. **`GITHUB_REPO` is not edited her
 - **Force cross-LLM review** + per-role backends  
 - Pre-dispatch priorities via orchestrator `REQUIRE_APPROVAL_FOR`  
 
-Model changes apply on next use; `GITHUB_REPO` still needs process restart / setup.
+Model changes apply on next use. Product repo and local path are managed under Settings → Authentication (path changes still need `make restart` for Docker remount).
 
 ## Settings → Plan
 
