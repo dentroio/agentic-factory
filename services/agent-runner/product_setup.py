@@ -12,6 +12,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -315,6 +317,77 @@ def clone_product(
     )
     result["cloned_to"] = str(target)
     return result
+
+
+def remount_compose(
+    *,
+    engine_root: Path | None = None,
+    background: bool = True,
+) -> dict[str, Any]:
+    """Recreate Docker Compose services so LOCAL_REPO_PATH remounts from prefs.
+
+    Runs `compose-with-env.sh up -d --force-recreate` (no image rebuild).
+
+    Default is background=True: return immediately so the HTTP response can leave
+    the orchestrator/status-site before those containers are recreated.
+    """
+    root = engine_root or Path(__file__).resolve().parents[2]
+    script = root / "scripts" / "compose-with-env.sh"
+    if not script.is_file():
+        raise ProductSetupError(f"compose helper missing: {script}")
+    prefs = read_prefs()
+    local = (prefs.get("LOCAL_REPO_PATH") or "").strip()
+    if local and not Path(local).expanduser().exists():
+        raise ProductSetupError(
+            f"LOCAL_REPO_PATH does not exist yet: {local} — fix the path before remounting"
+        )
+
+    def _run() -> None:
+        # Give the HTTP response time to flush back through Docker before we
+        # recreate the containers that are proxying this call.
+        time.sleep(1.5)
+        try:
+            proc = subprocess.run(
+                ["bash", str(script), "up", "-d", "--force-recreate"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if proc.returncode != 0:
+                err = (proc.stderr or proc.stdout or "remount failed").strip()
+                print(f"[product-setup] remount failed: {err[:500]}", flush=True)
+            else:
+                print(
+                    f"[product-setup] remount ok — LOCAL_REPO_PATH={local or '(unset)'}",
+                    flush=True,
+                )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"[product-setup] remount failed: {exc}", flush=True)
+
+    if background:
+        threading.Thread(target=_run, daemon=True, name="product-remount").start()
+        return {
+            "ok": True,
+            "started": True,
+            "local_repo_path": local,
+            "message": (
+                "Docker remount started. The dashboard will briefly disconnect; "
+                "reload in a few seconds."
+            ),
+            "restart_required": False,
+            "hint": "If the agent-runner still looks stale, run make agent-stop && make agent-start.",
+        }
+
+    _run()
+    return {
+        "ok": True,
+        "started": False,
+        "local_repo_path": local,
+        "message": "Docker services recreated with current prefs (LOCAL_REPO_PATH remounted).",
+        "restart_required": False,
+        "hint": "If the agent-runner still looks stale, run make agent-stop && make agent-start.",
+    }
 
 
 def _git_ok(cwd: Path, *args: str) -> bool:

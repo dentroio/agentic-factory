@@ -61,7 +61,7 @@ _AGENT_META: dict[str, dict] = {
         "agent_name": "cursor-runner",
         "label": "com.dentroio.factory-agent-cursor",
         "log_suffix": "cursor",
-        "extra_env": {},
+        "extra_env": {"DRAFT_PORT": "8101"},
     },
     "codex": {
         "auth_type": "both",
@@ -70,7 +70,7 @@ _AGENT_META: dict[str, dict] = {
         "agent_name": "codex-runner",
         "label": "com.dentroio.factory-agent-codex",
         "log_suffix": "codex",
-        "extra_env": {},
+        "extra_env": {"DRAFT_PORT": "8103"},
     },
     "gemini": {
         "auth_type": "subscription",
@@ -79,7 +79,7 @@ _AGENT_META: dict[str, dict] = {
         "agent_name": "gemini-runner",
         "label": "com.dentroio.factory-agent-gemini",
         "log_suffix": "gemini",
-        "extra_env": {},
+        "extra_env": {"DRAFT_PORT": "8104"},
     },
 }
 
@@ -227,6 +227,9 @@ class _DraftHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/product/clone":
             self._handle_product_clone()
+            return
+        if self.path == "/api/product/remount":
+            self._handle_product_remount()
             return
         if self.path.startswith("/api/agents/"):
             parts = self.path.split("/")
@@ -462,6 +465,17 @@ class _DraftHandler(BaseHTTPRequestHandler):
             else:
                 self._json(500, {"error": str(e)})
 
+    def _handle_product_remount(self) -> None:
+        try:
+            import product_setup as setup
+            self._json(200, setup.remount_compose())
+        except Exception as e:
+            import product_setup as setup
+            if isinstance(e, setup.ProductSetupError):
+                self._json(400, {"error": str(e)})
+            else:
+                self._json(500, {"error": str(e)})
+
     def do_DELETE(self):
         if not self._require_auth():
             return
@@ -635,6 +649,18 @@ class _DraftHandler(BaseHTTPRequestHandler):
 def start() -> None:
     # Loopback binding (AF-07) plus a bearer token so a local process cannot
     # POST /dispatch or rewrite LaunchAgent plists without API_SECRET.
-    server = _ThreadedServer(("127.0.0.1", DRAFT_PORT), _DraftHandler)
+    try:
+        server = _ThreadedServer(("127.0.0.1", DRAFT_PORT), _DraftHandler)
+    except OSError as exc:
+        print(
+            f"[draft-server] Failed to bind 127.0.0.1:{DRAFT_PORT}: {exc}\n"
+            f"[draft-server] Another factory-agent likely owns this port. "
+            f"Check: lsof -nP -iTCP:{DRAFT_PORT} -sTCP:LISTEN\n"
+            f"[draft-server] Stop the other agent (launchctl bootout) or ensure "
+            f"each backend uses a unique DRAFT_PORT (claude=8102, cursor=8101, "
+            f"codex=8103, gemini=8104).",
+            flush=True,
+        )
+        return
     print(f"[draft-server] Listening on 127.0.0.1:{DRAFT_PORT}", flush=True)
     server.serve_forever()

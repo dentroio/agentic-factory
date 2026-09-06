@@ -1890,6 +1890,40 @@ async def get_started_product(request: Request):
     }
 
 
+@app.post("/settings/get-started/remount")
+async def get_started_remount():
+    """Recreate Docker Compose so LOCAL_REPO_PATH from prefs is remounted."""
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            r = await client.post(
+                f"{ORCHESTRATOR_URL}/api/product/remount",
+                json={},
+                headers=_orch_headers(),
+            )
+        if r.status_code >= 400:
+            try:
+                detail = r.json().get("error") or r.json().get("detail")
+            except Exception:
+                detail = r.text
+            return JSONResponse(
+                {"error": str(detail or f"remount failed ({r.status_code})")[:400]},
+                status_code=400,
+            )
+        data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    except Exception as e:
+        return JSONResponse(
+            {"error": f"Agent runner unreachable — remount needs the host runner ({e})"},
+            status_code=503,
+        )
+    return {"ok": True, **(data if isinstance(data, dict) else {})}
+
+
+@app.post("/settings/authentication/remount")
+async def authentication_remount():
+    """Same remount path as Get Started, for the Auth settings page."""
+    return await get_started_remount()
+
+
 @app.post("/settings/get-started/agent")
 async def get_started_agent(request: Request):
     try:

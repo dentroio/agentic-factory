@@ -19,6 +19,7 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
+| WO-1092 | Unique draft ports + one-click product remount | P2 | ✅ Complete | 2026-09-06 |
 | WO-1091 | Adoption DX: factory doctor, init, stranger-clone checks | P2 | ✅ Complete | 2026-09-04 |
 | WO-1090 | Agent Runner Authentication & Zero-Trust Hardening | P2 | 🟡 In Progress | — |
 | WO-1089 | Multi-Repo Autonomous Orchestrator Dispatch | P2 | ✅ Complete | 2026-08-30 |

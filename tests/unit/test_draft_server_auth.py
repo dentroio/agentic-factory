@@ -43,6 +43,8 @@ def test_draft_server_gates_every_method():
     assert "_handle_product_get" in text
     assert "_handle_product_put" in text
     assert "_handle_product_clone" in text
+    assert "_handle_product_remount" in text
+    assert "/api/product/remount" in text
 
 
 def test_orchestrator_sends_bearer_to_the_runner():
