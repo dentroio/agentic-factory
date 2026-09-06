@@ -21,10 +21,62 @@
   {% endif %}
 
   {% if restart_required %}
-  <div class="mb-4 p-3 border border-amber-500/30 bg-amber-950/10 rounded text-sm text-amber-200">
-    Local product path was updated. Run <code class="font-mono text-amber-100">make restart</code> so Docker remounts the checkout, then
-    <code class="font-mono text-amber-100">make agent-stop &amp;&amp; make agent-start</code> so the runner reloads prefs.
+  <div class="mb-4 p-3 border border-amber-500/30 bg-amber-950/10 rounded text-sm text-amber-200" id="auth-restart-banner">
+    <p class="mb-2">
+      Local product path was updated. Remount Docker so containers see the new checkout.
+    </p>
+    <div class="flex flex-wrap items-center gap-2">
+      <button type="button" id="auth-remount-btn"
+        class="px-3 py-1.5 text-xs font-mono rounded bg-amber-500/20 border border-amber-500/40 text-amber-100 hover:bg-amber-500/30 transition-colors">
+        Remount Docker
+      </button>
+      <span class="text-[10px] font-mono text-amber-400/80">
+        or <code class="text-amber-100">make restart</code> ·
+        <code class="text-amber-100">make agent-stop &amp;&amp; make agent-start</code>
+      </span>
+    </div>
+    <p id="auth-remount-msg" class="mt-2 text-xs hidden"></p>
   </div>
+  <script>
+  (function () {
+    const btn = document.getElementById('auth-remount-btn');
+    const msg = document.getElementById('auth-remount-msg');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Remounting…';
+      msg.classList.add('hidden');
+      try {
+        const r = await fetch('/settings/authentication/remount', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || data.detail || ('HTTP ' + r.status));
+        msg.textContent = data.message || 'Docker remount started…';
+        msg.className = 'mt-2 text-xs text-emerald-300';
+        for (let i = 0; i < 40; i++) {
+          await new Promise(res => setTimeout(res, 1500));
+          try {
+            const ping = await fetch('/settings/authentication', { method: 'GET' });
+            if (ping.ok) {
+              msg.textContent = 'Docker remounted. Reload if anything still looks stale.';
+              document.getElementById('auth-restart-banner')?.classList.add('opacity-60');
+              break;
+            }
+          } catch (_) { /* still restarting */ }
+        }
+      } catch (e) {
+        msg.textContent = e.message || String(e);
+        msg.className = 'mt-2 text-xs text-rose-300';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Remount Docker';
+      }
+    });
+  })();
+  </script>
   {% endif %}
 
   {% if error %}

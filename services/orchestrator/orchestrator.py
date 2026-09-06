@@ -5012,6 +5012,12 @@ async def clone_product(request: Request):
     return resp
 
 
+@app.post("/api/product/remount")
+async def remount_product():
+    """Recreate compose services on the host so LOCAL_REPO_PATH remounts."""
+    return await _proxy_runner("POST", "/api/product/remount", json_body={}, timeout=300)
+
+
 # ── WO Draft generation ────────────────────────────────────────────────────────
 
 # Each backend now runs as its own native launchd process (claude/cursor/codex on

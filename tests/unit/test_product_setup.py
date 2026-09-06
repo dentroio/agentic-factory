@@ -129,3 +129,64 @@ def test_configure_preferred_agent(tmp_path):
     assert ps.read_prefs(tmp_path / "prefs")["PREFERRED_AGENT"] == "cursor"
     with pytest.raises(ps.ProductSetupError):
         ps.configure_product(preferred_agent="nope", prefs_file=tmp_path / "prefs")
+
+
+def test_remount_compose_invokes_helper(tmp_path, monkeypatch):
+    engine = tmp_path / "engine"
+    scripts = engine / "scripts"
+    scripts.mkdir(parents=True)
+    helper = scripts / "compose-with-env.sh"
+    helper.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    prefs = tmp_path / "prefs"
+    app = tmp_path / "app"
+    app.mkdir()
+    ps.write_prefs({"LOCAL_REPO_PATH": str(app)}, prefs)
+    monkeypatch.setattr(ps, "PREFS_PATH", prefs)
+
+    class _Proc:
+        returncode = 0
+        stdout = "done"
+        stderr = ""
+
+    seen = {}
+
+    def _fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["cwd"] = kwargs.get("cwd")
+        return _Proc()
+
+    monkeypatch.setattr(ps.subprocess, "run", _fake_run)
+    monkeypatch.setattr(ps.time, "sleep", lambda _s: None)
+    out = ps.remount_compose(engine_root=engine, background=False)
+    assert out["ok"] is True
+    assert out["restart_required"] is False
+    assert seen["cmd"][:4] == ["bash", str(helper), "up", "-d"]
+    assert "--force-recreate" in seen["cmd"]
+    assert seen["cwd"] == engine
+
+
+def test_remount_compose_background_returns_immediately(tmp_path, monkeypatch):
+    engine = tmp_path / "engine"
+    (engine / "scripts").mkdir(parents=True)
+    (engine / "scripts" / "compose-with-env.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    prefs = tmp_path / "prefs"
+    app = tmp_path / "app"
+    app.mkdir()
+    ps.write_prefs({"LOCAL_REPO_PATH": str(app)}, prefs)
+    monkeypatch.setattr(ps, "PREFS_PATH", prefs)
+    monkeypatch.setattr(ps.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(ps.subprocess, "run", lambda *a, **k: type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})())
+    out = ps.remount_compose(engine_root=engine, background=True)
+    assert out["ok"] is True
+    assert out["started"] is True
+
+
+def test_remount_compose_rejects_missing_path(tmp_path, monkeypatch):
+    engine = tmp_path / "engine"
+    (engine / "scripts").mkdir(parents=True)
+    (engine / "scripts" / "compose-with-env.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+    prefs = tmp_path / "prefs"
+    ps.write_prefs({"LOCAL_REPO_PATH": str(tmp_path / "missing")}, prefs)
+    monkeypatch.setattr(ps, "PREFS_PATH", prefs)
+    with pytest.raises(ps.ProductSetupError, match="does not exist"):
+        ps.remount_compose(engine_root=engine)

@@ -123,6 +123,8 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Factory init (`make init PRODUCT=…`) | ✅ | BYO scaffold for factory.yaml / WO dirs / PROCESS | WO-1091 |
 | UI product onboarding (Auth path/clone/scaffold + Get Started) | ✅ | Host prefs via agent-runner `/api/product` | WO-1091 |
 | Stranger-clone / no-Clarion default-path regression | ✅ | Unit tests gate default profile + public surfaces | WO-1091 |
+| Unique per-backend draft ports | ✅ | Align AGENT_META with health_agent; bind failure hints | WO-1092 |
+| One-click Docker remount after LOCAL_REPO_PATH change | ✅ | Host `/api/product/remount` + Get Started / Auth button | WO-1092 |
 
 ## Dimension 6: Oryntra Chrome Extension (dentroio/Oryntra)
 

@@ -61,7 +61,7 @@ open http://localhost:8099
 3. **Product** — set a local directory **or** clone; leave Prepare factory files checked when needed.
 4. **Agent / LLM** — pick Claude / Cursor / Codex / Gemini (CLI detected when possible) and start the daemon.
 5. **Ready** — either open **PM chat** and ask the agent to finish remaining setup (labels, first WO), or follow the self-serve checklist.
-6. If the path changed, run `make restart` when prompted, then `make doctor`.
+6. If the path changed, click **Remount Docker** in the banner (or run `make restart`), then `make doctor`.
 
 You should **not** need to hand-edit prefs or `.env` for day-to-day adoption.
 

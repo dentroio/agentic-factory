@@ -24,8 +24,19 @@
   <div class="mb-4 p-3 border border-rose-500/30 bg-rose-950/10 rounded text-sm text-rose-200 hidden" id="live-error"></div>
   <div class="mb-4 p-3 border border-emerald-500/30 bg-emerald-950/10 rounded text-sm text-emerald-200 hidden" id="live-ok"></div>
   <div class="mb-4 p-3 border border-amber-500/30 bg-amber-950/10 rounded text-sm text-amber-200 hidden" id="restart-banner">
-    Local path changed. Run <code class="font-mono text-amber-100">make restart</code> then
-    <code class="font-mono text-amber-100">make agent-stop &amp;&amp; make agent-start</code>.
+    <p class="mb-2">
+      Local path changed. Remount Docker so containers see the new checkout, then restart the agent if needed.
+    </p>
+    <div class="flex flex-wrap items-center gap-2">
+      <button type="button" id="remount-btn" onclick="remountDocker()"
+        class="px-3 py-1.5 text-xs font-mono rounded bg-amber-500/20 border border-amber-500/40 text-amber-100 hover:bg-amber-500/30 transition-colors">
+        Remount Docker
+      </button>
+      <span class="text-[10px] font-mono text-amber-400/80">
+        or <code class="text-amber-100">make restart</code> ·
+        <code class="text-amber-100">make agent-stop &amp;&amp; make agent-start</code>
+      </span>
+    </div>
   </div>
 
   {# Step indicator #}
@@ -305,6 +316,33 @@ async function saveProduct() {
     showOk('Product checkout saved.');
     showStep(3);
   } catch (e) { showErr(e.message); }
+}
+
+async function remountDocker() {
+  showErr('');
+  const btn = document.getElementById('remount-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Remounting…'; }
+  try {
+    const data = await postJson('/settings/get-started/remount', {});
+    document.getElementById('restart-banner').classList.add('hidden');
+    showOk(data.message || 'Docker remount started — waiting for dashboard…');
+    // Poll until status-site is back after container recreate.
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 1500));
+      try {
+        const ping = await fetch('/settings/get-started', { method: 'GET' });
+        if (ping.ok) {
+          showOk('Docker remounted. Reload if anything still looks stale.');
+          return;
+        }
+      } catch (_) { /* still restarting */ }
+    }
+    showOk('Remount requested. Reload the page in a few seconds.');
+  } catch (e) {
+    showErr(e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Remount Docker'; }
+  }
 }
 
 async function saveAgent() {
