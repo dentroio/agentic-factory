@@ -251,10 +251,10 @@ The orchestrator calls this server when a subscription CLI backend is selected f
 
 | Backend | `run()` — agentic execution | `ask()` — text Q&A |
 |---------|---------------------------|---------------------|
-| `ClaudeBackend` | `claude --print --dangerously-skip-permissions` | `claude --print` |
-| `CursorBackend` | `agent --print --force` | `agent --print --mode ask` |
+| `ClaudeBackend` | `claude --print` via `tool_policy` (`--permission-mode` + `--allowedTools`) | `claude --print` |
+| `CursorBackend` | `agent --print` (+ `--trust` when `CURSOR_TRUST=1`) | `agent --print --mode ask` |
 | `CodexBackend` | `codex exec -` (reads prompt from stdin) | `codex review` |
-| `GeminiBackend` | `gemini --yolo -p` | `gemini -p` |
+| `GeminiBackend` | `gemini` (+ `--yolo` when `GEMINI_YOLO=1`) | `gemini -p` |
 
 **Critical distinction:** `run()` is agentic file-editing — the agent reads code, creates files, runs commands. `ask()` is pure text Q&A — no side effects. Reviewer roles and draft server calls must use `ask()` — never `run()`.
 
@@ -269,7 +269,11 @@ Fetch prior rejections + ci_analysis thread messages → format_prior_context()
     │
     ▼
 Build prompt (⚠️ RETRY block if prior context exists +
-              QUALITY_MANDATE + PROCESS_SECTION + FACTORY_API_SECTION + WO spec)
+              QUALITY_MANDATE + tool_policy section + PROCESS_SECTION +
+              FACTORY_API_SECTION + wrap_untrusted WO spec + bridged memory/)
+    │
+    ▼
+backend.run via tool_policy (Claude allowlist / Gemini YOLO / Cursor trust)
     │
     ▼
 Container rebuild (make build-svc SVC=...) — if build fails:

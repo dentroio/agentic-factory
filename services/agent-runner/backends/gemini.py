@@ -5,6 +5,7 @@ from typing import AsyncIterator
 
 from backends.base import AgentBackend, BackendHangError, QuotaExceededError
 from proc import ASK, communicate as _communicate
+from tool_policy import gemini_run_argv, load_tool_policy
 
 _FIRST_OUTPUT_TIMEOUT = 45
 _CONNECTING_RE = re.compile(r"^\s*(connecting|authenticating|initializing|loading)[\.\s]*$", re.I)
@@ -20,7 +21,7 @@ _QUOTA_RE = re.compile(
 
 class GeminiBackend(AgentBackend):
     """
-    Agentic execution: Gemini CLI (`gemini --yolo -p <prompt>`).
+    Agentic execution: Gemini CLI via ToolPolicy (`GEMINI_YOLO`, default on).
     Text Q&A / review (ask): `gemini -p <question>` — headless, no file edits.
 
     Install: npm install -g @google/gemini-cli
@@ -28,6 +29,7 @@ class GeminiBackend(AgentBackend):
 
     --yolo auto-approves all tool uses (file edits, shell commands). Without it,
     Gemini prompts for confirmation on every action, blocking the unattended runner.
+    Set GEMINI_YOLO=0 only for interactive debugging.
     """
 
     def __init__(self) -> None:
@@ -48,8 +50,12 @@ class GeminiBackend(AgentBackend):
             full_prompt += "\n\n[Additional context]\n" + "\n".join(self._pending_messages)
             self._pending_messages.clear()
 
+        policy = load_tool_policy()
+        argv = gemini_run_argv(gemini_bin, full_prompt, policy)
+        yield f"[gemini] tool policy: {policy.summary()}"
+
         proc = await asyncio.create_subprocess_exec(
-            gemini_bin, "--yolo", "-p", full_prompt,
+            *argv,
             cwd=worktree,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,

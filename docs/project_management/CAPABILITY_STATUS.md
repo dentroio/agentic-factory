@@ -1,6 +1,6 @@
 # Dentro AI Factory — Capability Status
 
-_Last updated: 2026-08-30_
+_Last updated: 2026-09-06_
 
 A living registry of what the system can do, at what fidelity, and what's still open.
 
@@ -102,6 +102,10 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Gate-failure intelligence & auto-fix pass | ✅ | Classifies failure causes (lock timeout, node_modules, timeouts, code); automatic infra gate retry & 1 code-fix pass | WO-1087 |
 | Retry context injection | ✅ | Prior rejection reasons + CI failure analysis injected into next attempt's prompt via `format_prior_context()`; agent gets targeted fix instructions instead of starting from scratch | fix/factory-resilience |
 | Validation `reject_reason` storage | ✅ | `ValidationDecision` stores explicit `reject_reason` (accepts both `reason` and `notes` fields); filters rejections without actionable feedback from retry context | fix/factory-resilience |
+| Central tool policy (`tool_policy.py`) | ✅ | Claude allowlist + permission mode; Gemini YOLO / Cursor trust env knobs; logged per run | WO-1093 |
+| Repo `memory/` bridged into coding prompts | ✅ | `MEMORY.md` + recent `auto_*.md` capped into Factory Memory (AF-38) | WO-1093 |
+| Usage token/cost estimates + weekly budget hold | ✅ | `prompt_tokens_est` / `estimated_cost_usd`; `USAGE_BUDGET_USD_WEEK` blocks claims when over | WO-1093 |
+| Review-chain untrusted diff/notes framing | ✅ | `build_reviewer_prompt` uses `wrap_untrusted` | WO-1093 |
 | Factory status site — live feed timestamps | ✅ | Local browser HH:MM:SS prefix on each live feed line | fix/factory-resilience |
 | Factory status site — WO last-seen relative time | ✅ | WO cards show `HH:MM UTC · Xs/Xm/Xh ago` from `last_seen` field | fix/factory-resilience |
 | Dispatch management endpoints | ✅ | `DELETE /api/dispatch/{wo}`, `POST /api/dispatch/{wo}/retry`, `DELETE /api/dispatch` for manual and automatic ghost-lock resolution | fix/factory-resilience |
@@ -142,9 +146,10 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 ## Open Gaps
 
-1. **Continuous Deployment (CD)** — `deploy.yml` workflow and self-hosted deploy runners not yet active. (See `docs/CD_IMPLEMENTATION_PLAN.md`).
+1. **Continuous Deployment (CD)** — `deploy.yml` workflow and self-hosted deploy runners not yet active. (See `docs/CD_IMPLEMENTATION_PLAN.md`). Documented under [LLM Harness](../wiki/LLM-Harness.md) remaining open items.
 2. **Oryntra deep integration & PR merge** — `WO-1048` (artifact export) & `WO-1049` (validation queue) in backlog; `feat/factory-thread-integration` branch in `dentroio/Oryntra` ready for merge.
 3. **JS/TS security scanning limited** — eslint-plugin-security falls back to regex if not installed. Regex covers 6 patterns. Impact: low for Python-heavy projects.
+4. **Exact LLM billing** — usage estimates (`len/4` tokens + crude USD rates) only; subscription CLIs do not always expose real usage. Optional hold via `USAGE_BUDGET_USD_WEEK`.
 
 ---
 
@@ -152,7 +157,8 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
-| 2026-08-30 | Agent runner authentication & zero-trust hardening | WO-1090 |
+| 2026-09-06 | LLM harness: tool policy, memory bridge, cost estimates, review untrusted framing | WO-1093 |
+| 2026-09-06 | Unique draft ports + one-click product remount | WO-1092 |
 | 2026-08-30 | Multi-repo autonomous orchestrator dispatch | WO-1089 |
 | 2026-08-30 | Durable execution history & audit trail | WO-1088 |
 | 2026-08-21 | WO detail retry UI wired to PM board & detail view | fix/factory-wo-retry-ui (#274) |

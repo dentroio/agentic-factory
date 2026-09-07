@@ -6,6 +6,7 @@ from typing import AsyncIterator
 
 from backends.base import AgentBackend, QuotaExceededError
 from proc import ASK, communicate as _communicate
+from tool_policy import claude_run_argv, load_tool_policy
 
 # Claude Code emits these when the subscription usage cap is hit. Missing a
 # wording variant here isn't cosmetic — it's a wasted attempt: the run() loop
@@ -45,7 +46,7 @@ def _subscription_env() -> dict[str, str]:
 
 
 class ClaudeBackend(AgentBackend):
-    """Runs Claude Code CLI headlessly with auto-approved permissions."""
+    """Runs Claude Code CLI headlessly under ToolPolicy (see tool_policy.py)."""
 
     def __init__(self) -> None:
         self._pending_messages: list[str] = []
@@ -55,9 +56,12 @@ class ClaudeBackend(AgentBackend):
         if not claude_bin:
             raise RuntimeError("claude CLI not found in PATH — install Claude Code CLI")
 
+        policy = load_tool_policy()
+        argv = claude_run_argv(claude_bin, prompt, AGENT_MODEL, policy)
+        yield f"[claude] tool policy: {policy.summary()}"
+
         proc = await asyncio.create_subprocess_exec(
-            claude_bin, "--print", "--permission-mode", "bypassPermissions",
-            "--model", AGENT_MODEL, "-p", prompt,
+            *argv,
             cwd=worktree,
             env=_subscription_env(),
             stdin=asyncio.subprocess.DEVNULL,

@@ -10,12 +10,21 @@ from factory_profile import load_patterns_text, load_profile
 
 _RUNNER_DIR = Path(__file__).parent
 MEMORY_PATH = _RUNNER_DIR / "memory" / "factory_memory.json"
+# Engine checkout root (…/agentic-factory) — repo memory/ lives here.
+_ENGINE_ROOT = _RUNNER_DIR.parent.parent
+REPO_MEMORY_DIR = _ENGINE_ROOT / "memory"
+REPO_MEMORY_INDEX = REPO_MEMORY_DIR / "MEMORY.md"
 
 _GENERIC_PATTERNS = """## Product codebase patterns
 
 Follow existing patterns in this repository exactly.
 Never hardcode secrets. Prefer parameterized queries and the project's auth helpers.
 """.strip()
+
+# Caps so a large memory/ tree cannot blow the prompt.
+_MAX_REPO_LESSONS = 12
+_MAX_LESSON_CHARS = 400
+_MAX_REPO_MEMORY_CHARS = 4000
 
 
 def _load_memory() -> dict:
@@ -27,13 +36,86 @@ def _load_memory() -> dict:
     return {}
 
 
-def format_memory_context(memory: dict, wo_spec: dict) -> str:
+def _first_paragraph(text: str, limit: int = _MAX_LESSON_CHARS) -> str:
+    """Strip YAML frontmatter and return a short prose hook."""
+    body = text or ""
+    if body.startswith("---"):
+        end = body.find("---", 3)
+        if end != -1:
+            body = body[end + 3 :]
+    lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+    # Skip pure heading lines for the hook when possible
+    prose = [ln for ln in lines if not ln.startswith("#")]
+    hook = " ".join(prose[:3] if prose else lines[:2])
+    hook = re.sub(r"\s+", " ", hook).strip()
+    if len(hook) > limit:
+        return hook[: limit - 1].rstrip() + "…"
+    return hook
+
+
+def load_repo_memory_lessons(
+    memory_dir: Path | None = None,
+    *,
+    max_lessons: int = _MAX_REPO_LESSONS,
+) -> list[str]:
+    """Load lessons from repo memory/ (MEMORY.md index + recent auto_*.md).
+
+    AF-38: post-merge memory_agent writes markdown under memory/, but the runner
+    previously only read factory_memory.json. This bridges the two.
+    """
+    root = memory_dir if memory_dir is not None else REPO_MEMORY_DIR
+    if not root.is_dir():
+        return []
+
+    lessons: list[str] = []
+    seen: set[str] = set()
+
+    index = root / "MEMORY.md"
+    if index.is_file():
+        try:
+            for line in index.read_text(encoding="utf-8", errors="replace").splitlines():
+                # [- name](file.md) — description   or plain - description
+                m = re.search(r"\[([^\]]+)\]\(([^)]+\.md)\)\s*[—\-:]?\s*(.*)$", line)
+                if not m:
+                    continue
+                title, rel, desc = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+                if "examples/" in rel or rel.startswith("examples"):
+                    continue
+                key = rel.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                text = desc or title
+                if text.startswith("~~"):
+                    continue  # superseded
+                lessons.append(f"{title}: {text}" if desc else title)
+                if len(lessons) >= max_lessons:
+                    return lessons
+        except OSError:
+            pass
+
+    autos = sorted(root.glob("auto_*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in autos:
+        if len(lessons) >= max_lessons:
+            break
+        key = path.name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            hook = _first_paragraph(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        if hook:
+            lessons.append(f"{path.stem}: {hook}")
+    return lessons
+
+
+def format_memory_context(memory: dict, wo_spec: dict, *, repo_lessons: list[str] | None = None) -> str:
     """Build the ## Factory Memory section for the agent prompt."""
-    if not memory:
-        return ""
+    parts: list[str] = []
 
     wo_services = wo_spec.get("services", "").lower()
-    parts: list[str] = []
 
     # Relevant lessons (matching WO services or applies_to="all")
     lessons = memory.get("lessons", [])
@@ -50,6 +132,16 @@ def format_memory_context(memory: dict, wo_spec: dict) -> str:
             for l in relevant
         )
         parts.append(f"### Lessons learned (relevant to this WO)\n{items}")
+
+    # Repo memory/ (AF-38 bridge)
+    repo = repo_lessons if repo_lessons is not None else load_repo_memory_lessons()
+    if repo:
+        block = "\n".join(f"- {item}" for item in repo)
+        if len(block) > _MAX_REPO_MEMORY_CHARS:
+            block = block[: _MAX_REPO_MEMORY_CHARS - 1].rstrip() + "…"
+        parts.append(
+            "### Repo memory (from memory/ — institutional lessons)\n" + block
+        )
 
     # Environment state
     env = memory.get("environment", {})
@@ -235,6 +327,8 @@ def format_prior_context(rejections: list[dict], thread_msgs: list[dict]) -> str
 
 def build_prompt(wo_spec: dict, wo_markdown: str, worktree_path: str, agent_name: str,
                  prior_context: str = "") -> str:
+    from tool_policy import prompt_policy_section
+
     raw = str(wo_spec.get("wo") or wo_spec.get("number") or "?")
     wo_id = raw if raw.upper().startswith("WO-") else f"WO-{raw}"
     title = wo_spec.get("title", "Unknown")
@@ -261,6 +355,10 @@ Worktree: {worktree_path}
 Product: {product_label}
 
 {QUALITY_MANDATE.format(orchestrator_url=ORCHESTRATOR_URL)}
+
+---
+
+{prompt_policy_section()}
 
 ---
 

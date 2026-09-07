@@ -4782,6 +4782,9 @@ class UsageRecord(BaseModel):
     duration_s: float
     success: bool
     ask_calls: list[dict] = []
+    prompt_tokens_est: int = 0
+    ask_tokens_est: int = 0
+    estimated_cost_usd: float = 0.0
 
 
 def _load_usage() -> list[dict]:
@@ -4809,18 +4812,49 @@ async def get_usage():
     from datetime import timedelta
     week_ago = (datetime.now(UTC) - timedelta(days=7)).isoformat()
     per_backend: dict[str, dict] = {}
+    cost_week = 0.0
+    tokens_week = 0
     for r in records:
         b = r.get("backend", "unknown")
         if b not in per_backend:
-            per_backend[b] = {"runs": 0, "successes": 0, "total_duration_s": 0.0, "ask_calls": 0, "runs_this_week": 0}
+            per_backend[b] = {
+                "runs": 0,
+                "successes": 0,
+                "total_duration_s": 0.0,
+                "ask_calls": 0,
+                "runs_this_week": 0,
+                "estimated_cost_usd": 0.0,
+                "estimated_cost_usd_week": 0.0,
+                "prompt_tokens_est": 0,
+                "ask_tokens_est": 0,
+            }
         per_backend[b]["runs"] += 1
         if r.get("success"):
             per_backend[b]["successes"] += 1
         per_backend[b]["total_duration_s"] += r.get("duration_s", 0.0)
         per_backend[b]["ask_calls"] += len(r.get("ask_calls", []))
+        try:
+            cost = float(r.get("estimated_cost_usd") or 0.0)
+        except (TypeError, ValueError):
+            cost = 0.0
+        per_backend[b]["estimated_cost_usd"] += cost
+        ptok = int(r.get("prompt_tokens_est") or 0)
+        atok = int(r.get("ask_tokens_est") or 0)
+        per_backend[b]["prompt_tokens_est"] += ptok
+        per_backend[b]["ask_tokens_est"] += atok
         if r.get("ts", "") >= week_ago:
             per_backend[b]["runs_this_week"] += 1
-    return {"records": records[-20:], "summary": {"per_backend": per_backend}}
+            per_backend[b]["estimated_cost_usd_week"] += cost
+            cost_week += cost
+            tokens_week += ptok + atok
+    return {
+        "records": records[-20:],
+        "summary": {
+            "per_backend": per_backend,
+            "estimated_cost_usd_week": round(cost_week, 6),
+            "tokens_est_week": tokens_week,
+        },
+    }
 
 
 # ── Secrets (Vault KV v2 + file fallback) ────────────────────────────────────

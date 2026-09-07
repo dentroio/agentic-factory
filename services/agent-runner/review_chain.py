@@ -357,6 +357,8 @@ def build_reviewer_prompt(
     diff: str,
     previous_findings: list[dict],
 ) -> str:
+    from prompt_builder import wrap_untrusted
+
     wo_id = wo_spec.get("wo", "?")
     title = wo_spec.get("title", "Unknown")
     previous_str = (
@@ -365,13 +367,15 @@ def build_reviewer_prompt(
         else "None — you are the first reviewer."
     )
     prompt = template.format(previous_findings=previous_str)
+    notes = str(wo_spec.get("notes", "") or "")
     return (
         f"WO: {wo_id} — {title}\n\n"
         f"=== WO SPECIFICATION ===\n"
         f"Priority: {wo_spec.get('priority', 'P2')}\n"
         f"Services: {wo_spec.get('services', 'unknown')}\n"
-        f"Notes: {wo_spec.get('notes', '')}\n\n"
-        f"=== GIT DIFF ===\n{diff[:8000]}\n\n"  # cap at 8k chars
+        f"{wrap_untrusted('work-order notes', notes)}\n\n"
+        f"=== GIT DIFF ===\n"
+        f"{wrap_untrusted('pull request diff', diff[:8000])}\n\n"
         f"=== REVIEWER INSTRUCTIONS ===\n{prompt}"
     )
 
