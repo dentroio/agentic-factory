@@ -1,6 +1,6 @@
 # Dentro AI Factory — Capability Status
 
-_Last updated: 2026-09-06_
+_Last updated: 2026-09-07_
 
 A living registry of what the system can do, at what fidelity, and what's still open.
 
@@ -129,6 +129,8 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Stranger-clone / no-Clarion default-path regression | ✅ | Unit tests gate default profile + public surfaces | WO-1091 |
 | Unique per-backend draft ports | ✅ | Align AGENT_META with health_agent; bind failure hints | WO-1092 |
 | One-click Docker remount after LOCAL_REPO_PATH change | ✅ | Host `/api/product/remount` + Get Started / Auth button | WO-1092 |
+| Engine CD workflow (`deploy.yml`) | 🟡 | Self-hosted `factory-deploy`; push-to-main gated by `FACTORY_CD_ENABLED` | WO-1094 |
+| Factory smoke (`make smoke`) | ✅ | status-site 200 + orchestrator up (200/401) | WO-1094 |
 
 ## Dimension 6: Oryntra Chrome Extension (dentroio/Oryntra)
 
@@ -146,7 +148,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 ## Open Gaps
 
-1. **Continuous Deployment (CD)** — `deploy.yml` workflow and self-hosted deploy runners not yet active. (See `docs/CD_IMPLEMENTATION_PLAN.md`). Documented under [LLM Harness](../wiki/LLM-Harness.md) remaining open items.
+1. **Continuous Deployment (CD)** — 🟡 Partial (WO-1094): `deploy.yml` + `make smoke` ship for the engine stack, but push-to-main stays off until a self-hosted runner is labeled `factory-deploy` and Actions variable `FACTORY_CD_ENABLED=true`. See `docs/CD_IMPLEMENTATION_PLAN.md` Part 0.
 2. **Oryntra deep integration & PR merge** — `WO-1048` (artifact export) & `WO-1049` (validation queue) in backlog; `feat/factory-thread-integration` branch in `dentroio/Oryntra` ready for merge.
 3. **JS/TS security scanning limited** — eslint-plugin-security falls back to regex if not installed. Regex covers 6 patterns. Impact: low for Python-heavy projects.
 4. **Exact LLM billing** — usage estimates (`len/4` tokens + crude USD rates) only; subscription CLIs do not always expose real usage. Optional hold via `USAGE_BUDGET_USD_WEEK`.
@@ -157,7 +159,8 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
-| 2026-09-06 | LLM harness: tool policy, memory bridge, cost estimates, review untrusted framing | WO-1093 |
+| 2026-09-07 | Factory engine CD workflow + smoke (gated) | WO-1094 |
+| 2026-09-07 | LLM harness: tool policy, memory bridge, cost estimates, review untrusted framing | WO-1093 |
 | 2026-09-06 | Unique draft ports + one-click product remount | WO-1092 |
 | 2026-08-30 | Multi-repo autonomous orchestrator dispatch | WO-1089 |
 | 2026-08-30 | Durable execution history & audit trail | WO-1088 |

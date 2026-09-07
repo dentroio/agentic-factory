@@ -6,7 +6,7 @@ PYTHON ?= python3
 
 .PHONY: help \
         agent-setup doctor init \
-        test pre-pr-check secrets ci-local \
+        test pre-pr-check secrets ci-local smoke \
         up down logs restart \
         agent-install agent-remove agent-start agent-stop agent-logs agent-status agent-once \
         docs-check docs-check-strict docs-gdrive \
@@ -61,6 +61,9 @@ ci-local:  ## Full PR gate locally — run this before every PR
 	$(MAKE) test
 	$(MAKE) pre-pr-check
 	$(MAKE) secrets
+
+smoke:  ## Post-deploy health checks for status-site + orchestrator
+	$(PYTHON) scripts/factory_smoke.py
 
 # ── Docker Compose (dashboard + orchestrator + watchdog) ─────────────────────
 

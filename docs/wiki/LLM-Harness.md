@@ -78,7 +78,7 @@ spend meets the cap. `0` (default) disables the hold.
 
 ## What remains open
 
-- **CD** — `deploy.yml` / self-hosted runners not activated (`docs/CD_IMPLEMENTATION_PLAN.md`)
+- **CD enablement** — workflow ships (WO-1094); set `FACTORY_CD_ENABLED=true` after a `factory-deploy` runner is online
 - **True sandbox** — Bash inside the allowlist is still powerful; worktree + gates are the remaining defense
 - **Exact tokens/billing** — estimates only (subscription CLIs do not always expose usage)
 

@@ -1,0 +1,88 @@
+# Continuous Deployment — factory engine (docker-compose.status.yml)
+#
+# Deploys the orchestrator / status-site / vault stack on a self-hosted runner
+# that can reach the local Docker daemon (label: factory-deploy).
+#
+# Push-to-main deploys are OFF until the repo Actions variable
+# FACTORY_CD_ENABLED is set to the string "true". Manual "Run workflow"
+# always runs when a matching runner is online.
+#
+# Operator setup: docs/work_orders/WO-1094-factory-cd.md
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy factory engine
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      vars.FACTORY_CD_ENABLED == 'true'
+    runs-on: [self-hosted, factory-deploy]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy docker-compose.status.yml
+        id: deploy
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.status.yml build
+          docker compose -f docker-compose.status.yml up -d
+          # Give containers a moment before smoke
+          sleep 5
+
+      - name: Smoke tests
+        id: smoke
+        env:
+          API_SECRET: ${{ secrets.API_SECRET }}
+        run: |
+          set -euo pipefail
+          python3 scripts/factory_smoke.py
+
+      - name: Create incident issue on failure
+        if: failure() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const step = '${{ steps.deploy.outcome }}' === 'failure' ? 'deploy' : 'smoke tests';
+            const msg = context.payload.head_commit
+              ? context.payload.head_commit.message
+              : '(workflow_dispatch)';
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Incident] factory ${step} failed on ${context.sha.substring(0, 8)}`,
+              body: [
+                `## Problem`,
+                ``,
+                `The **${step}** step failed after commit ${context.sha}.`,
+                ``,
+                `**Commit message:** ${msg}`,
+                `**Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                ``,
+                `## Suggested investigation`,
+                ``,
+                `- Check the failed run logs`,
+                `- Confirm the self-hosted runner labeled \`factory-deploy\` is online`,
+                `- Run \`make smoke\` on the deploy host`,
+                `- Confirm \`docker compose -f docker-compose.status.yml ps\``,
+                ``,
+                `---`,
+                `*Label this issue \`new-wo\` to draft a fix WO.*`,
+              ].join('\n'),
+              labels: ['incident', 'needs-triage'],
+            });
