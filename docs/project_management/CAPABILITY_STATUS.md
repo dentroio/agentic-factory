@@ -131,6 +131,8 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | One-click Docker remount after LOCAL_REPO_PATH change | ✅ | Host `/api/product/remount` + Get Started / Auth button | WO-1092 |
 | Engine CD workflow (`deploy.yml`) | 🟡 | Self-hosted `factory-deploy`; push-to-main gated by `FACTORY_CD_ENABLED` | WO-1094 |
 | Factory smoke (`make smoke`) | ✅ | status-site 200 + orchestrator up (200/401) | WO-1094 |
+| Settings → Deploy & Harness UI | 🟡 | Toggle CD + harness prefs without file edits | WO-1095 |
+| Program BACKLOG checklist | ✅ | `docs/project_management/BACKLOG.md` ordered todos | WO-1095 |
 
 ## Dimension 6: Oryntra Chrome Extension (dentroio/Oryntra)
 

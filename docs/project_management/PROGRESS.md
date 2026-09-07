@@ -19,6 +19,7 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
+| WO-1095 | Settings UI: Deploy & Harness (no file edits) | P2 | 🟡 In Progress | — |
 | WO-1094 | Factory engine Continuous Deployment | P1 | 🟡 In Progress | — |
 | WO-1093 | LLM harness hardening (tool policy, memory, cost, evals) | P2 | ✅ Complete | 2026-09-07 |
 | WO-1092 | Unique draft ports + one-click product remount | P2 | ✅ Complete | 2026-09-06 |

@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block page_title %}Deploy & Harness — {{ site_title }}{% endblock %}
+{% block content %}
+
+<div class="flex items-center gap-2 text-xs text-slate-500 mb-4">
+  <a href="/settings" class="hover:text-slate-300 transition-colors">Settings</a>
+  <span>/</span>
+  <span class="text-slate-300">Deploy &amp; Harness</span>
+</div>
+
+<div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
+  <div>
+    <h1 class="text-xl font-display font-bold text-slate-100">Deploy &amp; Harness</h1>
+    <p class="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
+      Enable continuous deployment and tune the LLM harness without editing files.
+      Follow the checklist in
+      <a href="https://github.com/{{ engine_repo }}/blob/main/docs/project_management/BACKLOG.md" class="text-sky-400 hover:text-sky-300" target="_blank" rel="noopener">BACKLOG.md</a>.
+    </p>
+  </div>
+</div>
+
+{% if saved %}
+<div class="mb-4 px-4 py-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 font-mono">
+  Saved. {{ restart_hint }}
+</div>
+{% endif %}
+{% if error %}
+<div class="mb-4 px-4 py-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300 font-mono">
+  {{ error }}
+</div>
+{% endif %}
+
+{# ── Continuous Deployment ─────────────────────────────────────────── #}
+<section class="glass-panel mb-6 overflow-hidden">
+  <div class="px-5 py-4 border-b border-slate-800/60">
+    <h2 class="text-sm font-bold text-slate-100">Continuous deployment</h2>
+    <p class="text-xs text-slate-500 mt-1">{{ operator_hint }}</p>
+  </div>
+  <form method="post" action="/settings/deploy-harness/cd" class="px-5 py-5 space-y-4">
+    <div>
+      <label class="block text-xs font-medium text-slate-400 mb-1.5">Engine GitHub repo</label>
+      <input type="text" name="engine_repo" value="{{ engine_repo }}"
+             class="w-full max-w-md px-3 py-2 rounded-lg bg-slate-900/80 border border-slate-700 text-sm text-slate-100 font-mono"
+             placeholder="owner/agentic-factory">
+      <p class="text-[11px] text-slate-600 mt-1">Repo that contains <code class="text-slate-400">deploy.yml</code> (not the product app).</p>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <label class="relative inline-flex items-center cursor-pointer">
+        <input type="checkbox" name="cd_enabled" value="1" class="sr-only peer" {% if cd_enabled %}checked{% endif %}>
+        <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
+      </label>
+      <div>
+        <div class="text-sm text-slate-200">Enable push-to-main deploy</div>
+        <div class="text-[11px] text-slate-500">Sets Actions variable <code class="text-slate-400">FACTORY_CD_ENABLED=true</code></div>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3 text-xs">
+      {% if factory_deploy_online %}
+      <span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono">factory-deploy online</span>
+      {% else %}
+      <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono">no factory-deploy runner online</span>
+      {% endif %}
+      {% if cd_enabled %}
+      <span class="px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 font-mono">CD on</span>
+      {% else %}
+      <span class="px-2 py-0.5 rounded bg-slate-700/50 text-slate-400 border border-slate-600/40 font-mono">CD off</span>
+      {% endif %}
+    </div>
+
+    <button type="submit" class="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-colors">
+      Save CD settings
+    </button>
+  </form>
+
+  <div class="px-5 pb-5">
+    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Self-hosted runners</h3>
+    {% if runners_error %}
+    <p class="text-xs text-rose-400 font-mono mb-2">{{ runners_error }}</p>
+    {% endif %}
+    {% if runners %}
+    <div class="overflow-x-auto rounded-lg border border-slate-800/60">
+      <table class="w-full text-xs">
+        <thead class="bg-slate-900/60 text-slate-500">
+          <tr>
+            <th class="text-left px-3 py-2 font-medium">Name</th>
+            <th class="text-left px-3 py-2 font-medium">Status</th>
+            <th class="text-left px-3 py-2 font-medium">Labels</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800/50">
+          {% for r in runners %}
+          <tr class="text-slate-300">
+            <td class="px-3 py-2 font-mono">{{ r.name }}{% if r.busy %} <span class="text-amber-400">busy</span>{% endif %}</td>
+            <td class="px-3 py-2">{{ r.status }}</td>
+            <td class="px-3 py-2 font-mono text-slate-500">{{ r.labels | join(', ') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-xs text-slate-500 font-mono">No runners returned for {{ engine_repo }}.</p>
+    {% endif %}
+  </div>
+</section>
+
+{# ── LLM Harness ───────────────────────────────────────────────────── #}
+<section class="glass-panel overflow-hidden">
+  <div class="px-5 py-4 border-b border-slate-800/60">
+    <h2 class="text-sm font-bold text-slate-100">LLM harness</h2>
+    <p class="text-xs text-slate-500 mt-1">
+      Writes to <code class="text-slate-400">{{ prefs_file }}</code> — loaded by the host agent via factory-env.
+    </p>
+  </div>
+  <form method="post" action="/settings/deploy-harness/harness" class="px-5 py-5 space-y-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Claude permission mode</label>
+        <select name="AGENT_PERMISSION_MODE"
+                class="w-full px-3 py-2 rounded-lg bg-slate-900/80 border border-slate-700 text-sm text-slate-100">
+          {% for m in permission_modes %}
+          <option value="{{ m }}" {% if values.AGENT_PERMISSION_MODE == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Tool allowlist</label>
+        <input type="text" name="AGENT_TOOL_ALLOWLIST" value="{{ values.AGENT_TOOL_ALLOWLIST }}"
+               class="w-full px-3 py-2 rounded-lg bg-slate-900/80 border border-slate-700 text-sm text-slate-100 font-mono"
+               placeholder="on | off | Read,Edit,Bash">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Gemini YOLO</label>
+        <select name="GEMINI_YOLO"
+                class="w-full px-3 py-2 rounded-lg bg-slate-900/80 border border-slate-700 text-sm text-slate-100">
+          <option value="1" {% if values.GEMINI_YOLO == '1' %}selected{% endif %}>On (unattended)</option>
+          <option value="0" {% if values.GEMINI_YOLO == '0' %}selected{% endif %}>Off</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Cursor trust</label>
+        <select name="CURSOR_TRUST"
+                class="w-full px-3 py-2 rounded-lg bg-slate-900/80 border border-slate-700 text-sm text-slate-100">
+          <option value="1" {% if values.CURSOR_TRUST == '1' %}selected{% endif %}>On</option>
+          <option value="0" {% if values.CURSOR_TRUST == '0' %}selected{% endif %}>Off</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-400 mb-1.5">Weekly spend budget (USD)</label>
+        <input type="number" step="0.01" min="0" name="USAGE_BUDGET_USD_WEEK" value="{{ values.USAGE_BUDGET_USD_WEEK }}"
+               class="w-full px-3 py-2 rounded-lg bg-slate-900/80 border border-slate-700 text-sm text-slate-100 font-mono">
+        <p class="text-[11px] text-slate-600 mt-1">0 = disabled. Blocks new claims when estimated weekly spend exceeds this.</p>
+      </div>
+    </div>
+
+    <button type="submit" class="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors">
+      Save harness settings
+    </button>
+  </form>
+</section>
+
+{% endblock %}

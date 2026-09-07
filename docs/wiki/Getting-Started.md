@@ -62,8 +62,9 @@ open http://localhost:8099
 4. **Agent / LLM** — pick Claude / Cursor / Codex / Gemini (CLI detected when possible) and start the daemon.
 5. **Ready** — either open **PM chat** and ask the agent to finish remaining setup (labels, first WO), or follow the self-serve checklist.
 6. If the path changed, click **Remount Docker** in the banner (or run `make restart`), then `make doctor`.
+7. **Settings → Deploy & Harness** — after a self-hosted runner is labeled `factory-deploy`, toggle CD and set harness budget/tool policy here (no file edits). Track remaining steps in [BACKLOG.md](../project_management/BACKLOG.md).
 
-You should **not** need to hand-edit prefs or `.env` for day-to-day adoption.
+You should **not** need to hand-edit prefs or `.env` for day-to-day adoption (including CD enable and harness knobs once WO-1095 is deployed).
 
 ## Step 4 — Confirm the dashboard
 

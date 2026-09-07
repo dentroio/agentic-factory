@@ -213,6 +213,8 @@ class _DraftHandler(BaseHTTPRequestHandler):
             self._get_agents_status()
         elif self.path == "/api/product":
             self._handle_product_get()
+        elif self.path == "/api/harness":
+            self._handle_harness_get()
         else:
             self._json(404, {"error": "not found"})
 
@@ -390,6 +392,9 @@ class _DraftHandler(BaseHTTPRequestHandler):
         if self.path == "/api/product":
             self._handle_product_put()
             return
+        if self.path == "/api/harness":
+            self._handle_harness_put()
+            return
         if self.path.startswith("/api/agents/"):
             parts = self.path.split("/")
             if len(parts) == 4:
@@ -405,6 +410,27 @@ class _DraftHandler(BaseHTTPRequestHandler):
             self._json(200, setup.product_status())
         except Exception as e:
             self._json(500, {"error": str(e)})
+
+    def _handle_harness_get(self) -> None:
+        try:
+            import product_setup as setup
+            self._json(200, setup.harness_status())
+        except Exception as e:
+            self._json(500, {"error": str(e)})
+
+    def _handle_harness_put(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+        try:
+            import product_setup as setup
+            self._json(200, setup.configure_harness(body))
+        except Exception as e:
+            import product_setup as setup
+            if isinstance(e, setup.ProductSetupError):
+                self._json(400, {"error": str(e)})
+            else:
+                self._json(500, {"error": str(e)})
 
     def _read_json_body(self) -> dict | None:
         try:
