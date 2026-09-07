@@ -18,6 +18,7 @@
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
+- [auto_wo1093](auto_wo1093.md)
 - [product-setup-host-only-and-path-guard](auto_wo1091.md) — agent-runner (not orchestrator/Docker) owns product wiring; LOCAL_REPO_PATH is restricted to under $HOME unless overridden
 - [wo-resolver-docs-scope-title-not-completion](auto_wo547.md) — docs(...)/chore(...)-scoped PR titles never complete a WO by title mention alone in wo_resolver.py's completion logic
 - [wo-spec-section-validation-sync](auto_docs-factory-align-work-order-wording-317.md) — Work order template section headings must stay in sync across planning_agent.py, github_writer.py, and orchestrator.py's SPEC_REQUIRED_SECTION_GROUPS
