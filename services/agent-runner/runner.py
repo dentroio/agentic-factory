@@ -34,6 +34,7 @@ from config import (
     AGENT_NAME,
     AGENT_TIMEOUT,
     API_SECRET,
+    AUTH_TOKEN,
     DOMAIN_FILTER,
     GITHUB_REPO,
     HOSTNAME,
@@ -964,13 +965,19 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         await complete(wo_id)
         _log(f"{wo_id} complete")
         update_memory_after_completion(wo_id, wo_spec)
-        await usage_tracker.record_run(ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, True, ask_calls)
+        await usage_tracker.record_run(
+            ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, True, ask_calls, prompt=prompt
+        )
     elif decision == "rejected":
         _log(f"{wo_id} rejected — check the factory dashboard for guidance")
-        await usage_tracker.record_run(ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, False, ask_calls)
+        await usage_tracker.record_run(
+            ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, False, ask_calls, prompt=prompt
+        )
     else:
         _log(f"{wo_id} approval timed out — leaving in awaiting_human state")
-        await usage_tracker.record_run(ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, False, ask_calls)
+        await usage_tracker.record_run(
+            ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, False, ask_calls, prompt=prompt
+        )
 
 
 async def main(once: bool = False) -> None:
@@ -990,6 +997,15 @@ async def main(once: bool = False) -> None:
             _log(f"Orchestrator config sets backend: {PREFERRED_AGENT} → {active_backend}")
 
     while True:
+        hold = await usage_tracker.budget_hold_reason(ORCHESTRATOR_URL, AUTH_TOKEN or API_SECRET)
+        if hold:
+            _log(hold)
+            if once:
+                _log("--once: budget hold, exiting")
+                break
+            await asyncio.sleep(POLL_INTERVAL)
+            continue
+
         # Check for a PM-dispatched WO — use its backend override if present
         dispatched = draft_server.pop_dispatch()
         next_wo = await get_next(domain=DOMAIN_FILTER)

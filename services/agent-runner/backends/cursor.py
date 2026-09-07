@@ -7,6 +7,7 @@ from typing import AsyncIterator
 from backends.base import AgentBackend
 from backends.claude import AGENT_MODEL, _subscription_env
 from proc import ASK, communicate as _communicate
+from tool_policy import cursor_run_argv, load_tool_policy
 
 _RECONNECT_RE = re.compile(r"connection lost|reconnecting to|connecting to.*cursor\.sh", re.I)
 _MAX_CONN_FAILURES = 5
@@ -28,6 +29,7 @@ class CursorBackend(AgentBackend):
 
     --print makes the agent non-interactive (outputs to stdout, no TUI).
     --mode ask restricts to read-only Q&A — the agent cannot edit files in this mode.
+    --trust is controlled by CURSOR_TRUST (default on) via tool_policy.
     """
 
     def __init__(self, api_key: str = "") -> None:
@@ -63,8 +65,12 @@ class CursorBackend(AgentBackend):
             full_prompt += "\n\n[Additional context]\n" + "\n".join(self._pending_messages)
             self._pending_messages.clear()
 
+        policy = load_tool_policy()
+        argv = cursor_run_argv(agent_bin, full_prompt, policy)
+        yield f"[cursor] tool policy: {policy.summary()}"
+
         proc = await asyncio.create_subprocess_exec(
-            agent_bin, "--print", "--trust", full_prompt,
+            *argv,
             cwd=worktree,
             env=self._env(),
             stdout=asyncio.subprocess.PIPE,

@@ -19,6 +19,7 @@
 
 ## Known Invariants
 - [draft-server-per-agent-ports](auto_wo1092.md) — Each agent backend (claude/cursor/codex/gemini) must have a unique DRAFT_PORT; ports are duplicated in draft_server.py and health_agent.py and must stay in sync.
+- [product-setup-host-only-and-path-guard](auto_wo1091.md) — agent-runner (not orchestrator/Docker) owns product wiring; LOCAL_REPO_PATH is restricted to under $HOME unless overridden
 - [wo-resolver-docs-scope-title-not-completion](auto_wo547.md) — docs(...)/chore(...)-scoped PR titles never complete a WO by title mention alone in wo_resolver.py's completion logic
 - [wo-spec-section-validation-sync](auto_docs-factory-align-work-order-wording-317.md) — Work order template section headings must stay in sync across planning_agent.py, github_writer.py, and orchestrator.py's SPEC_REQUIRED_SECTION_GROUPS
 - [factory-profile-duplicated-across-services](auto_feat-engine-factory-yaml-profile-remove-clarion-ha.md) — factory_profile.py is copy-pasted identically into services/agent-runner and services/orchestrator (no shared package) — must be updated in both places

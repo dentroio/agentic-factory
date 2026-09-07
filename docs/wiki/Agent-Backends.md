@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-06
+last_verified: 2026-09-07
 covers_wos:
   - WO-1008
   - WO-1053
@@ -25,6 +25,19 @@ Backends execute Work Orders **against the product** (`GITHUB_REPO`), in a workt
 | `claude-api` | Docker → Anthropic API | `ANTHROPIC_API_KEY` in Settings |
 
 Subscription CLIs use **host** login cookies/tokens — Docker never mounts them. The draft server (`:8101`) bridges orchestrator → host CLI.
+
+## Tool policy (WO-1093)
+
+Coding backends build argv through `services/agent-runner/tool_policy.py`:
+
+| Variable | Default | Notes |
+|----------|---------|--------|
+| `AGENT_PERMISSION_MODE` | `bypassPermissions` | Required for unattended Claude; try `acceptEdits` only when a human can approve shell |
+| `AGENT_TOOL_ALLOWLIST` | `on` | Default coding tool set via `--allowedTools`; `off` = unrestricted |
+| `GEMINI_YOLO` | `1` | Set `0` only for interactive debugging |
+| `CURSOR_TRUST` | `1` | Cursor `--trust` |
+
+See [LLM Harness](LLM-Harness.md) for memory bridge, cost estimates, and budget holds.
 
 Disable unused providers so dispatch never selects them. Preferred backend: **Settings → Agents** (also in `~/.config/factory-agent/prefs`).
 
@@ -79,6 +92,7 @@ Env vars (when not using UI): `ANTARES_ENABLED`, `ANTARES_BASE_URL`, `ANTARES_MO
 
 ## Related
 
+- [LLM Harness](LLM-Harness) — tool policy, trust boundary, memory, cost
 - [Getting Started](Getting-Started) — install runner  
 - [Product Profile](Product-Profile) — what agents verify  
 - [Daily Workflow](Daily-Workflow) — dispatch and checkpoint
