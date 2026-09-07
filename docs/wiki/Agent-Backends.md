@@ -26,6 +26,19 @@ Backends execute Work Orders **against the product** (`GITHUB_REPO`), in a workt
 
 Subscription CLIs use **host** login cookies/tokens — Docker never mounts them. The draft server (`:8101`) bridges orchestrator → host CLI.
 
+## Tool policy (WO-1093)
+
+Coding backends build argv through `services/agent-runner/tool_policy.py`:
+
+| Variable | Default | Notes |
+|----------|---------|--------|
+| `AGENT_PERMISSION_MODE` | `bypassPermissions` | Required for unattended Claude; try `acceptEdits` only when a human can approve shell |
+| `AGENT_TOOL_ALLOWLIST` | `on` | Default coding tool set via `--allowedTools`; `off` = unrestricted |
+| `GEMINI_YOLO` | `1` | Set `0` only for interactive debugging |
+| `CURSOR_TRUST` | `1` | Cursor `--trust` |
+
+See [LLM Harness](LLM-Harness.md) for memory bridge, cost estimates, and budget holds.
+
 Disable unused providers so dispatch never selects them. Preferred backend: **Settings → Agents** (also in `~/.config/factory-agent/prefs`).
 
 `PUT /api/config` (the endpoint Settings → Agents writes to) validates every update against an allowlist: `preferred` and each reviewer slot must be one of `claude` / `cursor` / `codex` / `gemini` (plus `antares` for the security reviewer only), `timeout` must fall in a bounded range, and unknown keys are rejected with `400` rather than silently persisted. `automation_model` is not part of this endpoint — it's set via `/api/settings/automation-model`.
@@ -79,6 +92,7 @@ Env vars (when not using UI): `ANTARES_ENABLED`, `ANTARES_BASE_URL`, `ANTARES_MO
 
 ## Related
 
+- [LLM Harness](LLM-Harness) — tool policy, trust boundary, memory, cost
 - [Getting Started](Getting-Started) — install runner  
 - [Product Profile](Product-Profile) — what agents verify  
 - [Daily Workflow](Daily-Workflow) — dispatch and checkpoint
