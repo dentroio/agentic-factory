@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block page_title %}Factory Guide — {{ site_title }}{% endblock %}
+{% block content %}
+
+<div class="max-w-screen-lg mx-auto mb-6 flex items-center justify-between gap-4">
+  <div>
+    <div class="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500 mb-1">Documentation</div>
+    <h1 class="text-xl font-display font-bold text-slate-100">Factory guide</h1>
+    <p class="text-sm text-slate-400 mt-1">Plain-language overview of what the factory is, how a work order flows, and where to click.</p>
+  </div>
+  <a href="/" class="text-xs font-mono text-slate-500 hover:text-indigo-400 transition-colors">← Overview board</a>
+</div>
+
+{% set dismissible = false %}
+{% include "partials/factory_guide.html" %}
+
+<section class="glass-panel px-5 py-5 max-w-screen-lg mx-auto space-y-4">
+  <h2 class="text-sm font-bold text-slate-200">First-time checklist</h2>
+  <ol class="list-decimal list-inside text-sm text-slate-400 space-y-2 leading-relaxed">
+    <li>Open <a href="/settings/get-started" class="text-sky-400 hover:text-sky-300">Settings → Get Started</a> — GitHub token, product repo, agent.</li>
+    <li>Confirm the agent is online on <a href="/factory" class="text-sky-400 hover:text-sky-300">Factory</a>.</li>
+    <li>Create a WO from <strong>New WO</strong> or <a href="/pm" class="text-sky-400 hover:text-sky-300">PM View</a>.</li>
+    <li>When a yellow validation banner appears, verify the change, then Approve or Reject.</li>
+    <li>Optional harness anytime: <a href="/settings/deploy-harness" class="text-sky-400 hover:text-sky-300">Deploy &amp; Harness</a> — tool policy / budget (restart agent after save).</li>
+    <li>Optional CD: register a self-hosted runner labeled <code class="text-slate-500">factory-deploy</code> in GitHub, then enable CD on that same settings page. Skip this if you are fine restarting the stack by hand.</li>
+  </ol>
+  <p class="text-xs text-slate-600 pt-2">
+    Written docs live in the repo wiki (<code class="text-slate-500">docs/wiki/</code>) and the program backlog
+    (<code class="text-slate-500">docs/project_management/BACKLOG.md</code>).
+  </p>
+</section>
+
+{% endblock %}

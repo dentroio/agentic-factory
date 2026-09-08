@@ -481,6 +481,20 @@ def _board_columns(wos: dict[int, WOSpec]) -> dict[str, list[WOSpec]]:
     return cols
 
 
+@app.get("/guide", response_class=HTMLResponse)
+async def factory_guide(request: Request):
+    """Plain-language overview: what the factory is, lifecycle, and where to click."""
+    return templates.TemplateResponse(
+        request=request,
+        name="guide.html",
+        context={
+            "site_title": SITE_TITLE,
+            "refresh_seconds": REFRESH_SECONDS,
+            "github_repo": GITHUB_REPO,
+        },
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     if not GITHUB_TOKEN or not GITHUB_REPO:

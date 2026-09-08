@@ -24,6 +24,11 @@ merged or verified. Detailed specs live in `docs/work_orders/`.
 - [x] Unit tests + `make ci-local`
 - [x] Docs: Getting-Started, LLM-Harness, CAPABILITY_STATUS, this BACKLOG
 
+### WO-1096 — In-app factory guide + inline help refresh (same PR track)
+- [x] Visual guide on Overview (`/`) — lifecycle + architecture diagrams, dismissible
+- [x] Standalone `/guide` + Settings hub card + nav **Guide**
+- [x] Refresh `?` help for Overview, Factory, PM, Engineering, Plan, History, Usage, Settings + subpages (Get Started, Deploy & Harness, Agents, …)
+
 ---
 
 ## Next (after 1094+1095)
