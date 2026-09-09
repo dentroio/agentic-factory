@@ -1,12 +1,13 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-09-07
+last_verified: 2026-09-09
 covers_wos:
   - WO-1008
   - WO-1052
   - WO-1058
   - WO-1091
+  - WO-1092
 doc_owner: factory-team
 ---
 
@@ -46,6 +47,12 @@ As of WO-1091, you don't need to hand-edit prefs files to wire up a product. In 
 The **Overview** page shows a setup banner/CTA whenever the product isn't fully wired (no local path, no `factory.yaml`, etc.), linking straight back to Settings → Authentication.
 
 Under the hood, the agent-runner host exposes `GET/PUT /api/product` and `POST /api/product/clone`, proxied through the orchestrator. Updating `GITHUB_REPO` via the Secrets UI takes effect immediately — no restart required just to point at a different repo (a restart is still needed to remount the local path).
+
+### One-click remount (WO-1092)
+
+Changing the local path used to require a full `make restart` (which rebuilds images) before Docker picked up the new mount. Get Started and Settings → Authentication now show a **Remount Docker** button whenever `restart_required` is set: it calls `POST /api/product/remount` on the agent-runner host (bearer-gated, proxied through the orchestrator), which runs `docker compose up -d --force-recreate` against the current env — no image rebuild, just a fast recreate so the new `LOCAL_REPO_PATH` mount takes effect. Full `make restart` is still the fallback for changes that do need a rebuild (e.g. code changes to the engine itself).
+
+WO-1092 also fixed a port clash where Cursor, Codex, and Gemini agent-runners all defaulted to the same draft-server port and stepped on each other (`Address already in use`), which could leave the orchestrator talking to a stale draft server and `/api/product` returning 404. Each agent now binds a distinct `DRAFT_PORT` (cursor 8101, claude 8102, codex 8103, gemini 8104), so multiple agents can run against the same product concurrently.
 
 ## CLI path: `factory doctor` and `factory init`
 
@@ -129,3 +136,7 @@ POST /api/dispatch-codex
 ```
 
 This pre-claims the WO as `codex-gh-actions`, triggers a `workflow_dispatch` event against a `codex-dispatch.yml` workflow in your product repo, and lets the existing poll loop detect the resulting branch/PR — no callback needed
+
+## Multi-repo WO numbering
+
+If your product's WO directory and another repo the engine talks to (e.g. a legacy product) both number Work Orders in overlapping ranges, reservations are scoped per-repo: `POST /api/wos/reserve` and `GET /api/wos/reserved` accept optional `repo`/`wo_path` fields, and `GET /api/plan/next-wo-number` forwards the same. Reserving a number in one repo never consumes or collides with a number in another, even when both happen to be in the same numeric range.

@@ -1,12 +1,13 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-07
+last_verified: 2026-09-09
 covers_wos:
   - WO-1008
   - WO-1053
   - WO-1082
   - WO-1083
+  - WO-1092
 doc_owner: factory-team
 ---
 
@@ -24,7 +25,7 @@ Backends execute Work Orders **against the product** (`GITHUB_REPO`), in a workt
 | `gemini` | Host CLI | Gemini Advanced + CLI |
 | `claude-api` | Docker → Anthropic API | `ANTHROPIC_API_KEY` in Settings |
 
-Subscription CLIs use **host** login cookies/tokens — Docker never mounts them. The draft server (`:8101`) bridges orchestrator → host CLI.
+Subscription CLIs use **host** login cookies/tokens — Docker never mounts them. Each host backend runs its own draft server on a dedicated port — cursor `:8101`, claude `:8102`, codex `:8103`, gemini `:8104` — that bridges orchestrator → host CLI. Ports are unique per backend (WO-1092) so running multiple agents at once no longer causes one to silently fail with "address already in use."
 
 ## Tool policy (WO-1093)
 
@@ -51,6 +52,8 @@ Disable unused providers so dispatch never selects them. Preferred backend: **Se
 | `claude-api` only | No host CLI; still needs product checkout for real code WOs |
 
 If the dashboard shows WOs but host backends never claim, fix `LOCAL_REPO_PATH` first ([Troubleshooting](Troubleshooting)).
+
+If you change `LOCAL_REPO_PATH` after the fact (e.g. via Get Started or Authentication), Docker keeps the old mount until it's recreated. Use the **Remount Docker** action shown on those settings pages (`POST /api/product/remount`, bearer-gated) to recreate the compose mount without a full image rebuild — see [Getting Started](Getting-Started). A full `make restart` still works as a fallback.
 
 ### Runner agent start/stop and pause
 
@@ -80,19 +83,4 @@ Optional Cisco Foundation AI reviewer — **not** a coding backend. Disabled and
 
 | Setting | Typical |
 |---------|---------|
-| Endpoint | `http://localhost:8000` (OpenAI-compatible `/v1/chat/completions`) |
-| Mode | Advisory (never blocks) or Blocking on chosen severities |
-| Profiles | 350M / 1B / custom GGUF |
-
-Only the **Security** reviewer role can select `antares` — architecture, correctness, performance, and documentation reviewers do not offer it. Findings are posted to the WO thread in the existing review-thread format alongside Bandit/Semgrep/JS scan results; in advisory mode Antares never fails the security gate, in blocking mode configured severities (e.g. `CRITICAL,HIGH`) fail `security_passed`, and an unreachable/required Antares fails closed.
-
-Use **Test Antares Connection** before relying on it — it checks endpoint reachability and, if the server exposes `/health` or `/v1/models`, available models. Bandit/Semgrep/JS scans still run; Antares does not replace them.
-
-Env vars (when not using UI): `ANTARES_ENABLED`, `ANTARES_BASE_URL`, `ANTARES_MODEL`, `ANTARES_API_KEY`, `ANTARES_TIMEOUT_SECONDS`, `ANTARES_MODE`, `ANTARES_BLOCKING_SEVERITIES`.
-
-## Related
-
-- [LLM Harness](LLM-Harness) — tool policy, trust boundary, memory, cost
-- [Getting Started](Getting-Started) — install runner  
-- [Product Profile](Product-Profile) — what agents verify  
-- [Daily Workflow](Daily-Workflow) — dispatch and checkpoint
+| Endpoint | `http://localhost:8000` (OpenAI-compatible `/v1/chat/completions`)
