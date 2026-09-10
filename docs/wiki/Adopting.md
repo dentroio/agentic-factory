@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-09-09
+last_verified: 2026-09-10
 covers_wos:
   - WO-1008
   - WO-1052
@@ -50,7 +50,7 @@ Under the hood, the agent-runner host exposes `GET/PUT /api/product` and `POST /
 
 ### One-click remount (WO-1092)
 
-Changing the local path used to require a full `make restart` (which rebuilds images) before Docker picked up the new mount. Get Started and Settings → Authentication now show a **Remount Docker** button whenever `restart_required` is set: it calls `POST /api/product/remount` on the agent-runner host (bearer-gated, proxied through the orchestrator), which runs `docker compose up -d --force-recreate` against the current env — no image rebuild, just a fast recreate so the new `LOCAL_REPO_PATH` mount takes effect. Full `make restart` is still the fallback for changes that do need a rebuild (e.g. code changes to the engine itself).
+Changing the local path used to require a full `make restart` (which rebuilds images) before Docker picked up the new mount. Get Started and Settings → Authentication now show a **Remount Docker** button whenever `restart_required` is set: it calls `POST /api/product/remount` on the agent-runner host (bearer-gated, proxied through the orchestrator), which recreates the compose stack against the current env — no image rebuild, just a fast recreate so the new `LOCAL_REPO_PATH` mount takes effect. Full `make restart` is still the fallback for changes that do need a rebuild (e.g. code changes to the engine itself).
 
 WO-1092 also fixed a port clash where Cursor, Codex, and Gemini agent-runners all defaulted to the same draft-server port and stepped on each other (`Address already in use`), which could leave the orchestrator talking to a stale draft server and `/api/product` returning 404. Each agent now binds a distinct `DRAFT_PORT` (cursor 8101, claude 8102, codex 8103, gemini 8104), so multiple agents can run against the same product concurrently.
 
@@ -135,8 +135,4 @@ POST /api/dispatch-codex
 { "wo": "WO-362", "repo": "you/app", "ref": "main", "slug": "your-wo-slug" }
 ```
 
-This pre-claims the WO as `codex-gh-actions`, triggers a `workflow_dispatch` event against a `codex-dispatch.yml` workflow in your product repo, and lets the existing poll loop detect the resulting branch/PR — no callback needed
-
-## Multi-repo WO numbering
-
-If your product's WO directory and another repo the engine talks to (e.g. a legacy product) both number Work Orders in overlapping ranges, reservations are scoped per-repo: `POST /api/wos/reserve` and `GET /api/wos/reserved` accept optional `repo`/`wo_path` fields, and `GET /api/plan/next-wo-number` forwards the same. Reserving a number in one repo never consumes or collides with a number in another, even when both happen to be in the same numeric range.
+This pre-claims the WO as `codex-gh-actions`, triggers a `workflow_dispatch` event against a `codex-dispatch.yml` workflow in your product repo, and lets the existing poll loop detect the resulting branch/PR — no callback needed. The target repo needs a `codex-dispatch.yml` workflow (checkout, branch, run Codex, open PR) and an `OPENAI_API_KEY` secret; `GITHUB_TOKEN` is provided automatically by Actions. On dispatch failure
