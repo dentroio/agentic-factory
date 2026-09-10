@@ -1,12 +1,11 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-09
+last_verified: 2026-09-10
 covers_wos:
   - WO-1008
   - WO-1053
   - WO-1082
-  - WO-1083
   - WO-1092
 doc_owner: factory-team
 ---
@@ -26,19 +25,6 @@ Backends execute Work Orders **against the product** (`GITHUB_REPO`), in a workt
 | `claude-api` | Docker → Anthropic API | `ANTHROPIC_API_KEY` in Settings |
 
 Subscription CLIs use **host** login cookies/tokens — Docker never mounts them. Each host backend runs its own draft server on a dedicated port — cursor `:8101`, claude `:8102`, codex `:8103`, gemini `:8104` — that bridges orchestrator → host CLI. Ports are unique per backend (WO-1092) so running multiple agents at once no longer causes one to silently fail with "address already in use."
-
-## Tool policy (WO-1093)
-
-Coding backends build argv through `services/agent-runner/tool_policy.py`:
-
-| Variable | Default | Notes |
-|----------|---------|--------|
-| `AGENT_PERMISSION_MODE` | `bypassPermissions` | Required for unattended Claude; try `acceptEdits` only when a human can approve shell |
-| `AGENT_TOOL_ALLOWLIST` | `on` | Default coding tool set via `--allowedTools`; `off` = unrestricted |
-| `GEMINI_YOLO` | `1` | Set `0` only for interactive debugging |
-| `CURSOR_TRUST` | `1` | Cursor `--trust` |
-
-See [LLM Harness](LLM-Harness.md) for memory bridge, cost estimates, and budget holds.
 
 Disable unused providers so dispatch never selects them. Preferred backend: **Settings → Agents** (also in `~/.config/factory-agent/prefs`).
 
@@ -83,4 +69,9 @@ Optional Cisco Foundation AI reviewer — **not** a coding backend. Disabled and
 
 | Setting | Typical |
 |---------|---------|
-| Endpoint | `http://localhost:8000` (OpenAI-compatible `/v1/chat/completions`)
+| Endpoint | `http://localhost:8000` (OpenAI-compatible `/v1/chat/completions`) |
+| Model profile | Auto recommended, Antares 350M, Antares 1B, or Custom |
+| Run location | This machine, or another device on the LAN |
+| Mode | Advisory (default) or Blocking on configured severities |
+
+Antares runs alongside — not instead of — Bandit, Semgrep, and the JS security scan. The security reviewer role can be assigned to `antares`; architecture, correctness, performance, and documentation reviewers cannot select it. In advisory mode Antares findings are posted to the WO thread but never fail the security gate; in blocking mode, CRITICAL/HIGH (or whatever severities are configured) fail `security_passed`, and an unreachable/misconfigured endpoint also fails closed. Use **Test Antares Connection** in Settings → Agents to check reachability and available models before enabling it for real reviews.
