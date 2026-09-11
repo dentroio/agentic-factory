@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-09-10
+last_verified: 2026-09-11
 covers_wos:
   - WO-1008
   - WO-1052
@@ -135,4 +135,8 @@ POST /api/dispatch-codex
 { "wo": "WO-362", "repo": "you/app", "ref": "main", "slug": "your-wo-slug" }
 ```
 
-This pre-claims the WO as `codex-gh-actions`, triggers a `workflow_dispatch` event against a `codex-dispatch.yml` workflow in your product repo, and lets the existing poll loop detect the resulting branch/PR — no callback needed. The target repo needs a `codex-dispatch.yml` workflow (checkout, branch, run Codex, open PR) and an `OPENAI_API_KEY` secret; `GITHUB_TOKEN` is provided automatically by Actions. On dispatch failure
+This pre-claims the WO as `codex-gh-actions`, triggers a `workflow_dispatch` event against a `codex-dispatch.yml` workflow in your product repo, and lets the existing poll loop detect the resulting branch/PR — no callback needed. The target repo needs a `codex-dispatch.yml` workflow (checkout, branch, run Codex, open PR) and an `OPENAI_API_KEY` secret; `GITHUB_TOKEN` is provided automatically by Actions. On dispatch failure (bad repo, workflow not found, etc.) the orchestrator returns 502 and rolls back the pre-claim, leaving the WO free for another agent to pick up.
+
+## Multiple repos, non-overlapping WO numbers
+
+Reserving a WO number is scoped per repo, not global. If you run the factory against both your own product and `agentic-factory` (e.g. contributing back), reserving the "next" number for one repo never collides with or blocks numb
