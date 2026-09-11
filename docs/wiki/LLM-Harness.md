@@ -73,12 +73,12 @@ Two stores, now bridged:
 
 `GET /api/usage` summary includes `estimated_cost_usd_week` and `tokens_est_week`.
 
-Set `USAGE_BUDGET_USD_WEEK` (e.g. `25`) to stop new claims when weekly estimated
-spend meets the cap. `0` (default) disables the hold.
+Set `USAGE_BUDGET_USD_WEEK` (e.g. `25`) via **Settings → Deploy & Harness** (or prefs)
+to stop new claims when weekly estimated spend meets the cap. `0` (default) disables the hold.
 
 ## What remains open
 
-- **CD** — `deploy.yml` / self-hosted runners not activated (`docs/CD_IMPLEMENTATION_PLAN.md`)
+- **CD enablement** — use Settings → Deploy & Harness after a `factory-deploy` runner is online; see [BACKLOG.md](../project_management/BACKLOG.md)
 - **True sandbox** — Bash inside the allowlist is still powerful; worktree + gates are the remaining defense
 - **Exact tokens/billing** — estimates only (subscription CLIs do not always expose usage)
 

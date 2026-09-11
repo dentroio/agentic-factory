@@ -1,8 +1,8 @@
 ---
 title: "Dashboard Guide"
-description: "Tabs and settings at localhost:8099 — Overview, PM, Engineering, Plan, Factory, WO threads"
-last_verified: 2026-08-31
-covers_wos: []
+description: "Tabs and settings at localhost:8099 — Overview, Guide, PM, Engineering, Plan, Factory, WO threads"
+last_verified: 2026-09-07
+covers_wos: ["WO-1095", "WO-1096"]
 doc_owner: factory-team
 ---
 
@@ -12,8 +12,11 @@ Open [http://127.0.0.1:8099](http://127.0.0.1:8099) (loopback only). No human lo
 
 Data is for the product in `GITHUB_REPO`. Wrong repo → empty or foreign WOs. First-time setup: **[Settings → Get Started](http://127.0.0.1:8099/settings/get-started)** (GitHub, product checkout, agent/LLM).
 
+Every page has a **?** button (top right) with short, page-specific help. Prefer that over guessing.
+
 ## Overview
 
+- **Factory guide panel** — illustrated “what it is / how it works” (lifecycle + architecture). Dismiss with **Hide**; restore from the chip on Overview or open **[/guide](http://127.0.0.1:8099/guide)** anytime  
 - **Get Started banner** — shown until product + preferred agent + runner look ready; links to the interactive wizard  
 - **Health banner** — HEALTHY / DEGRADED / CRITICAL; agent count, PRs, weekly completions  
 - **Alerts** — watchdog issues (hidden when empty)  
@@ -22,6 +25,10 @@ Data is for the product in `GITHUB_REPO`. Wrong repo → empty or foreign WOs. F
 - **Pending approval** — P1 (etc.) pre-dispatch Approve / Skip / Hold  
 - **Agent-runner** — online if draft server `:8101` answers  
 - **WO board / PR queue / CI / Dispatch queue** — enriched cards and checks  
+
+## Guide (`/guide`)
+
+Standalone copy of the Overview guide plus a first-time checklist. Also linked from Settings → **Factory guide** and the nav **Guide** item.
 
 ## PM
 
@@ -38,6 +45,10 @@ Milestone cards, phase progress, full priority queue: edit ✎, hold ⏸, resume
 ## Factory
 
 Runner status line, **Active Jobs**, **Live Feed** (filter `?wo=WO-NNN`), Dependabot panel, API usage. Per-backend “working” cards were removed — status comes from live jobs.
+
+## History
+
+Past agent runs and outcomes (archive). Live work → Factory; open PRs → Engineering.
 
 ## WO threads (`/wo/NNN`)
 
@@ -74,6 +85,14 @@ Presence badges only for secret values — tokens stay in Vault. Changing **Loca
 - Pre-dispatch priorities via orchestrator `REQUIRE_APPROVAL_FOR`  
 
 Model changes apply on next use. Product repo and local path are managed under Settings → Authentication (path changes still need `make restart` for Docker remount).
+
+## Settings → Deploy & Harness
+
+- Toggle engine CD (`FACTORY_CD_ENABLED`) when a `factory-deploy` self-hosted runner exists  
+- See runner / label status  
+- Edit harness prefs (tool policy, budget) → host prefs file; **restart the agent** after save  
+
+Details: [LLM Harness](LLM-Harness).
 
 ## Settings → Plan
 

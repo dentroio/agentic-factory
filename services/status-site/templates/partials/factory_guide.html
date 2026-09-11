@@ -1,0 +1,222 @@
+{# Visual “what is the factory” guide — used on Overview (dismissible) and /guide #}
+<section class="factory-guide glass-panel overflow-hidden mb-6 border border-indigo-500/20" id="factory-guide"{% if dismissible %} data-dismissible="1"{% endif %}>
+  <div class="px-5 py-4 border-b border-slate-800/50 flex items-start justify-between gap-4 bg-gradient-to-r from-indigo-500/10 via-transparent to-cyan-500/5">
+    <div class="min-w-0">
+      <div class="text-[10px] font-mono uppercase tracking-[0.2em] text-indigo-300/80 mb-1">How this works</div>
+      <h2 class="text-lg font-display font-bold text-slate-100 tracking-tight">Dentro AI Factory</h2>
+      <p class="text-sm text-slate-400 mt-1 max-w-2xl leading-relaxed">
+        An engine that turns work orders into merged pull requests — with quality gates,
+        peer review, and a human checkpoint — while you watch from this dashboard.
+      </p>
+    </div>
+    {% if dismissible %}
+    <button type="button" onclick="dismissFactoryGuide()"
+            class="flex-shrink-0 text-xs font-mono text-slate-500 hover:text-slate-300 px-2 py-1 rounded border border-slate-700/50 hover:border-slate-600 transition-colors"
+            title="Hide this guide (you can open it again from Overview help or /guide)">
+      Hide
+    </button>
+    {% endif %}
+  </div>
+
+  <div class="px-5 py-5 space-y-8">
+
+    {# ── One sentence + roles ───────────────────────────────────────── #}
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/40 px-4 py-3">
+        <div class="text-[10px] font-mono uppercase tracking-wider text-cyan-400/90 mb-1">You</div>
+        <p class="text-xs text-slate-300 leading-relaxed">Describe work, approve or reject finished WOs, merge P1/P0 when needed.</p>
+      </div>
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/40 px-4 py-3">
+        <div class="text-[10px] font-mono uppercase tracking-wider text-indigo-400/90 mb-1">Agents</div>
+        <p class="text-xs text-slate-300 leading-relaxed">Claim WOs, implement in a worktree, run CI/security review, open PRs.</p>
+      </div>
+      <div class="rounded-xl border border-slate-800/70 bg-slate-900/40 px-4 py-3">
+        <div class="text-[10px] font-mono uppercase tracking-wider text-emerald-400/90 mb-1">This dashboard</div>
+        <p class="text-xs text-slate-300 leading-relaxed">Live board, Factory floor logs, Plan queue, Engineering CI, Settings.</p>
+      </div>
+    </div>
+
+    {# ── Lifecycle diagram (SVG) ────────────────────────────────────── #}
+    <div>
+      <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">Work order lifecycle</h3>
+      <div class="overflow-x-auto pb-1">
+        <svg viewBox="0 0 920 120" class="w-full min-w-[640px] h-auto" role="img" aria-label="Work order lifecycle diagram">
+          <defs>
+            <marker id="fg-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#64748b"/>
+            </marker>
+          </defs>
+          {% set steps = [
+            ('1', 'You write a WO', '#38bdf8'),
+            ('2', 'Agent claims', '#818cf8'),
+            ('3', 'Implements', '#a78bfa'),
+            ('4', 'Quality gate', '#34d399'),
+            ('5', 'Peer review', '#2dd4bf'),
+            ('6', 'You verify', '#fbbf24'),
+            ('7', 'PR → merge', '#94a3b8'),
+          ] %}
+          {% for i in range(7) %}
+            {% set x = 20 + i * 128 %}
+            {% set num, label, color = steps[i] %}
+            <rect x="{{ x }}" y="28" width="108" height="52" rx="10" fill="#0f172a" stroke="{{ color }}" stroke-opacity="0.55" stroke-width="1.5"/>
+            <text x="{{ x + 54 }}" y="50" text-anchor="middle" fill="{{ color }}" font-size="11" font-family="ui-monospace, monospace" font-weight="700">{{ num }}</text>
+            <text x="{{ x + 54 }}" y="68" text-anchor="middle" fill="#cbd5e1" font-size="10" font-family="system-ui, sans-serif">{{ label }}</text>
+            {% if i < 6 %}
+            <line x1="{{ x + 110 }}" y1="54" x2="{{ x + 126 }}" y2="54" stroke="#475569" stroke-width="1.5" marker-end="url(#fg-arrow)"/>
+            {% endif %}
+          {% endfor %}
+          <text x="460" y="108" text-anchor="middle" fill="#64748b" font-size="10" font-family="ui-monospace, monospace">
+            Memory lessons are saved after merge for the next agent
+          </text>
+        </svg>
+      </div>
+    </div>
+
+    {# ── Architecture diagram ───────────────────────────────────────── #}
+    <div>
+      <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">What runs where</h3>
+      <div class="overflow-x-auto pb-1">
+        <svg viewBox="0 0 900 220" class="w-full min-w-[640px] h-auto" role="img" aria-label="Factory architecture diagram">
+          {# Product #}
+          <rect x="20" y="40" width="200" height="140" rx="14" fill="#0f172a" stroke="#334155" stroke-width="1.5"/>
+          <text x="120" y="68" text-anchor="middle" fill="#67e8f9" font-size="12" font-family="ui-monospace, monospace" font-weight="700">PRODUCT REPO</text>
+          <text x="120" y="96" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="system-ui, sans-serif">Your app code</text>
+          <text x="120" y="116" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="system-ui, sans-serif">Work order specs</text>
+          <text x="120" y="136" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="system-ui, sans-serif">PRs &amp; CI</text>
+          <text x="120" y="162" text-anchor="middle" fill="#475569" font-size="9" font-family="ui-monospace, monospace">GITHUB_REPO</text>
+
+          {# Engine #}
+          <rect x="280" y="24" width="340" height="172" rx="14" fill="#0f172a" stroke="#6366f1" stroke-opacity="0.5" stroke-width="1.5"/>
+          <text x="450" y="48" text-anchor="middle" fill="#a5b4fc" font-size="12" font-family="ui-monospace, monospace" font-weight="700">FACTORY ENGINE</text>
+
+          <rect x="300" y="64" width="140" height="48" rx="8" fill="#1e293b" stroke="#475569"/>
+          <text x="370" y="84" text-anchor="middle" fill="#e2e8f0" font-size="10" font-family="system-ui, sans-serif" font-weight="600">Dashboard</text>
+          <text x="370" y="100" text-anchor="middle" fill="#64748b" font-size="9" font-family="ui-monospace, monospace">:8099 · this UI</text>
+
+          <rect x="460" y="64" width="140" height="48" rx="8" fill="#1e293b" stroke="#475569"/>
+          <text x="530" y="84" text-anchor="middle" fill="#e2e8f0" font-size="10" font-family="system-ui, sans-serif" font-weight="600">Orchestrator</text>
+          <text x="530" y="100" text-anchor="middle" fill="#64748b" font-size="9" font-family="ui-monospace, monospace">:8100 · queue</text>
+
+          <rect x="300" y="128" width="300" height="48" rx="8" fill="#1e293b" stroke="#475569"/>
+          <text x="450" y="148" text-anchor="middle" fill="#e2e8f0" font-size="10" font-family="system-ui, sans-serif" font-weight="600">Agent runner (host)</text>
+          <text x="450" y="164" text-anchor="middle" fill="#64748b" font-size="9" font-family="ui-monospace, monospace">Claude · Cursor · Codex · Gemini</text>
+
+          {# GitHub Actions #}
+          <rect x="680" y="40" width="200" height="140" rx="14" fill="#0f172a" stroke="#334155" stroke-width="1.5"/>
+          <text x="780" y="68" text-anchor="middle" fill="#86efac" font-size="12" font-family="ui-monospace, monospace" font-weight="700">GITHUB ACTIONS</text>
+          <text x="780" y="96" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="system-ui, sans-serif">CI · AI review</text>
+          <text x="780" y="116" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="system-ui, sans-serif">Memory after merge</text>
+          <text x="780" y="136" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="system-ui, sans-serif">Optional CD deploy</text>
+          <text x="780" y="162" text-anchor="middle" fill="#475569" font-size="9" font-family="ui-monospace, monospace">on product + engine</text>
+
+          {# Arrows #}
+          <defs>
+            <marker id="fg-arr2" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+              <path d="M0,0 L7,3.5 L0,7 Z" fill="#64748b"/>
+            </marker>
+          </defs>
+          <line x1="220" y1="110" x2="278" y2="110" stroke="#64748b" stroke-width="1.5" marker-end="url(#fg-arr2)"/>
+          <line x1="620" y1="110" x2="678" y2="110" stroke="#64748b" stroke-width="1.5" marker-end="url(#fg-arr2)"/>
+        </svg>
+      </div>
+    </div>
+
+    {# ── Optional CD + harness ───────────────────────────────────────── #}
+    <div>
+      <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">Optional: continuous deploy (CD) &amp; harness</h3>
+      <p class="text-xs text-slate-400 leading-relaxed mb-3 max-w-3xl">
+        The factory works end-to-end <strong class="text-slate-300 font-medium">without</strong> CD.
+        Agents, PRs, and CI do not need a deploy runner. CD only rebuilds this engine stack after merges to main.
+      </p>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+        <div class="rounded-xl border border-slate-800/70 bg-slate-900/40 px-4 py-3 space-y-2">
+          <div class="text-[10px] font-mono uppercase tracking-wider text-emerald-400/90">To enable CD</div>
+          <ol class="list-decimal list-inside text-slate-400 space-y-1.5 leading-relaxed">
+            <li>In GitHub (engine repo) → Settings → Actions → Runners, add a <strong class="text-slate-300 font-medium">self-hosted</strong> runner on the machine that runs Docker.</li>
+            <li>Give it the label <code class="text-slate-300">factory-deploy</code>.</li>
+            <li>Open <a href="/settings/deploy-harness" class="text-sky-400 hover:text-sky-300">Settings → Deploy &amp; Harness</a> — when the UI shows the runner online, turn CD on.</li>
+          </ol>
+          <p class="text-slate-500 pt-1">That runner is an operator step (GitHub UI). Merging the CD PR does not create it for you.</p>
+        </div>
+        <div class="rounded-xl border border-slate-800/70 bg-slate-900/40 px-4 py-3 space-y-2">
+          <div class="text-[10px] font-mono uppercase tracking-wider text-cyan-400/90">Harness (separate from CD)</div>
+          <p class="text-slate-400 leading-relaxed">
+            Same settings page: tool policy (what the coding agent may call) and optional weekly spend budget.
+            No deploy runner required. After you save prefs, <strong class="text-slate-300 font-medium">restart the agent runner</strong> so new claims pick them up.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    {# ── Where to click ─────────────────────────────────────────────── #}
+    <div>
+      <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">Where to go in this UI</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
+        <a href="/" class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2.5 hover:border-indigo-500/40 transition-colors">
+          <span class="font-semibold text-slate-200">Overview</span>
+          <span class="block text-slate-500 mt-0.5">Kanban board of all WOs</span>
+        </a>
+        <a href="/factory" class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2.5 hover:border-indigo-500/40 transition-colors">
+          <span class="font-semibold text-slate-200">Factory</span>
+          <span class="block text-slate-500 mt-0.5">Live agents + step logs</span>
+        </a>
+        <a href="/pm" class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2.5 hover:border-indigo-500/40 transition-colors">
+          <span class="font-semibold text-slate-200">PM View</span>
+          <span class="block text-slate-500 mt-0.5">Chat to create &amp; prioritize WOs</span>
+        </a>
+        <a href="/ci" class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2.5 hover:border-indigo-500/40 transition-colors">
+          <span class="font-semibold text-slate-200">Engineering</span>
+          <span class="block text-slate-500 mt-0.5">PR CI + AI review health</span>
+        </a>
+        <a href="/plan" class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2.5 hover:border-indigo-500/40 transition-colors">
+          <span class="font-semibold text-slate-200">Plan</span>
+          <span class="block text-slate-500 mt-0.5">Phases, milestones, queue</span>
+        </a>
+        <a href="/settings/deploy-harness" class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2.5 hover:border-indigo-500/40 transition-colors">
+          <span class="font-semibold text-slate-200">Deploy &amp; Harness</span>
+          <span class="block text-slate-500 mt-0.5">CD toggle + LLM tool policy</span>
+        </a>
+        <a href="/settings/get-started" class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2.5 hover:border-indigo-500/40 transition-colors">
+          <span class="font-semibold text-slate-200">Get Started</span>
+          <span class="block text-slate-500 mt-0.5">GitHub · product · agent setup</span>
+        </a>
+        <a href="/history" class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2.5 hover:border-indigo-500/40 transition-colors">
+          <span class="font-semibold text-slate-200">History</span>
+          <span class="block text-slate-500 mt-0.5">Past runs &amp; outcomes</span>
+        </a>
+        <a href="/usage" class="rounded-lg border border-slate-800/80 bg-slate-900/30 px-3 py-2.5 hover:border-indigo-500/40 transition-colors">
+          <span class="font-semibold text-slate-200">Usage</span>
+          <span class="block text-slate-500 mt-0.5">Backend run stats &amp; estimates</span>
+        </a>
+      </div>
+    </div>
+
+    <p class="text-[11px] text-slate-600 font-mono">
+      Tip: click the <span class="text-slate-400">?</span> in the top bar on any page for a short guide.
+      Full checklist: <a href="/guide" class="text-indigo-400 hover:text-indigo-300">/guide</a>
+      · program todos in <code class="text-slate-500">docs/project_management/BACKLOG.md</code>
+    </p>
+  </div>
+</section>
+
+{% if dismissible %}
+<script>
+(function() {
+  var KEY = 'factory-guide-hidden';
+  var el = document.getElementById('factory-guide');
+  if (!el) return;
+  if (localStorage.getItem(KEY) === '1') {
+    el.classList.add('hidden');
+  }
+  window.dismissFactoryGuide = function() {
+    localStorage.setItem(KEY, '1');
+    el.classList.add('hidden');
+  };
+  window.showFactoryGuide = function() {
+    localStorage.removeItem(KEY);
+    el.classList.remove('hidden');
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+})();
+</script>
+{% endif %}

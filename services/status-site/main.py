@@ -481,6 +481,20 @@ def _board_columns(wos: dict[int, WOSpec]) -> dict[str, list[WOSpec]]:
     return cols
 
 
+@app.get("/guide", response_class=HTMLResponse)
+async def factory_guide(request: Request):
+    """Plain-language overview: what the factory is, lifecycle, and where to click."""
+    return templates.TemplateResponse(
+        request=request,
+        name="guide.html",
+        context={
+            "site_title": SITE_TITLE,
+            "refresh_seconds": REFRESH_SECONDS,
+            "github_repo": GITHUB_REPO,
+        },
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     if not GITHUB_TOKEN or not GITHUB_REPO:
@@ -2002,6 +2016,123 @@ def _plan_context_base() -> dict:
         "milestones": plan_data.get("milestones", []),
         "queue": plan_data.get("queue", []),
     }
+
+
+@app.get("/settings/deploy-harness", response_class=HTMLResponse)
+async def settings_deploy_harness(request: Request, saved: str = "", error: str = ""):
+    from urllib.parse import unquote
+    deploy: dict = {}
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.get(
+                f"{ORCHESTRATOR_URL}/api/settings/deploy", headers=_orch_headers()
+            )
+            if r.status_code == 200:
+                deploy = r.json()
+            else:
+                error = error or f"Orchestrator returned {r.status_code}"
+    except Exception as exc:
+        error = error or f"Orchestrator unreachable: {exc}"
+
+    harness = deploy.get("harness") or {}
+    values = dict(harness.get("values") or {})
+    for k, v in (harness.get("defaults") or {}).items():
+        values.setdefault(k, v)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="settings_deploy_harness.html",
+        context={
+            "site_title": SITE_TITLE,
+            "refresh_seconds": 3600,
+            "github_repo": GITHUB_REPO,
+            "engine_repo": deploy.get("engine_repo") or "dentroio/agentic-factory",
+            "cd_enabled": bool(deploy.get("cd_enabled")),
+            "factory_deploy_online": bool(deploy.get("factory_deploy_online")),
+            "runners": deploy.get("runners") or [],
+            "runners_error": deploy.get("runners_error") or "",
+            "operator_hint": deploy.get("operator_hint") or "",
+            "values": values,
+            "permission_modes": harness.get("permission_modes")
+            or ["bypassPermissions", "acceptEdits", "default", "plan"],
+            "prefs_file": harness.get("prefs_file") or "~/.config/factory-agent/prefs",
+            "restart_hint": harness.get("restart_hint")
+            or "Restart the agent for harness changes to apply.",
+            "saved": bool(saved),
+            "error": unquote(error) if error else "",
+        },
+    )
+
+
+@app.post("/settings/deploy-harness/cd", response_class=HTMLResponse)
+async def settings_deploy_harness_cd(request: Request):
+    from fastapi.responses import RedirectResponse
+    from urllib.parse import quote
+    form = await request.form()
+    body = {
+        "engine_repo": str(form.get("engine_repo", "")).strip(),
+        "cd_enabled": str(form.get("cd_enabled", "")) in ("1", "on", "true", "True"),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.put(
+                f"{ORCHESTRATOR_URL}/api/settings/deploy",
+                json=body,
+                headers=_orch_headers(),
+            )
+            if r.status_code >= 400:
+                detail = r.text
+                try:
+                    detail = r.json().get("detail") or r.json().get("error") or detail
+                except Exception:
+                    pass
+                return RedirectResponse(
+                    url=f"/settings/deploy-harness?error={quote(str(detail)[:200])}",
+                    status_code=303,
+                )
+    except Exception as exc:
+        return RedirectResponse(
+            url=f"/settings/deploy-harness?error={quote(str(exc)[:200])}",
+            status_code=303,
+        )
+    return RedirectResponse(url="/settings/deploy-harness?saved=cd", status_code=303)
+
+
+@app.post("/settings/deploy-harness/harness", response_class=HTMLResponse)
+async def settings_deploy_harness_prefs(request: Request):
+    from fastapi.responses import RedirectResponse
+    from urllib.parse import quote
+    form = await request.form()
+    body = {
+        "AGENT_PERMISSION_MODE": str(form.get("AGENT_PERMISSION_MODE", "")).strip(),
+        "AGENT_TOOL_ALLOWLIST": str(form.get("AGENT_TOOL_ALLOWLIST", "")).strip(),
+        "GEMINI_YOLO": str(form.get("GEMINI_YOLO", "1")).strip(),
+        "CURSOR_TRUST": str(form.get("CURSOR_TRUST", "1")).strip(),
+        "USAGE_BUDGET_USD_WEEK": str(form.get("USAGE_BUDGET_USD_WEEK", "0")).strip(),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.put(
+                f"{ORCHESTRATOR_URL}/api/harness",
+                json=body,
+                headers=_orch_headers(),
+            )
+            if r.status_code >= 400:
+                detail = r.text
+                try:
+                    detail = r.json().get("error") or r.json().get("detail") or detail
+                except Exception:
+                    pass
+                return RedirectResponse(
+                    url=f"/settings/deploy-harness?error={quote(str(detail)[:200])}",
+                    status_code=303,
+                )
+    except Exception as exc:
+        return RedirectResponse(
+            url=f"/settings/deploy-harness?error={quote(str(exc)[:200])}",
+            status_code=303,
+        )
+    return RedirectResponse(url="/settings/deploy-harness?saved=harness", status_code=303)
 
 
 @app.get("/settings/plan", response_class=HTMLResponse)

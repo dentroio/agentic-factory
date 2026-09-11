@@ -14,6 +14,23 @@ This plan covers the two-part implementation:
 
 ---
 
+## Part 0 — Factory engine CD (agentic-factory itself)
+
+The engine stack (`docker-compose.status.yml`) has a first-class workflow:
+
+- Workflow: `.github/workflows/deploy.yml`
+- Smoke: `python3 scripts/factory_smoke.py` / `make smoke`
+- Runner label: `factory-deploy`
+- Enable push-to-main: set Actions variable `FACTORY_CD_ENABLED=true`
+
+Until that variable is set, merges do **not** trigger deploy; use
+**Actions → Deploy → Run workflow**. See `docs/work_orders/WO-1094-factory-cd.md`.
+
+Product apps (Clarion / adopters) still follow Parts 1–3 below with their own
+`deploy.yml` — do not reuse the engine workflow for product deploys.
+
+---
+
 ## Part 1 — Self-Hosted Runners
 
 ### Why self-hosted

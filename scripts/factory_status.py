@@ -107,8 +107,12 @@ def check_cd_workflow() -> bool:
         return True  # warn but don't fail — CD is optional until the project is deployed
     content = path.read_text()
     has_placeholder = bool(re.search(r"\{\{[A-Z][A-Z_ ]*\}\}", content))
-    return check("deploy.yml", not has_placeholder,
-                 detail="still contains unfilled placeholders" if has_placeholder else "")
+    detail = (
+        "still contains unfilled placeholders"
+        if has_placeholder
+        else "push-to-main gated by FACTORY_CD_ENABLED (WO-1094)"
+    )
+    return check("deploy.yml", not has_placeholder, detail=detail)
 
 
 def check_secret() -> bool:

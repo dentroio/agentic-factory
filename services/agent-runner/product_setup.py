@@ -25,6 +25,30 @@ _REPO_RE = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$")
 # Prefer cloning under ~/src when that directory exists; otherwise ~/Projects or ~.
 _DEFAULT_PARENTS = ("src", "Projects", "Developer", "code", "workspace")
 
+# Host prefs keys managed by Settings → Deploy & Harness (WO-1095).
+# factory-env.sh exports the whole prefs file into the runner/compose env.
+HARNESS_PREF_KEYS = (
+    "ENGINE_GITHUB_REPO",
+    "AGENT_PERMISSION_MODE",
+    "AGENT_TOOL_ALLOWLIST",
+    "GEMINI_YOLO",
+    "CURSOR_TRUST",
+    "USAGE_BUDGET_USD_WEEK",
+)
+
+HARNESS_DEFAULTS = {
+    "ENGINE_GITHUB_REPO": "dentroio/agentic-factory",
+    "AGENT_PERMISSION_MODE": "bypassPermissions",
+    "AGENT_TOOL_ALLOWLIST": "on",
+    "GEMINI_YOLO": "1",
+    "CURSOR_TRUST": "1",
+    "USAGE_BUDGET_USD_WEEK": "0",
+}
+
+_VALID_PERMISSION_MODES = frozenset(
+    {"default", "acceptEdits", "bypassPermissions", "plan"}
+)
+
 
 class ProductSetupError(ValueError):
     """User-facing configuration error (safe for HTTP 400 detail)."""
@@ -177,6 +201,68 @@ def product_status(prefs: dict[str, str] | None = None) -> dict[str, Any]:
             "the product checkout, then `make agent-stop && make agent-start`."
         ),
     }
+
+
+def harness_status(prefs: dict[str, str] | None = None) -> dict[str, Any]:
+    """Current harness / CD-related prefs for Settings → Deploy & Harness."""
+    data = dict(prefs or read_prefs())
+    for key in HARNESS_PREF_KEYS:
+        if os.environ.get(key):
+            data[key] = os.environ[key].strip()
+    values = {
+        key: (data.get(key) or HARNESS_DEFAULTS.get(key, "")).strip()
+        for key in HARNESS_PREF_KEYS
+    }
+    return {
+        "prefs_file": str(PREFS_PATH),
+        "values": values,
+        "defaults": dict(HARNESS_DEFAULTS),
+        "allowed_keys": list(HARNESS_PREF_KEYS),
+        "permission_modes": sorted(_VALID_PERMISSION_MODES),
+        "restart_hint": (
+            "Harness prefs apply on the next agent start — "
+            "run `make agent-stop && make agent-start` (or use Settings → Agents)."
+        ),
+    }
+
+
+def configure_harness(updates: dict[str, Any], prefs_file: Path | None = None) -> dict[str, Any]:
+    """Validate and write allowlisted harness prefs. Unknown keys → 400."""
+    if not isinstance(updates, dict):
+        raise ProductSetupError("Body must be a JSON object")
+    cleaned: dict[str, str] = {}
+    for key, raw in updates.items():
+        if key not in HARNESS_PREF_KEYS:
+            raise ProductSetupError(f"Unknown harness key: {key}")
+        value = "" if raw is None else str(raw).strip()
+        if key == "AGENT_PERMISSION_MODE" and value and value not in _VALID_PERMISSION_MODES:
+            raise ProductSetupError(
+                f"AGENT_PERMISSION_MODE must be one of {sorted(_VALID_PERMISSION_MODES)}"
+            )
+        if key == "ENGINE_GITHUB_REPO" and value:
+            cleaned[key] = normalize_repo(value)
+            continue
+        if key == "USAGE_BUDGET_USD_WEEK" and value:
+            try:
+                amount = float(value)
+            except ValueError as exc:
+                raise ProductSetupError("USAGE_BUDGET_USD_WEEK must be a number") from exc
+            if amount < 0:
+                raise ProductSetupError("USAGE_BUDGET_USD_WEEK must be >= 0")
+            cleaned[key] = str(int(amount)) if amount == int(amount) else str(amount)
+            continue
+        if key in ("GEMINI_YOLO", "CURSOR_TRUST") and value:
+            low = value.lower()
+            if low in ("1", "true", "yes", "on"):
+                cleaned[key] = "1"
+            elif low in ("0", "false", "no", "off"):
+                cleaned[key] = "0"
+            else:
+                raise ProductSetupError(f"{key} must be 0 or 1")
+            continue
+        cleaned[key] = value
+    write_prefs(cleaned, prefs_file)
+    return harness_status(read_prefs(prefs_file))
 
 
 def configure_product(

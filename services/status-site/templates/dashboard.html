@@ -17,6 +17,36 @@
 </div>
 {% endset %}
 
+{# ── Factory guide (what it is / how it works) — dismissible ──────────── #}
+{% set dismissible = true %}
+{% include "partials/factory_guide.html" %}
+<div id="factory-guide-restore" class="hidden mb-4">
+  <button type="button" onclick="showFactoryGuide()"
+          class="text-xs font-mono text-indigo-400/90 hover:text-indigo-300 border border-indigo-500/25 hover:border-indigo-500/50 rounded-lg px-3 py-2 bg-indigo-500/5 transition-colors">
+    Show factory guide — what this is &amp; how it works
+  </button>
+  <a href="/guide" class="ml-3 text-xs font-mono text-slate-500 hover:text-slate-300">Open full guide →</a>
+</div>
+<script>
+(function() {
+  var KEY = 'factory-guide-hidden';
+  var restore = document.getElementById('factory-guide-restore');
+  if (restore && localStorage.getItem(KEY) === '1') {
+    restore.classList.remove('hidden');
+  }
+  var _show = window.showFactoryGuide;
+  window.showFactoryGuide = function() {
+    if (_show) _show();
+    if (restore) restore.classList.add('hidden');
+  };
+  var _dismiss = window.dismissFactoryGuide;
+  window.dismissFactoryGuide = function() {
+    if (_dismiss) _dismiss();
+    if (restore) restore.classList.remove('hidden');
+  };
+})();
+</script>
+
 {% if product_setup_needed %}
 <div class="flex items-center justify-between gap-4 mb-6 px-6 py-4 rounded-xl border bg-sky-500/10 border-sky-500/20 text-sky-200">
   <div class="min-w-0">

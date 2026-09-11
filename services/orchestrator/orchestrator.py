@@ -5052,6 +5052,136 @@ async def remount_product():
     return await _proxy_runner("POST", "/api/product/remount", json_body={}, timeout=300)
 
 
+@app.get("/api/harness")
+async def get_harness():
+    """Host harness prefs (tool policy, budget, engine repo)."""
+    return await _proxy_runner("GET", "/api/harness", timeout=10)
+
+
+@app.put("/api/harness")
+async def put_harness(request: Request):
+    """Update allowlisted harness prefs on the host."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    return await _proxy_runner("PUT", "/api/harness", json_body=body, timeout=30)
+
+
+def _resolve_engine_repo(explicit: str | None = None) -> str:
+    """Repo that owns deploy.yml / FACTORY_CD_ENABLED (usually the engine clone)."""
+    if explicit and explicit.strip():
+        return explicit.strip()
+    return (
+        os.getenv("ENGINE_GITHUB_REPO", "").strip()
+        or "dentroio/agentic-factory"
+    )
+
+
+async def _deploy_settings_payload(engine_repo: str = "", harness: dict | None = None) -> dict:
+    if harness is None:
+        harness = {}
+        try:
+            proxied = await _proxy_runner("GET", "/api/harness", timeout=10)
+            if isinstance(proxied, JSONResponse) and proxied.status_code == 200:
+                harness = json.loads(bytes(proxied.body).decode("utf-8"))
+        except Exception as e:
+            print(f"[orchestrator] get harness for deploy: {e}")
+
+    values = (harness or {}).get("values") or {}
+    engine_repo = _resolve_engine_repo(values.get("ENGINE_GITHUB_REPO") or engine_repo)
+
+    cd_raw = None
+    runners: list[dict] = []
+    runners_error = ""
+    async with httpx.AsyncClient(timeout=20) as client:
+        cd_raw = await _get_repo_variable(client, engine_repo, "FACTORY_CD_ENABLED")
+        try:
+            data = await _get(client, f"/repos/{engine_repo}/actions/runners", {"per_page": 100})
+            for r in data.get("runners", []) or []:
+                labels = [lb.get("name", "") for lb in (r.get("labels") or [])]
+                runners.append({
+                    "id": r.get("id"),
+                    "name": r.get("name"),
+                    "status": r.get("status"),
+                    "busy": bool(r.get("busy")),
+                    "labels": labels,
+                    "has_factory_deploy": "factory-deploy" in labels,
+                })
+        except Exception as e:
+            runners_error = str(e)
+
+    factory_deploy_online = any(
+        r.get("has_factory_deploy") and r.get("status") == "online" for r in runners
+    )
+    return {
+        "engine_repo": engine_repo,
+        "cd_enabled": (cd_raw or "").strip().lower() == "true",
+        "cd_variable": cd_raw,
+        "runners": runners,
+        "runners_error": runners_error,
+        "factory_deploy_online": factory_deploy_online,
+        "harness": harness,
+        "operator_hint": (
+            "Register a self-hosted runner in GitHub → Settings → Actions → Runners, "
+            "add label factory-deploy, then enable CD here."
+        ),
+    }
+
+
+@app.get("/api/settings/deploy")
+async def get_deploy_settings():
+    """CD enablement + self-hosted runners for the engine repo."""
+    return await _deploy_settings_payload()
+
+
+@app.put("/api/settings/deploy")
+async def put_deploy_settings(request: Request):
+    """Update ENGINE_GITHUB_REPO prefs and/or FACTORY_CD_ENABLED variable."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    engine_repo = str(body.get("engine_repo") or "").strip()
+    if engine_repo:
+        await _proxy_runner(
+            "PUT", "/api/harness",
+            json_body={"ENGINE_GITHUB_REPO": engine_repo},
+            timeout=30,
+        )
+    else:
+        try:
+            proxied = await _proxy_runner("GET", "/api/harness", timeout=10)
+            if isinstance(proxied, JSONResponse) and proxied.status_code == 200:
+                harness = json.loads(bytes(proxied.body).decode("utf-8"))
+                engine_repo = (harness.get("values") or {}).get("ENGINE_GITHUB_REPO", "")
+        except Exception:
+            engine_repo = ""
+    engine_repo = _resolve_engine_repo(engine_repo)
+
+    if "cd_enabled" in body:
+        enabled = bool(body.get("cd_enabled"))
+        async with httpx.AsyncClient(timeout=20) as client:
+            try:
+                await _set_repo_variable(
+                    client,
+                    engine_repo,
+                    "FACTORY_CD_ENABLED",
+                    "true" if enabled else "false",
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Could not set FACTORY_CD_ENABLED on {engine_repo}: {e}. "
+                        "Token needs Actions Variables write on the engine repo."
+                    ),
+                ) from e
+
+    return await _deploy_settings_payload(engine_repo)
+
+
 # ── WO Draft generation ────────────────────────────────────────────────────────
 
 # Each backend now runs as its own native launchd process (claude/cursor/codex on
