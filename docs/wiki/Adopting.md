@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-09-11
+last_verified: 2026-09-12
 covers_wos:
   - WO-1008
   - WO-1052
@@ -112,31 +112,4 @@ Store a **fine-grained GitHub PAT** (`github_pat_...`) in Keychain, scoped to th
 
 The factory's tooling actively rejects other token shapes:
 
-- Classic PATs (`ghp_...`) are refused — they can write every repo the token owner can reach, which is far broader than the factory needs.
-- GitHub CLI OAuth tokens (`gho_...`) are refused for the same reason.
-- Don't grant `gist` — it isn't used and is an unnecessary exfiltration channel.
-
-GitHub does not expose a "Checks" permission on fine-grained PATs (that's App-only). Contents is sufficient for the factory to read check runs, so don't go looking for a Checks scope that doesn't exist.
-
-`scripts/github_token.py --store` validates the token prefix and writes it to Keychain via stdin, e.g.:
-
-```bash
-pbpaste | python3 scripts/github_token.py --store
-```
-
-Never pass the token as a CLI argument or paste it into chat/logs.
-
-## Cloud agent path (docs-only / no-services WOs)
-
-Not every Work Order needs a local Docker worktree and a developer machine running Claude/Cursor/Codex. For WOs with `services: none` (typically docs-only or small P3 changes), the orchestrator can dispatch straight to GitHub Actions instead:
-
-```
-POST /api/dispatch-codex
-{ "wo": "WO-362", "repo": "you/app", "ref": "main", "slug": "your-wo-slug" }
-```
-
-This pre-claims the WO as `codex-gh-actions`, triggers a `workflow_dispatch` event against a `codex-dispatch.yml` workflow in your product repo, and lets the existing poll loop detect the resulting branch/PR — no callback needed. The target repo needs a `codex-dispatch.yml` workflow (checkout, branch, run Codex, open PR) and an `OPENAI_API_KEY` secret; `GITHUB_TOKEN` is provided automatically by Actions. On dispatch failure (bad repo, workflow not found, etc.) the orchestrator returns 502 and rolls back the pre-claim, leaving the WO free for another agent to pick up.
-
-## Multiple repos, non-overlapping WO numbers
-
-Reserving a WO number is scoped per repo, not global. If you run the factory against both your own product and `agentic-factory` (e.g. contributing back), reserving the "next" number for one repo never collides with or blocks numb
+- Classic PATs (`ghp_...`) are refused — they can write every repo the token owner can reach, which is far
