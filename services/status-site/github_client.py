@@ -1,3 +1,11 @@
+"""GitHub REST client for the factory status dashboard.
+
+Designed to stay under secondary rate limits: long TTLs for WO content,
+a process-wide circuit breaker on 403 rate-limit responses, and stale-cache
+fallbacks so a refresh never storms the API after a limit trip.
+"""
+from __future__ import annotations
+
 import base64
 import os
 import time
@@ -11,14 +19,18 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 WO_PATH = os.getenv("WO_PATH", "docs/project_management/work_orders")
 RUNS_PATH = os.getenv("RUNS_PATH", "docs/factory/runs")
 # WO file contents change rarely — cache aggressively to avoid rate-limit exhaustion.
-# With 350+ WO files each needing an individual API call, a short TTL burns thousands
-# of requests per hour. 1800s matches the page refresh interval.
 CACHE_TTL = int(os.getenv("GITHUB_CACHE_TTL", "1800"))
-
-# Lighter TTL for dynamic data (PRs, branches, CI runs) — still needs to feel live.
-LIVE_CACHE_TTL = int(os.getenv("GITHUB_LIVE_CACHE_TTL", "120"))
+# Live data (PRs, branches, CI). Keep modest; board no longer fans out per-PR checks.
+LIVE_CACHE_TTL = int(os.getenv("GITHUB_LIVE_CACHE_TTL", "300"))
+# After a rate-limit 403, pause outbound GitHub calls (seconds).
+RATE_LIMIT_COOLDOWN = int(os.getenv("GITHUB_RATE_LIMIT_COOLDOWN", "300"))
 
 _cache: dict[str, tuple[float, Any]] = {}
+_rate_limited_until: float = 0.0
+
+
+class GitHubRateLimited(Exception):
+    """GitHub refused the request for rate limiting; caller should use mount/stale data."""
 
 
 def _headers() -> dict:
@@ -28,21 +40,88 @@ def _headers() -> dict:
     return h
 
 
+def _cache_key(path: str, params: dict | None) -> str:
+    if not params:
+        return path
+    items = "&".join(f"{k}={params[k]}" for k in sorted(params))
+    return f"{path}?{items}"
+
+
+def _looks_like_rate_limit(resp: httpx.Response) -> bool:
+    if resp.status_code != 403:
+        return False
+    body = (resp.text or "").lower()
+    if "rate limit" in body or "secondary rate limit" in body:
+        return True
+    remaining = resp.headers.get("x-ratelimit-remaining")
+    return remaining == "0"
+
+
+def _trip_rate_limit(resp: httpx.Response | None = None) -> None:
+    global _rate_limited_until
+    reset_at = None
+    if resp is not None:
+        raw = resp.headers.get("x-ratelimit-reset")
+        if raw and raw.isdigit():
+            reset_at = float(raw)
+        retry = resp.headers.get("retry-after")
+        if retry and retry.isdigit():
+            reset_at = max(reset_at or 0.0, time.time() + int(retry))
+    until = reset_at if reset_at and reset_at > time.time() else time.time() + RATE_LIMIT_COOLDOWN
+    _rate_limited_until = max(_rate_limited_until, until)
+
+
+def rate_limit_active() -> bool:
+    return time.time() < _rate_limited_until
+
+
+def rate_limit_remaining_seconds() -> int:
+    return max(0, int(_rate_limited_until - time.time()))
+
+
+def clear_rate_limit_for_tests() -> None:
+    global _rate_limited_until
+    _rate_limited_until = 0.0
+    _cache.clear()
+
+
+def _stale(cache_key: str) -> Any | None:
+    hit = _cache.get(cache_key)
+    return hit[1] if hit else None
+
+
 async def _get(path: str, params: dict | None = None, ttl: int | None = None) -> Any:
     effective_ttl = ttl if ttl is not None else CACHE_TTL
-    cache_key = f"{path}?{params}"
+    cache_key = _cache_key(path, params)
+    now = time.time()
+
     if cache_key in _cache:
         ts, val = _cache[cache_key]
-        if time.time() - ts < effective_ttl:
+        if now - ts < effective_ttl:
             return val
+
+    if rate_limit_active():
+        stale = _stale(cache_key)
+        if stale is not None:
+            return stale
+        raise GitHubRateLimited(
+            f"GitHub API rate-limited — cooling down {rate_limit_remaining_seconds()}s"
+        )
 
     url = f"https://api.github.com{path}"
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(url, headers=_headers(), params=params)
+        if _looks_like_rate_limit(resp):
+            _trip_rate_limit(resp)
+            stale = _stale(cache_key)
+            if stale is not None:
+                return stale
+            raise GitHubRateLimited(
+                f"GitHub API rate limit exceeded (cooldown {RATE_LIMIT_COOLDOWN}s)"
+            )
         if resp.status_code == 403 and cache_key in _cache:
-            # Rate limited — return stale cache rather than failing
-            _, val = _cache[cache_key]
-            return val
+            # Other 403s (SSO, permissions) — still prefer stale over hard fail.
+            return _cache[cache_key][1]
         resp.raise_for_status()
         val = resp.json()
 
@@ -103,13 +182,14 @@ async def list_ci_runs() -> list[dict]:
 async def get_branch_file(branch: str, file_path: str) -> str | None:
     path = f"/repos/{GITHUB_REPO}/contents/{file_path}"
     try:
-        data = await _get(f"{path}?ref={branch}", ttl=LIVE_CACHE_TTL)
+        data = await _get(path, {"ref": branch}, ttl=LIVE_CACHE_TTL)
         return base64.b64decode(data["content"]).decode("utf-8")
     except Exception:
         return None
 
 
 async def get_pr_checks(pr_number: int) -> list[dict]:
+    """Per-PR check runs — expensive (2 API calls). Prefer board paths that skip this."""
     path = f"/repos/{GITHUB_REPO}/pulls/{pr_number}/commits"
     try:
         commits = await _get(path, ttl=LIVE_CACHE_TTL)
@@ -133,18 +213,25 @@ async def list_runners() -> list[dict]:
 
 async def list_active_runs() -> list[dict]:
     try:
-        queued = await _get(f"/repos/{GITHUB_REPO}/actions/runs", {"status": "queued", "per_page": 20}, ttl=LIVE_CACHE_TTL)
-        in_prog = await _get(f"/repos/{GITHUB_REPO}/actions/runs", {"status": "in_progress", "per_page": 20}, ttl=LIVE_CACHE_TTL)
+        queued = await _get(
+            f"/repos/{GITHUB_REPO}/actions/runs",
+            {"status": "queued", "per_page": 20},
+            ttl=LIVE_CACHE_TTL,
+        )
+        in_prog = await _get(
+            f"/repos/{GITHUB_REPO}/actions/runs",
+            {"status": "in_progress", "per_page": 20},
+            ttl=LIVE_CACHE_TTL,
+        )
         runs = queued.get("workflow_runs", []) + in_prog.get("workflow_runs", [])
         if runs:
             return sorted(runs, key=lambda r: r.get("created_at", ""))
 
-        # This repo's CI usually finishes in well under a minute, so the
-        # queued/in_progress window is rarely non-empty when someone actually
-        # loads the page — the panel looks perpetually dead even when the
-        # factory is working fine. Fall back to the last few completed runs,
-        # tagged so the template can show them distinctly from a live queue.
-        recent = await _get(f"/repos/{GITHUB_REPO}/actions/runs", {"per_page": 5}, ttl=LIVE_CACHE_TTL)
+        recent = await _get(
+            f"/repos/{GITHUB_REPO}/actions/runs",
+            {"per_page": 5},
+            ttl=LIVE_CACHE_TTL,
+        )
         fallback = recent.get("workflow_runs", [])
         for r in fallback:
             r["is_recent_fallback"] = True
@@ -155,11 +242,7 @@ async def list_active_runs() -> list[dict]:
 
 @dataclass(frozen=True)
 class MergedPRWindow:
-    """Merged PRs for a time window, plus whether we actually got all of them.
-
-    The completeness flag is the point. A chart that draws a truncated bucket
-    as a low bar is worse than one that admits it doesn't know.
-    """
+    """Merged PRs for a time window, plus whether we actually got all of them."""
 
     prs: list[dict]
     since: str
@@ -171,21 +254,10 @@ class MergedPRWindow:
         return max(self.total_reported - len(self.prs), 0)
 
 
-# The search API refuses to return past 1000 results regardless of paging.
 _SEARCH_PAGE_LIMIT = 10
 
 
 def _search_item_to_pr(item: dict) -> dict:
-    """Normalize a search result into the PR shape the rest of the app reads.
-
-    Search returns issue-shaped items, so there is no `head.ref`. For merged
-    PRs that costs nothing measurable here: over the last 56 days, resolving
-    work orders from titles alone yields the same 179 distinct WOs as
-    resolving from titles plus branches, and not one PR had a branch naming a
-    WO its title didn't. This repo's PR titles are required to carry
-    "WO-NNN", which is why. `head` is still present and empty so callers can
-    keep using resolve_all_wos_for_pr unchanged.
-    """
     return {
         "number": item.get("number"),
         "title": item.get("title", "") or "",
@@ -199,27 +271,11 @@ def _search_item_to_pr(item: dict) -> dict:
 async def list_merged_prs(days: int = 56) -> MergedPRWindow:
     """Every PR merged in the last `days`, via search's `merged:>=` qualifier.
 
-    This used to page through `/pulls?state=closed&sort=created`, capped at
-    five pages, and return a bare list. Two problems, one of them invisible.
-
-    Creation order is only a proxy for merge order, so a PR opened before the
-    cap's horizon and merged inside the window fell off the end. Measured
-    against this repo: the paged version returned 432 of the 439 PRs merged in
-    a 56-day window. The seven it dropped were long-lived dependency bumps
-    opened early and merged weeks later — exactly the shape the proxy misses.
-
-    Worse, nothing could tell. The cap produced a short list indistinguishable
-    from a quiet fortnight, and the velocity chart rendered the shortfall as
-    real low weeks. Search filters on merge time directly and reports
-    `total_count`, so "did we get everything" is answered by the API rather
-    than assumed — and when the answer is no, callers are told.
+    Search has a low secondary rate limit — cache with CACHE_TTL, not LIVE.
     """
     from datetime import UTC, datetime, timedelta
 
     since = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    # merged:>= takes a date, so this over-selects by up to a day; the
-    # timestamp filter below trims it. total_count describes the same
-    # date-granular set as the items, so the two stay comparable.
     query = f"repo:{GITHUB_REPO} is:pr is:merged merged:>={since[:10]}"
 
     items: list[dict] = []
@@ -236,6 +292,7 @@ async def list_merged_prs(days: int = 56) -> MergedPRWindow:
                     "order": "desc",
                     "advanced_search": "true",
                 },
+                ttl=CACHE_TTL,
             )
             total = data.get("total_count", 0)
             batch = data.get("items", []) or []
@@ -243,8 +300,6 @@ async def list_merged_prs(days: int = 56) -> MergedPRWindow:
             if not batch or len(items) >= total:
                 break
     except Exception:
-        # No data at all is not zero merges — say so, so the chart can render
-        # "unknown" instead of eight empty weeks.
         return MergedPRWindow(prs=[], since=since, total_reported=0, complete=False)
 
     prs = [p for p in map(_search_item_to_pr, items) if p["merged_at"] >= since]
