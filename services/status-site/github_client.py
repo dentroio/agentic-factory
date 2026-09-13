@@ -286,8 +286,8 @@ async def list_merged_prs(days: int = 56) -> MergedPRWindow:
                 "/search/issues",
                 {
                     "q": query,
-                    "per_page": "100",
-                    "page": str(page),
+                    "per_page": 100,
+                    "page": page,
                     "sort": "created",
                     "order": "desc",
                     "advanced_search": "true",
