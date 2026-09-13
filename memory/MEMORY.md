@@ -18,6 +18,7 @@
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
+- [auto_wo1098](auto_wo1098.md)
 - [factory-smoke-orchestrator-401-is-healthy](auto_wo1094.md) — factory_smoke.py treats orchestrator HTTP 401 (no token) as a passing health check, not a failure
 - [llm-prompt-untrusted-tool-policy](auto_wo1093.md) — WO/review/CI text is untrusted prompt data; tool permissions are centralized in tool_policy.py, not delegated to prompt wording
 - [draft-server-per-agent-ports](auto_wo1092.md) — Each agent backend (claude/cursor/codex/gemini) must have a unique DRAFT_PORT; ports are duplicated in draft_server.py and health_agent.py and must stay in sync.
