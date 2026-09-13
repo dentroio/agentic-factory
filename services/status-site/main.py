@@ -2049,6 +2049,7 @@ async def settings_deploy_harness(request: Request, saved: str = "", error: str 
             "engine_repo": deploy.get("engine_repo") or "dentroio/agentic-factory",
             "cd_enabled": bool(deploy.get("cd_enabled")),
             "factory_deploy_online": bool(deploy.get("factory_deploy_online")),
+            "metrics_endpoint": deploy.get("metrics_endpoint") or "",
             "runners": deploy.get("runners") or [],
             "runners_error": deploy.get("runners_error") or "",
             "operator_hint": deploy.get("operator_hint") or "",
@@ -2097,6 +2098,40 @@ async def settings_deploy_harness_cd(request: Request):
             status_code=303,
         )
     return RedirectResponse(url="/settings/deploy-harness?saved=cd", status_code=303)
+
+
+@app.post("/settings/deploy-harness/metrics", response_class=HTMLResponse)
+async def settings_deploy_harness_metrics(request: Request):
+    from fastapi.responses import RedirectResponse
+    from urllib.parse import quote
+    form = await request.form()
+    body = {
+        "metrics_endpoint": str(form.get("metrics_endpoint", "")).strip(),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.put(
+                f"{ORCHESTRATOR_URL}/api/settings/deploy",
+                json=body,
+                headers=_orch_headers(),
+            )
+            if r.status_code >= 400:
+                detail = r.text
+                try:
+                    data = r.json()
+                    detail = data.get("detail") or data.get("error") or detail
+                except (ValueError, TypeError, KeyError):
+                    pass
+                return RedirectResponse(
+                    url=f"/settings/deploy-harness?error={quote(str(detail)[:200])}",
+                    status_code=303,
+                )
+    except Exception as exc:
+        return RedirectResponse(
+            url=f"/settings/deploy-harness?error={quote(str(exc)[:200])}",
+            status_code=303,
+        )
+    return RedirectResponse(url="/settings/deploy-harness?saved=metrics", status_code=303)
 
 
 @app.post("/settings/deploy-harness/harness", response_class=HTMLResponse)

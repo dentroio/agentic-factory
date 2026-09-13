@@ -61,7 +61,8 @@ _AGENT_META: dict[str, dict] = {
         "agent_name": "cursor-runner",
         "label": "com.dentroio.factory-agent-cursor",
         "log_suffix": "cursor",
-        "extra_env": {"DRAFT_PORT": "8101"},
+        # 8103 — coexists with primary factory-agent on 8101 (claude preferred)
+        "extra_env": {"DRAFT_PORT": "8103"},
     },
     "codex": {
         "auth_type": "both",
@@ -70,7 +71,7 @@ _AGENT_META: dict[str, dict] = {
         "agent_name": "codex-runner",
         "label": "com.dentroio.factory-agent-codex",
         "log_suffix": "codex",
-        "extra_env": {"DRAFT_PORT": "8103"},
+        "extra_env": {"DRAFT_PORT": "8104"},
     },
     "gemini": {
         "auth_type": "subscription",
@@ -79,7 +80,7 @@ _AGENT_META: dict[str, dict] = {
         "agent_name": "gemini-runner",
         "label": "com.dentroio.factory-agent-gemini",
         "log_suffix": "gemini",
-        "extra_env": {"DRAFT_PORT": "8104"},
+        "extra_env": {"DRAFT_PORT": "8105"},
     },
 }
 
@@ -346,6 +347,34 @@ class _DraftHandler(BaseHTTPRequestHandler):
         except Exception:
             launchctl_out = ""
 
+        # Single-runner mode: make agent-install uses com.dentroio.factory-agent
+        # with PREFERRED_AGENT from prefs — attribute that daemon to the preferred backend.
+        preferred = ""
+        try:
+            prefs_path = os.path.expanduser("~/.config/factory-agent/prefs")
+            if os.path.isfile(prefs_path):
+                with open(prefs_path, encoding="utf-8") as pf:
+                    for line in pf:
+                        line = line.strip()
+                        if line.startswith("PREFERRED_AGENT="):
+                            preferred = line.split("=", 1)[1].strip().strip("\"'")
+                            break
+        except Exception:
+            preferred = ""
+
+        primary_label = "com.dentroio.factory-agent"
+        primary_pid: int | None = None
+        primary_loaded = False
+        for line in launchctl_out.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 3 and parts[2] == primary_label:
+                primary_loaded = True
+                try:
+                    primary_pid = int(parts[0]) if parts[0] != "-" else None
+                except (ValueError, IndexError):
+                    primary_pid = None
+                break
+
         agents: dict[str, dict] = {}
         for name, meta in _AGENT_META.items():
             label = meta["label"]
@@ -361,6 +390,16 @@ class _DraftHandler(BaseHTTPRequestHandler):
                     except (ValueError, IndexError):
                         daemon_pid = None
                     break
+            # Attribute primary LaunchAgent to the preferred backend when its
+            # named plist is not the one actually running.
+            if (
+                not daemon_pid
+                and preferred == name
+                and primary_loaded
+                and primary_pid
+            ):
+                daemon_loaded = True
+                daemon_pid = primary_pid
             # Read plist env vars for key presence + domain filter
             api_key_in_plist = False
             domain_filter = ""
@@ -683,8 +722,8 @@ def start() -> None:
             f"[draft-server] Another factory-agent likely owns this port. "
             f"Check: lsof -nP -iTCP:{DRAFT_PORT} -sTCP:LISTEN\n"
             f"[draft-server] Stop the other agent (launchctl bootout) or ensure "
-            f"each backend uses a unique DRAFT_PORT (claude=8102, cursor=8101, "
-            f"codex=8103, gemini=8104).",
+            f"each backend uses a unique DRAFT_PORT (claude=8102, cursor=8103, "
+            f"codex=8104, gemini=8105; primary factory-agent defaults to 8101).",
             flush=True,
         )
         return

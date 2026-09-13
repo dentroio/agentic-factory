@@ -5112,6 +5112,7 @@ async def _deploy_settings_payload(engine_repo: str = "", harness: dict | None =
     runners_error = ""
     async with httpx.AsyncClient(timeout=20) as client:
         cd_raw = await _get_repo_variable(client, engine_repo, "FACTORY_CD_ENABLED")
+        metrics_raw = await _get_repo_variable(client, engine_repo, "METRICS_ENDPOINT")
         try:
             data = await _get(client, f"/repos/{engine_repo}/actions/runners", {"per_page": 100})
             for r in data.get("runners", []) or []:
@@ -5134,6 +5135,7 @@ async def _deploy_settings_payload(engine_repo: str = "", harness: dict | None =
         "engine_repo": engine_repo,
         "cd_enabled": (cd_raw or "").strip().lower() == "true",
         "cd_variable": cd_raw,
+        "metrics_endpoint": (metrics_raw or "").strip(),
         "runners": runners,
         "runners_error": runners_error,
         "factory_deploy_online": factory_deploy_online,
@@ -5153,7 +5155,7 @@ async def get_deploy_settings():
 
 @app.put("/api/settings/deploy")
 async def put_deploy_settings(request: Request):
-    """Update ENGINE_GITHUB_REPO prefs and/or FACTORY_CD_ENABLED variable."""
+    """Update ENGINE_GITHUB_REPO prefs, FACTORY_CD_ENABLED, and/or METRICS_ENDPOINT."""
     try:
         body = await request.json()
     except Exception:
@@ -5191,6 +5193,23 @@ async def put_deploy_settings(request: Request):
                     status_code=502,
                     detail=(
                         f"Could not set FACTORY_CD_ENABLED on {engine_repo}: {e}. "
+                        "Token needs Actions Variables write on the engine repo."
+                    ),
+                ) from e
+
+    if "metrics_endpoint" in body:
+        endpoint = str(body.get("metrics_endpoint") or "").strip()
+        async with httpx.AsyncClient(timeout=20) as client:
+            try:
+                if endpoint:
+                    await _set_repo_variable(client, engine_repo, "METRICS_ENDPOINT", endpoint)
+                else:
+                    await _delete_repo_variable(client, engine_repo, "METRICS_ENDPOINT")
+            except Exception as e:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Could not update METRICS_ENDPOINT on {engine_repo}: {e}. "
                         "Token needs Actions Variables write on the engine repo."
                     ),
                 ) from e

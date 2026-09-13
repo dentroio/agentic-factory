@@ -53,7 +53,7 @@ Delete the file entirely if your project has no specific checks. The universal r
 
 ## scripts/observability_thresholds.json
 
-The `observability.yml` workflow polls `METRICS_ENDPOINT` every 15 minutes and compares the response against these thresholds. If any threshold is exceeded, it creates a GitHub issue and routes it into the WO workflow via the planning agent.
+The `observability.yml` workflow polls `METRICS_ENDPOINT` every 15 minutes and compares the response against these thresholds. If any threshold is exceeded, it creates a GitHub issue and routes it into the WO workflow via the planning agent. Set or clear the endpoint from **Settings → Deploy & Harness → Observability** (no GitHub Variables UI required).
 
 ```json
 {

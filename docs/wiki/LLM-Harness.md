@@ -79,6 +79,7 @@ to stop new claims when weekly estimated spend meets the cap. `0` (default) disa
 ## What remains open
 
 - **CD enablement** — use Settings → Deploy & Harness after a `factory-deploy` runner is online; see [BACKLOG.md](../project_management/BACKLOG.md)
+- **Observability endpoint** — set `METRICS_ENDPOINT` on the same page (Observability section); must be reachable from GitHub Actions
 - **True sandbox** — Bash inside the allowlist is still powerful; worktree + gates are the remaining defense
 - **Exact tokens/billing** — estimates only (subscription CLIs do not always expose usage)
 

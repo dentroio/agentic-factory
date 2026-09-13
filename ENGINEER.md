@@ -184,7 +184,7 @@ Update `memory/MEMORY.md` index with a pointer to it.
 - What error rate is acceptable? (default: 1%)
 - What p99 latency is acceptable? (default: 2000ms)
 
-Then add `METRICS_ENDPOINT` as a GitHub Actions variable: **Settings → Variables → Actions → New repository variable**
+Then add `METRICS_ENDPOINT` via the dashboard (**Settings → Deploy & Harness → Observability**) or as a GitHub Actions variable: **Settings → Variables → Actions → New repository variable**. The URL must be publicly reachable from GitHub-hosted runners (not localhost).
 
 ---
 

@@ -53,19 +53,31 @@ VALIDATION_STALE_MIN = int(os.getenv("VALIDATION_STALE_MIN",    "60"))
 MAX_REJECTIONS       = int(os.getenv("MAX_REJECTIONS",           "4"))
 MAX_RETRY_ATTEMPTS   = int(os.getenv("MAX_RETRY_ATTEMPTS",       "3"))
 
-# Launchd service labels → preferred backend name
-RUNNER_SERVICES: dict[str, str] = {
+# Primary single-runner LaunchAgent (make agent-install / make agent-start).
+# Always monitored — missing/crashed → reload.
+PRIMARY_RUNNER_LABEL = "com.dentroio.factory-agent"
+
+# Optional per-backend LaunchAgents (Settings → Agents / multi-runner).
+# Only auto-reload when already loaded and crashed — never bootstrap idle
+# plists (that fights single-runner mode and steals DRAFT_PORT).
+OPTIONAL_RUNNER_SERVICES: dict[str, str] = {
     "com.dentroio.factory-agent-claude":  "claude",
     "com.dentroio.factory-agent-cursor":  "cursor",
     "com.dentroio.factory-agent-codex":   "codex",
     "com.dentroio.factory-agent-gemini":  "gemini",
 }
-# Draft-server ports per backend (must stay in sync with plists)
+# Union used by _launchd_status filtering
+RUNNER_SERVICES: dict[str, str] = {
+    PRIMARY_RUNNER_LABEL: "primary",
+    **OPTIONAL_RUNNER_SERVICES,
+}
+# Draft-server ports per backend (must stay in sync with plists / draft_server)
 RUNNER_PORTS: dict[str, int] = {
     "claude":  8102,
-    "cursor":  8101,
-    "codex":   8103,
-    "gemini":  8104,
+    "cursor":  8103,
+    "codex":   8104,
+    "gemini":  8105,
+    "primary": 8101,
 }
 
 NTFY_SERVER = os.getenv("NTFY_SERVER", "https://ntfy.sh")
@@ -242,21 +254,71 @@ def _reload_service(label: str) -> bool:
 
 async def check_local_runners() -> None:
     statuses = _launchd_status()
-    for label, backend in RUNNER_SERVICES.items():
+
+    # ── Primary runner (required) ─────────────────────────────────────────────
+    primary = statuses.get(PRIMARY_RUNNER_LABEL)
+    if primary is None:
+        act_key = f"runner-missing:{PRIMARY_RUNNER_LABEL}"
+        if act_key not in _acted:
+            plist = Path(f"~/Library/LaunchAgents/{PRIMARY_RUNNER_LABEL}.plist").expanduser()
+            if not plist.exists():
+                _acted.add(act_key)
+                _log("primary runner plist not installed — run make agent-install", "warn")
+                await _notify(
+                    "Primary runner not installed",
+                    f"{PRIMARY_RUNNER_LABEL}.plist missing — run make agent-install.",
+                    "high",
+                )
+            else:
+                _log("primary runner not loaded in launchd", "warn")
+                if DRY_RUN:
+                    _dry(f"would reload {PRIMARY_RUNNER_LABEL}")
+                else:
+                    ok = _reload_service(PRIMARY_RUNNER_LABEL)
+                    _log(
+                        f"reloaded {PRIMARY_RUNNER_LABEL}: {'ok' if ok else 'FAILED'}",
+                        "fix",
+                    )
+                    if ok:
+                        _acted.add(act_key)
+                    else:
+                        await _notify(
+                            "Primary runner won't start",
+                            f"launchctl load failed for {PRIMARY_RUNNER_LABEL}",
+                            "high",
+                        )
+    elif primary["pid"] is None and primary["exit"] != 0:
+        act_key = f"runner-crashed:{PRIMARY_RUNNER_LABEL}:{primary['exit']}"
+        if act_key not in _acted:
+            _log(f"primary runner crashed (exit={primary['exit']})", "warn")
+            if DRY_RUN:
+                _dry(f"would reload {PRIMARY_RUNNER_LABEL}")
+            else:
+                ok = _reload_service(PRIMARY_RUNNER_LABEL)
+                _log(
+                    f"reloaded {PRIMARY_RUNNER_LABEL}: {'ok' if ok else 'FAILED'}",
+                    "fix",
+                )
+                if ok:
+                    _acted.add(act_key)
+                else:
+                    await _notify(
+                        "Primary runner crash-looping",
+                        f"Exit code {primary['exit']}. Manual intervention needed.",
+                        "urgent",
+                    )
+
+    # ── Optional per-backend runners ──────────────────────────────────────────
+    # Unloaded + plist present = intentional single-runner / unused backend.
+    # Only heal crash-loops for backends the operator actually started.
+    for label, backend in OPTIONAL_RUNNER_SERVICES.items():
         info = statuses.get(label)
         if info is None:
-            # Service not loaded at all
-            act_key = f"runner-missing:{label}"
+            act_key = f"runner-optional-idle:{label}"
             if act_key in _acted:
                 continue
-
             plist = Path(f"~/Library/LaunchAgents/{label}.plist").expanduser()
             if not plist.exists():
-                # Never installed on this workstation, not a transient failure —
-                # retrying every cycle forever just re-sends the same alert with
-                # no chance of a different outcome (found live: gemini isn't set
-                # up on this machine and this fired every 5 minutes indefinitely).
-                # Notify once and stop, distinctly from an actual load failure.
                 _acted.add(act_key)
                 _log(
                     f"runner {backend} plist not installed on this workstation — skipping",
@@ -269,21 +331,13 @@ async def check_local_runners() -> None:
                     "is intentionally unused here.",
                     "default",
                 )
-                continue
-
-            _log(f"runner {backend} not loaded in launchd", "warn")
-            if DRY_RUN:
-                _dry(f"would reload {label}")
             else:
-                ok = _reload_service(label)
-                _log(f"reloaded {label}: {'ok' if ok else 'FAILED'}", "fix")
-                if ok:
-                    _acted.add(act_key)
-                else:
-                    await _notify(f"Runner {backend} won't start",
-                                  f"launchctl load failed for {label}", "high")
-        elif info["pid"] is None and info["exit"] != 0:
-            # Loaded but crashed
+                # Plist on disk but not loaded — leave alone (single-runner mode).
+                _acted.add(act_key)
+                _log(f"runner {backend} idle (not loaded) — ok for single-runner", "info")
+            continue
+
+        if info["pid"] is None and info["exit"] != 0:
             act_key = f"runner-crashed:{label}:{info['exit']}"
             if act_key in _acted:
                 continue
@@ -296,8 +350,11 @@ async def check_local_runners() -> None:
                 if ok:
                     _acted.add(act_key)
                 else:
-                    await _notify(f"Runner {backend} crash-looping",
-                                  f"Exit code {info['exit']}. Manual intervention needed.", "urgent")
+                    await _notify(
+                        f"Runner {backend} crash-looping",
+                        f"Exit code {info['exit']}. Manual intervention needed.",
+                        "urgent",
+                    )
 
 
 # ── Check 2: GitHub runner disk ───────────────────────────────────────────────

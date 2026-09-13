@@ -181,13 +181,28 @@ def test_missing_plist_notifies_once_not_every_cycle(monkeypatch):
     async def fake_notify(title, body, level="default"):
         notified.append((title, body, level))
 
-    monkeypatch.setattr(health_agent, "_launchd_status", lambda: {})
+    monkeypatch.setattr(
+        health_agent,
+        "_launchd_status",
+        lambda: {
+            # Primary healthy so this test only exercises optional missing-plist path
+            health_agent.PRIMARY_RUNNER_LABEL: {"pid": 1, "exit": 0},
+        },
+    )
     monkeypatch.setattr(health_agent, "_notify", fake_notify)
     monkeypatch.setattr(health_agent, "DRY_RUN", False)
     monkeypatch.setattr(
         health_agent,
-        "RUNNER_SERVICES",
+        "OPTIONAL_RUNNER_SERVICES",
         {"com.dentroio.factory-agent-gemini": "gemini"},
+    )
+    monkeypatch.setattr(
+        health_agent,
+        "RUNNER_SERVICES",
+        {
+            health_agent.PRIMARY_RUNNER_LABEL: "primary",
+            "com.dentroio.factory-agent-gemini": "gemini",
+        },
     )
     monkeypatch.setattr(Path, "exists", lambda self: False)
     health_agent._acted.clear()
