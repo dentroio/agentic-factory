@@ -76,7 +76,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | PM privileged-action gating | ✅ | Free-text `[PR:merge:]`/`[DISPATCH:]`/`[RESET:]` do not execute; `merge_pr` is P2/P3 only | WO-1054 |
 | Conflict advisor for dispatch order | ✅ | Service and file overlap detection + cycle-free `depends_on` edge generation | WO-1086 |
 | Durable execution history & audit trail | ✅ | Persists completed/failed/released runs, cycle times, failure categories, and metrics in SQLite (`/data/factory.db`) | WO-1088 |
-| Multi-repo autonomous orchestration | ✅ | Ingests projects from `factory-config.json` / `SECONDARY_REPOS`, parallel polling, repo-scoped conflict isolation, targeted dispatch | WO-1089 |
+| Multi-repo autonomous orchestration | ✅ | Ingests projects from `factory-config.json` / `SECONDARY_REPOS`, parallel polling, repo-scoped conflict isolation, targeted dispatch; polling loop crash fixed | WO-1089, WO-1098 |
 
 ## Dimension 4: Agent Runner (agent-runner, native launchd service — not Docker)
 
@@ -132,7 +132,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | One-click Docker remount after LOCAL_REPO_PATH change | ✅ | Host `/api/product/remount` + Get Started / Auth button | WO-1092 |
 | Engine CD workflow (`deploy.yml`) | 🟡 | Self-hosted `factory-deploy`; push-to-main gated by `FACTORY_CD_ENABLED` | WO-1094 |
 | Factory smoke (`make smoke`) | ✅ | status-site 200 + orchestrator up (200/401) | WO-1094 |
-| Settings → Deploy & Harness UI | 🟡 | Toggle CD + harness prefs without file edits | WO-1095 |
+| Settings → Deploy & Harness UI | ✅ | Toggle CD + harness prefs without file edits | WO-1095 |
 | Program BACKLOG checklist | ✅ | `docs/project_management/BACKLOG.md` ordered todos | WO-1095 |
 | In-app factory guide + refreshed `?` help | ✅ | Overview panel, `/guide`, HELP map for all major routes | WO-1096 |
 

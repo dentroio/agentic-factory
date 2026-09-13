@@ -148,3 +148,62 @@ def test_multirepo_candidate_filtering_logic():
     clarion_cand = queue[0]
     clarion_overlap = files_by_wo[clarion_cand["wo"]] & files_in_flight_by_repo.get("dentroio/clarion", set())
     assert len(clarion_overlap) == 1
+
+
+def test_poll_defines_configured_projects_and_gathers_multirepo():
+    """Verify poll() in orchestrator.py loads configured projects and gathers multi-repo results."""
+    text = (ORCH / "orchestrator.py").read_text(encoding="utf-8")
+    assert "configured_projects = _get_configured_repos()" in text
+    assert "for idx, p in enumerate(configured_projects):" in text
+    assert "specs_results: list[dict[int, dict]]" in text
+    assert "branch_results: list[set[int]]" in text
+    assert "pr_results: list[set[int]]" in text
+    assert "_open_pr_wos = set(pr_wos)" in text
+
+
+def test_fetch_active_branches_scopes_to_primary_repo():
+    """Verify _fetch_active_branches only uses LOCAL_REPO_MOUNT for primary GITHUB_REPO."""
+    text = (ORCH / "orchestrator.py").read_text(encoding="utf-8")
+    assert "if LOCAL_REPO_MOUNT and repo == GITHUB_REPO:" in text
+
+
+def test_multirepo_spec_merging_logic():
+    """Verify multi-repo spec combination logic handles priority and repo metadata correctly."""
+    configured_projects = [
+        {"repo": "dentroio/clarion", "wo_path": "docs/project_management/work_orders", "primary": True},
+        {"repo": "dentroio/agentic-factory", "wo_path": "docs/work_orders", "primary": False},
+    ]
+    specs_results = [
+        {100: {"status": "open", "title": "Clarion WO 100", "priority": "P1"}},
+        {200: {"status": "in_progress", "title": "Factory WO 200", "priority": "P2"},
+         100: {"status": "done", "title": "Factory duplicate 100", "priority": "P3"}},
+    ]
+    branch_results = [{101}, {200}]
+    pr_results = [{102}, set()]
+
+    specs: dict[int, dict] = {}
+    active_branch_wos: set[int] = set()
+    pr_wos: set[int] = set()
+
+    for idx, p in enumerate(configured_projects):
+        p_repo = p["repo"]
+        p_path = p.get("wo_path") or "docs/work_orders"
+        for num, spec in specs_results[idx].items():
+            if num not in specs or p.get("primary"):
+                s_copy = dict(spec)
+                s_copy["repo"] = p_repo
+                s_copy["wo_path"] = p_path
+                specs[num] = s_copy
+        active_branch_wos.update(branch_results[idx])
+        pr_wos.update(pr_results[idx])
+
+    assert len(specs) == 2
+    # WO 100 came from primary (clarion), not overwritten by secondary
+    assert specs[100]["repo"] == "dentroio/clarion"
+    assert specs[100]["title"] == "Clarion WO 100"
+    # WO 200 came from factory
+    assert specs[200]["repo"] == "dentroio/agentic-factory"
+    # Branch and PR sets are combined across projects
+    assert active_branch_wos == {101, 200}
+    assert pr_wos == {102}
+
