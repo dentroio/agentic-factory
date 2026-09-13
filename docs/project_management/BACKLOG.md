@@ -1,6 +1,6 @@
 # Factory Program Backlog — Operator & Engineering Todos
 
-_Last updated: 2026-09-12_
+_Last updated: 2026-09-13_
 
 Single checklist for closing the “UI-complete factory” loop. Check items off when
 merged or verified. Detailed specs live in `docs/work_orders/`.
@@ -8,6 +8,8 @@ merged or verified. Detailed specs live in `docs/work_orders/`.
 ---
 
 ## Now (in flight)
+
+- [ ] WO-1103 — Refuse non-product WOs on Clarion queue (`wo/1103-product-spec-queue-gate`) — **do not enqueue on Clarion**
 
 - [ ] WO-1099 — Settings UI: METRICS_ENDPOINT (`wo/1099-metrics-endpoint-settings`)
 

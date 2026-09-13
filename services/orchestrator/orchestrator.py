@@ -44,6 +44,11 @@ from wo_resolver import (
 import dispatch_control
 import occupancy
 import conflict_advisor
+from product_wo_gate import (
+    normalize_wo_id as _normalize_wo_id,
+    product_has_spec as _product_has_spec_fn,
+    wo_number as _wo_number_from_id,
+)
 from db import (
     connect as _db_connect,
     remember_runs as _db_remember_runs,
@@ -100,6 +105,54 @@ for _entry in _SECONDARY_REPOS_RAW:
         SECONDARY_REPOS.append((_entry, WO_PATH))
 
 FACTORY_CONFIG_PATH = Path(os.getenv("FACTORY_CONFIG_PATH", "/config/factory-config.json"))
+
+
+def _product_has_spec(wo_id: str) -> bool:
+    """True when this factory's product (GITHUB_REPO mount / primary cache) owns the WO."""
+    return _product_has_spec_fn(
+        wo_id,
+        local_repo=LOCAL_REPO_MOUNT,
+        wo_path=WO_PATH,
+        github_repo=GITHUB_REPO,
+        specs_cache=_specs_cache,
+    )
+
+
+def _refuse_non_product_wo(wo_id: str, *, action: str) -> None:
+    """HTTP 400/404 when a WO has no product spec (blocks engine WOs on Clarion)."""
+    wo_id = _normalize_wo_id(wo_id)
+    if _product_has_spec(wo_id):
+        return
+    detail = (
+        f"{wo_id} has no spec under {GITHUB_REPO}/{WO_PATH} — "
+        f"this factory only dispatches product Work Orders (not engine/agentic-factory WOs)."
+    )
+    print(f"[orchestrator] {action} refused — {detail}")
+    raise HTTPException(status_code=400 if action == "enqueue" else 404, detail=detail)
+
+
+def _purge_non_product_queue_entries() -> list[str]:
+    """Remove queue rows that lack a product spec. Returns purged WO ids."""
+    if not LOCAL_REPO_MOUNT and not _specs_cache:
+        return []
+    try:
+        with _db() as conn:
+            rows = conn.execute("SELECT wo FROM queue").fetchall()
+        purged: list[str] = []
+        for (wo_id,) in rows:
+            wid = _normalize_wo_id(str(wo_id))
+            if _product_has_spec(wid):
+                continue
+            with _db() as conn:
+                conn.execute("DELETE FROM queue WHERE wo = ?", (wid,))
+                conn.commit()
+            purged.append(wid)
+        if purged:
+            print(f"[orchestrator] purged non-product queue entries: {sorted(purged)}")
+        return purged
+    except Exception as e:
+        print(f"[orchestrator] non-product queue purge failed: {e}")
+        return []
 
 
 def _get_configured_repos() -> list[dict]:
@@ -1133,17 +1186,14 @@ def _migrate_plan_json_to_db() -> None:
 
     sentinel.touch()
 
-    # Startup orphan check: warn about DB entries with no matching spec file.
+    # Startup: purge queue rows that have no product spec (engine WOs, typos).
     if LOCAL_REPO_MOUNT:
-        wo_dir = Path(LOCAL_REPO_MOUNT) / WO_PATH
-        if wo_dir.is_dir():
-            spec_wos = {f"WO-{_parse_wo_number(f.name)}" for f in wo_dir.glob("WO-*.md") if _parse_wo_number(f.name)}
+        purged = _purge_non_product_queue_entries()
+        if not purged:
             try:
                 with _db() as conn:
-                    db_wos = {r[0] for r in conn.execute("SELECT wo FROM queue").fetchall()}
-                orphans = db_wos - spec_wos
-                if orphans:
-                    print(f"[orchestrator] WARNING: {len(orphans)} DB queue entries have no spec file: {sorted(orphans)}")
+                    n = conn.execute("SELECT COUNT(*) FROM queue").fetchone()[0]
+                print(f"[orchestrator] queue product-spec check ok — {n} entries")
             except Exception:
                 pass
 
@@ -1690,6 +1740,8 @@ async def get_next(domain: str = "", repo: str = ""):
             continue
         if _is_done(wo.get("status", "")):
             continue
+        if not _product_has_spec(wo_id):
+            continue
         cand_repo = wo.get("repo") or GITHUB_REPO
         if repo and cand_repo != repo:
             continue
@@ -1915,15 +1967,8 @@ async def claim_wo(req: ClaimRequest, request: Request):
     _refuse_if_paused()
     _enforce_agent_identity(request, req.agent)
     # Normalize WO ID: uppercase, ensure single "WO-" prefix
-    wo_id = req.wo.strip()
-    wo_upper = wo_id.upper()
-    if not wo_upper.startswith("WO-"):
-        wo_id = f"WO-{wo_id}"
-    else:
-        wo_id = wo_upper
-    # Collapse accidental double-prefix (e.g. "WO-WO-353" → "WO-353")
-    while wo_id.startswith("WO-WO-"):
-        wo_id = "WO-" + wo_id[6:]
+    wo_id = _normalize_wo_id(req.wo)
+    _refuse_non_product_wo(wo_id, action="claim")
     existing = _dispatch_state.get(wo_id, {})
     active_statuses = {"claimed", "in_progress", "awaiting_human", "awaiting_commit"}
 
@@ -3002,8 +3047,10 @@ async def get_queue_entry(wo_id: str):
 @app.post("/api/queue")
 async def add_to_queue(req: QueueEntryRequest):
     """Add a WO to the dispatch queue."""
+    wo_id = _normalize_wo_id(req.wo)
+    _refuse_non_product_wo(wo_id, action="enqueue")
     _db_upsert_queue_entry({
-        "wo": req.wo,
+        "wo": wo_id,
         "title": req.title,
         "phase": req.phase,
         "priority": req.priority,
@@ -3014,7 +3061,7 @@ async def add_to_queue(req: QueueEntryRequest):
         "notes": req.notes,
         "docs_required": req.docs_required,
     })
-    return {"ok": True, "wo": req.wo}
+    return {"ok": True, "wo": wo_id}
 
 
 @app.put("/api/queue/{wo_id}")
@@ -4557,6 +4604,9 @@ async def poll() -> None:
     dispatch_control.atomic_write_json(OUTPUT_PATH, _orchestrator_output)
     print(f"[orchestrator] {now_str} — {len(specs)} WOs, {len(dispatch_queue)} dispatchable, "
           f"{len(in_progress_wos)} in-progress, {len(pending_validations)} awaiting validation")
+
+    # Keep the Clarion (product) queue free of engine / foreign WO numbers.
+    _purge_non_product_queue_entries()
 
     # Stall detection — mirrors /api/next's own "not done, not held" filter over
     # plan.queue so this fires exactly when a runner polling /api/next would keep

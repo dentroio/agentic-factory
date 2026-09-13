@@ -77,6 +77,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Conflict advisor for dispatch order | ✅ | Service and file overlap detection + cycle-free `depends_on` edge generation | WO-1086 |
 | Durable execution history & audit trail | ✅ | Persists completed/failed/released runs, cycle times, failure categories, and metrics in SQLite (`/data/factory.db`) | WO-1088 |
 | Multi-repo autonomous orchestration | ✅ | Ingests projects from `factory-config.json` / `SECONDARY_REPOS`, parallel polling, repo-scoped conflict isolation, targeted dispatch; polling loop crash fixed | WO-1089, WO-1098 |
+| Product-spec queue gate | 🟡 | Refuse enqueue/claim for WOs without a product (`GITHUB_REPO`) spec; purge orphans on poll | WO-1103 |
 
 ## Dimension 4: Agent Runner (agent-runner, native launchd service — not Docker)
 
