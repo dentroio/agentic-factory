@@ -19,6 +19,7 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
+| WO-1099 | Settings UI: METRICS_ENDPOINT (observability) | P2 | 🟡 In Progress | — |
 | WO-1098 | Fix orchestrator multi-repo polling loop crash | P2 | ✅ Complete | 2026-09-12 |
 | WO-1097 | Docs enforcement hardening (mandate, parser, Doc Writer) | P2 | ✅ Complete | 2026-09-12 |
 | WO-1096 | In-app factory guide + inline ? help overhaul | P2 | ✅ Complete | 2026-09-11 |

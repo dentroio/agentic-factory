@@ -799,6 +799,8 @@
         sections: [
           { heading: 'Continuous deploy (CD)',
             body: '<p>Toggles the GitHub Actions variable <code>FACTORY_CD_ENABLED</code> on the <strong>engine</strong> repo. When true, merges to main can run the deploy workflow — only if a self-hosted runner with label <code>factory-deploy</code> is online.</p>' },
+          { heading: 'Observability',
+            body: '<p>Sets <code>METRICS_ENDPOINT</code> — a public JSON health/metrics URL polled every 15 minutes by <code>observability.yml</code>. Leave blank to clear. Localhost is not reachable from GitHub Actions.</p>' },
           { heading: 'Harness prefs',
             body: '<p>Tool policy (allowlist vs permissive modes), Gemini/Cursor flags, and optional spend budget write to <code>~/.config/factory-agent/prefs</code>. <strong>Restart the agent runner</strong> after saving so new claims use the prefs.</p>' },
           { heading: 'Tip',

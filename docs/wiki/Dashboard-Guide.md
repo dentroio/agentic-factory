@@ -90,6 +90,7 @@ Model changes apply on next use. Product repo and local path are managed under S
 
 - Toggle engine CD (`FACTORY_CD_ENABLED`) when a `factory-deploy` self-hosted runner exists  
 - See runner / label status  
+- Set `METRICS_ENDPOINT` (Observability) — public JSON health URL for `observability.yml`  
 - Edit harness prefs (tool policy, budget) → host prefs file; **restart the agent** after save  
 
 Details: [LLM Harness](LLM-Harness).

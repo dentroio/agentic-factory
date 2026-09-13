@@ -9,19 +9,19 @@ merged or verified. Detailed specs live in `docs/work_orders/`.
 
 ## Now (in flight)
 
-_None currently in flight._
+- [ ] WO-1099 — Settings UI: METRICS_ENDPOINT (`wo/1099-metrics-endpoint-settings`)
 
 ---
 
-## Next (after 1094–1098)
+## Next (after 1094–1099)
 
 | # | Item | Owner | Notes |
 |---|------|-------|-------|
-| 1 | Enable CD in UI once runner is online | Operator | Settings → Deploy & Harness → toggle |
+| 1 | Enable CD in UI once runner is online | Operator | Settings → Deploy & Harness → toggle (needs `factory-deploy` runner) |
 | 2 | Optional weekly spend budget | Operator | Same page → `USAGE_BUDGET_USD_WEEK` |
-| 3 | Set `METRICS_ENDPOINT` | Operator | Still GitHub Actions variable (follow-up UI if needed) |
+| 3 | Set `METRICS_ENDPOINT` | Operator | ✅ UI in WO-1099 — save URL under Deploy & Harness → Observability |
 | 4 | Clarion DOC_MAP `new_ui_page` → wiki/docs + inAppHelpMap | Product | ✅ Merged in dentroio/clarion#842 |
-| 5 | Oryntra deep integration | Eng | WO-1048 / WO-1049 |
+| 5 | Oryntra deep integration | Eng | WO-1048 / WO-1049 — other agent |
 | 6 | Exact LLM billing (not estimates) | Eng | Needs CLI/API usage hooks |
 
 ---

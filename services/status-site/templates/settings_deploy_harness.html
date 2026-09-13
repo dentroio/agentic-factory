@@ -106,6 +106,39 @@
   </div>
 </section>
 
+{# ── Observability ──────────────────────────────────────────────────── #}
+<section class="glass-panel mb-6 overflow-hidden">
+  <div class="px-5 py-4 border-b border-slate-800/60">
+    <h2 class="text-sm font-bold text-slate-100">Observability</h2>
+    <p class="text-xs text-slate-500 mt-1">
+      Sets Actions variable <code class="text-slate-400">METRICS_ENDPOINT</code> so
+      <code class="text-slate-400">observability.yml</code> can poll health every 15 minutes.
+    </p>
+  </div>
+  <form method="post" action="/settings/deploy-harness/metrics" class="px-5 py-5 space-y-4">
+    <div>
+      <label class="block text-xs font-medium text-slate-400 mb-1.5">Metrics / health endpoint URL</label>
+      <input type="url" name="metrics_endpoint" value="{{ metrics_endpoint }}"
+             class="w-full max-w-2xl px-3 py-2 rounded-lg bg-slate-900/80 border border-slate-700 text-sm text-slate-100 font-mono"
+             placeholder="https://api.example.com/health">
+      <p class="text-[11px] text-slate-600 mt-1">
+        Must return JSON and be reachable from GitHub-hosted runners
+        (<code class="text-slate-400">localhost</code> will not work). Leave blank and save to clear the variable.
+      </p>
+    </div>
+    <div class="flex items-center gap-3 text-xs">
+      {% if metrics_endpoint %}
+      <span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono">configured</span>
+      {% else %}
+      <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono">not set</span>
+      {% endif %}
+    </div>
+    <button type="submit" class="px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition-colors">
+      Save observability settings
+    </button>
+  </form>
+</section>
+
 {# ── LLM Harness ───────────────────────────────────────────────────── #}
 <section class="glass-panel overflow-hidden">
   <div class="px-5 py-4 border-b border-slate-800/60">

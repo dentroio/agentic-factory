@@ -132,7 +132,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | One-click Docker remount after LOCAL_REPO_PATH change | ✅ | Host `/api/product/remount` + Get Started / Auth button | WO-1092 |
 | Engine CD workflow (`deploy.yml`) | 🟡 | Self-hosted `factory-deploy`; push-to-main gated by `FACTORY_CD_ENABLED` | WO-1094 |
 | Factory smoke (`make smoke`) | ✅ | status-site 200 + orchestrator up (200/401) | WO-1094 |
-| Settings → Deploy & Harness UI | ✅ | Toggle CD + harness prefs without file edits | WO-1095 |
+| Settings → Deploy & Harness UI | ✅ | Toggle CD + harness prefs + METRICS_ENDPOINT without file edits | WO-1095, WO-1099 |
 | Program BACKLOG checklist | ✅ | `docs/project_management/BACKLOG.md` ordered todos | WO-1095 |
 | In-app factory guide + refreshed `?` help | ✅ | Overview panel, `/guide`, HELP map for all major routes | WO-1096 |
 
@@ -163,6 +163,8 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
+| 2026-09-12 | Deploy & Harness: METRICS_ENDPOINT observability settings | WO-1099 |
+| 2026-09-12 | Multi-repo polling loop crash fix | WO-1098 |
 | 2026-09-11 | Docs enforcement: mandate in coding prompt, None/N/A parse skip, Doc Writer empty-response harden | WO-1097 |
 | 2026-09-11 | Factory engine CD + Deploy & Harness UI + factory guide | WO-1094, WO-1095, WO-1096 |
 | 2026-09-07 | LLM harness: tool policy, memory bridge, cost estimates, review untrusted framing | WO-1093 |

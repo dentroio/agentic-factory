@@ -14,6 +14,10 @@ import health_agent as ha  # noqa: E402
 
 def test_agent_meta_draft_ports_match_health_agent():
     for name, expected in ha.RUNNER_PORTS.items():
+        if name == "primary":
+            # Primary factory-agent uses default DRAFT_PORT 8101 (no _AGENT_META entry).
+            assert expected == 8101
+            continue
         meta = ds._AGENT_META[name]
         port = int((meta.get("extra_env") or {}).get("DRAFT_PORT", "8101"))
         assert port == expected, f"{name}: meta port {port} != health_agent {expected}"
