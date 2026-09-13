@@ -90,6 +90,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Quality gate: JS/TS security scan | ✅ | eslint-plugin-security or regex fallback | fix/factory-quality-alignment |
 | Semgrep threshold: ERROR only (not WARNING) | ✅ | Prevents false-positive blocks | fix/factory-quality-alignment |
 | Multi-agent peer review chain | ✅ | 4 reviewers (security, architecture, correctness, performance) for all non-P3 WOs | WO-1013 |
+| Documentation completeness enforcement | ✅ | `docs_required` parse skips None/N/A; coding **DOCUMENTATION MANDATE**; 5th reviewer when non-empty; Doc Writer empty-response resilient | WO-1023, WO-1097 |
 | Priority-tiered review chain | ✅ | P3=none, P2/P1/P0=all 4 reviewers | WO-1013, fix/ |
 | Reviewer backends: OpenAI API for Codex `ask()` | ✅ | No longer calls `codex exec` during review | fix/factory-quality-alignment |
 | Reviewer backends: fallback chain for Cursor `ask()` | ✅ | OpenAI API → Claude CLI; never calls Cursor CLI | fix/factory-quality-alignment |
@@ -162,7 +163,8 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
-| 2026-09-07 | Factory engine CD workflow + smoke (gated) | WO-1094 |
+| 2026-09-11 | Docs enforcement: mandate in coding prompt, None/N/A parse skip, Doc Writer empty-response harden | WO-1097 |
+| 2026-09-11 | Factory engine CD + Deploy & Harness UI + factory guide | WO-1094, WO-1095, WO-1096 |
 | 2026-09-07 | LLM harness: tool policy, memory bridge, cost estimates, review untrusted framing | WO-1093 |
 | 2026-09-06 | Unique draft ports + one-click product remount | WO-1092 |
 | 2026-08-30 | Multi-repo autonomous orchestrator dispatch | WO-1089 |

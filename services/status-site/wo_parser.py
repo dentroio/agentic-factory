@@ -2,6 +2,26 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+# Checklist lines that mean "no documentation required" — not enforceable items.
+_DOCS_REQUIRED_NONE = frozenset(
+    {
+        "none",
+        "n/a",
+        "na",
+        "nil",
+        "no",
+        "-",
+        "nothing",
+        "not applicable",
+        "no documentation required",
+        "no docs required",
+    }
+)
+
+_DOCS_REQUIRED_LINE = re.compile(
+    r"^[-*]\s*(?:\[([ xX])\]\s*)?(.+?)\s*$"
+)
+
 
 @dataclass
 class WOSpec:
@@ -222,3 +242,40 @@ def wos_completed_by_merged_pr(pr: dict) -> list[int]:
     ):
         nums.update(int(x) for x in re.findall(r"(?i)\bWO-(\d+)\b", title))
     return sorted(nums)
+
+
+def parse_docs_required(markdown: str) -> list[dict]:
+    """Extract ``## Documentation Required`` checklist items from a WO spec.
+
+    Returns a list of ``{item, completed}`` dicts. Sentinel values such as
+    ``None`` / ``N/A`` are skipped so they do not falsely trip the
+    documentation reviewer.
+    """
+    m = re.search(
+        r"^## Documentation Required\s*\n(.*?)(?=\n^##|\Z)",
+        markdown or "",
+        re.MULTILINE | re.DOTALL,
+    )
+    if not m:
+        return []
+    items: list[dict] = []
+    for line in m.group(1).splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        match = _DOCS_REQUIRED_LINE.match(raw)
+        if not match:
+            # Non-bullet prose in the section — ignore
+            continue
+        checkbox, text = match.group(1), match.group(2).strip()
+        # Strip trailing markdown emphasis leftovers
+        text = text.strip("*_`")
+        if not text or text.lower() in _DOCS_REQUIRED_NONE:
+            continue
+        items.append(
+            {
+                "item": text,
+                "completed": bool(checkbox and checkbox.lower() == "x"),
+            }
+        )
+    return items

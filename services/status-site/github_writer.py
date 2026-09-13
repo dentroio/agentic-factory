@@ -185,19 +185,9 @@ def _write_wo_local(wo_data: dict, wo_path: str, plan_path: str) -> dict:
 
 def _parse_docs_required(markdown: str) -> list[dict]:
     """Extract Documentation Required checklist items from a WO spec."""
-    import re as _re
-    m = _re.search(
-        r"^## Documentation Required\s*\n(.*?)(?=\n^##|\Z)",
-        markdown, _re.MULTILINE | _re.DOTALL,
-    )
-    if not m:
-        return []
-    items = []
-    for line in m.group(1).splitlines():
-        clean = line.strip().lstrip("-").lstrip("[ ]").lstrip("- [ ]").strip()
-        if clean:
-            items.append({"item": clean, "completed": False})
-    return items
+    from wo_parser import parse_docs_required
+
+    return parse_docs_required(markdown)
 
 
 async def _register_in_queue(wo_data: dict) -> None:

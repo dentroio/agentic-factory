@@ -264,6 +264,74 @@ without updating the lock file — `npm ci` in Docker builds will fail otherwise
 UNTRUSTED_BEGIN = "<<<UNTRUSTED_FACTORY_DATA>>>"
 UNTRUSTED_END = "<<<END_UNTRUSTED_FACTORY_DATA>>>"
 
+# Checklist lines that mean "no documentation required" — not enforceable items.
+_DOCS_REQUIRED_NONE = frozenset(
+    {
+        "none",
+        "n/a",
+        "na",
+        "nil",
+        "no",
+        "-",
+        "nothing",
+        "not applicable",
+        "no documentation required",
+        "no docs required",
+    }
+)
+
+_DOCS_REQUIRED_LINE = re.compile(r"^[-*]\s*(?:\[([ xX])\]\s*)?(.+?)\s*$")
+
+
+def parse_docs_required(markdown: str) -> list[dict]:
+    """Extract ``## Documentation Required`` checklist items from a WO spec.
+
+    Kept in sync with ``services/status-site/wo_parser.parse_docs_required``.
+    Sentinel values such as ``None`` / ``N/A`` are skipped.
+    """
+    m = re.search(
+        r"^## Documentation Required\s*\n(.*?)(?=\n^##|\Z)",
+        markdown or "",
+        re.MULTILINE | re.DOTALL,
+    )
+    if not m:
+        return []
+    items: list[dict] = []
+    for line in m.group(1).splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        match = _DOCS_REQUIRED_LINE.match(raw)
+        if not match:
+            continue
+        checkbox, text = match.group(1), match.group(2).strip()
+        text = text.strip("*_`")
+        if not text or text.lower() in _DOCS_REQUIRED_NONE:
+            continue
+        items.append(
+            {
+                "item": text,
+                "completed": bool(checkbox and checkbox.lower() == "x"),
+            }
+        )
+    return items
+
+
+def format_documentation_mandate(docs_required: list[dict]) -> str:
+    """Render the DOCUMENTATION MANDATE block, or empty string if none."""
+    pending = [d for d in docs_required if not d.get("completed")]
+    if not pending:
+        return ""
+    bullets = "\n".join(f"- {d['item']}" for d in pending)
+    return (
+        "## DOCUMENTATION MANDATE\n\n"
+        "The following documentation must be updated as part of this WO:\n"
+        f"{bullets}\n\n"
+        "Do not call POST /api/validate until each item above is addressed in the diff "
+        "(wiki pages, in-app help map, README, etc. as listed). "
+        "The documentation reviewer will block the PR if any item is missing."
+    )
+
 
 def wrap_untrusted(label: str, text: str) -> str:
     """Frame untrusted content as data so it cannot close the wrapper early.
@@ -345,6 +413,9 @@ def build_prompt(wo_spec: dict, wo_markdown: str, worktree_path: str, agent_name
     patterns = load_patterns_text(worktree_path, profile) or _GENERIC_PATTERNS
     product_label = GITHUB_REPO or profile.display_name
 
+    docs_mandate = format_documentation_mandate(parse_docs_required(wo_markdown))
+    docs_block = f"{docs_mandate}\n\n---\n\n" if docs_mandate else ""
+
     return f"""You are an AI agent working on product `{product_label}` via the AI Factory engine.
 
 {retry_block}## Your Assignment
@@ -358,7 +429,7 @@ Product: {product_label}
 
 ---
 
-{prompt_policy_section()}
+{docs_block}{prompt_policy_section()}
 
 ---
 

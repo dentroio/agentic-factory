@@ -166,7 +166,16 @@ def call_claude(system: str, user: str) -> str:
         system=system,
         messages=[{"role": "user", "content": user}],
     )
-    return next(b.text for b in msg.content if b.type == "text")
+    for block in msg.content or []:
+        if getattr(block, "type", None) == "text" and getattr(block, "text", None):
+            return block.text
+    # Empty / tool-only responses used to raise StopIteration and fail the job.
+    logger.warning(
+        "Claude returned no text content (stop_reason=%s, blocks=%s) — treating as empty",
+        getattr(msg, "stop_reason", None),
+        [getattr(b, "type", type(b).__name__) for b in (msg.content or [])],
+    )
+    return ""
 
 
 _TODAY = date.today().isoformat()
@@ -241,7 +250,11 @@ def update_wiki_page(
 Return the complete updated page."""
 
     logger.info("Calling Claude for %s ...", rel)
-    updated = strip_code_fence(call_claude(system_prompt, user_msg))
+    raw = call_claude(system_prompt, user_msg)
+    if not (raw or "").strip():
+        logger.warning("Claude returned empty content for %s — skipping", rel)
+        return None
+    updated = strip_code_fence(raw)
 
     # Validate the response has frontmatter
     if not updated.startswith("---"):
