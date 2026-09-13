@@ -9,11 +9,11 @@ merged or verified. Detailed specs live in `docs/work_orders/`.
 
 ## Now (in flight)
 
-- [ ] WO-1098 — Fix orchestrator multi-repo polling loop crash (`wo/1098-orchestrator-multi-repo-poll-fix`)
+_None currently in flight._
 
 ---
 
-## Next (after 1094–1097)
+## Next (after 1094–1098)
 
 | # | Item | Owner | Notes |
 |---|------|-------|-------|
@@ -30,6 +30,7 @@ merged or verified. Detailed specs live in `docs/work_orders/`.
 
 | WO | Title | Merged |
 |----|-------|--------|
+| WO-1098 | Multi-repo polling loop crash fix | 2026-09-12 (#336) |
 | WO-1097 | Docs enforcement hardening | 2026-09-12 (#333) |
 | WO-1094/1095/1096 | Engine CD + Deploy & Harness + factory guide | 2026-09-11 (#327) |
 | WO-1093 | LLM harness hardening | 2026-09-07 |
