@@ -9,7 +9,7 @@ merged or verified. Detailed specs live in `docs/work_orders/`.
 
 ## Now (in flight)
 
-_None currently in flight._
+- [ ] WO-1098 — Fix orchestrator multi-repo polling loop crash (`wo/1098-orchestrator-multi-repo-poll-fix`)
 
 ---
 

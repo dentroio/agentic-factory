@@ -3626,8 +3626,8 @@ async def _fetch_wo_specs(client: httpx.AsyncClient, repo: str = GITHUB_REPO, wo
 
 
 async def _fetch_active_branches(client: httpx.AsyncClient, repo: str = GITHUB_REPO) -> set[int]:
-    # Read from local git refs — no API call needed
-    if LOCAL_REPO_MOUNT:
+    # Read from local git refs — no API call needed (primary repo only)
+    if LOCAL_REPO_MOUNT and repo == GITHUB_REPO:
         try:
             proc = await asyncio.create_subprocess_exec(
                 "git", "branch", "-r", "--list", "origin/wo/*",
@@ -3683,18 +3683,15 @@ async def _fetch_open_pr_wos(client: httpx.AsyncClient, repo: str = GITHUB_REPO)
         # matches first. Missing this let the second WO get redispatched to a
         # fresh agent while its real PR was already open, awaiting review.
         wos: set[int] = set()
-        urls: dict[int, str] = {}
         for p in prs:
             url = p.get("html_url") or ""
             for n in resolve_all_wos_for_pr(p):
                 wos.add(n)
-                if url and n not in urls:
-                    urls[n] = url
-        _open_pr_wos = wos
-        _open_pr_urls = urls
+                if url:
+                    _open_pr_urls[n] = url
         return wos
     except Exception:
-        return set(_open_pr_wos)
+        return set()
 
 
 async def _fetch_dependabot_prs(client: httpx.AsyncClient) -> list[dict]:
@@ -3797,11 +3794,11 @@ async def _fetch_all_open_prs(client: httpx.AsyncClient) -> list[dict]:
         return []
 
 
-async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient) -> int:
+async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient, repo: str = GITHUB_REPO) -> int:
     from datetime import timedelta
     since = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
-        prs = await _cached_get(client, f"/repos/{GITHUB_REPO}/pulls",
+        prs = await _cached_get(client, f"/repos/{repo}/pulls",
                                  {"state": "closed", "per_page": 50, "sort": "updated", "direction": "desc"},
                                  ttl=600)
         return sum(1 for p in prs if p.get("merged_at") and p["merged_at"] >= since)
@@ -3809,7 +3806,7 @@ async def _fetch_merged_wo_count_this_week(client: httpx.AsyncClient) -> int:
         return 0
 
 
-async def _fetch_recently_merged_wo_prs(client: httpx.AsyncClient) -> dict[int, str]:
+async def _fetch_recently_merged_wo_prs(client: httpx.AsyncClient, repo: str = GITHUB_REPO) -> dict[int, str]:
     """Return {wo_number: pr_html_url} for WO PRs merged in the last 90 days.
 
     Uses wos_completed_by_merged_pr so a docs filing PR on a wo/NNN- branch
@@ -3818,7 +3815,7 @@ async def _fetch_recently_merged_wo_prs(client: httpx.AsyncClient) -> dict[int, 
     """
     since = (datetime.now(UTC) - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
-        prs = await _cached_get(client, f"/repos/{GITHUB_REPO}/pulls",
+        prs = await _cached_get(client, f"/repos/{repo}/pulls",
                                  {"state": "closed", "per_page": 100, "sort": "updated", "direction": "desc"},
                                  ttl=300)
         result: dict[int, str] = {}
@@ -4053,38 +4050,56 @@ async def poll() -> None:
 
     await _sync_local_repo()  # keep local WO specs + PLAN.json fresh on every cycle
 
-    async with httpx.AsyncClient(timeout=20) as client:
-        # Primary repo fetches (always)
-        primary_specs_task = _fetch_wo_specs(client, GITHUB_REPO, WO_PATH)
-        active_branches_task = _fetch_active_branches(client, GITHUB_REPO)
-        pr_wos_task = _fetch_open_pr_wos(client, GITHUB_REPO)
-        merged_task = _fetch_merged_wo_count_this_week(client)
-        merged_wo_prs_task = _fetch_recently_merged_wo_prs(client)
+    configured_projects = _get_configured_repos()
 
-        # Secondary repo fetches (parallel)
-        secondary_tasks = [
-            _fetch_wo_specs(client, repo, wo_path)
-            for repo, wo_path in SECONDARY_REPOS
+    async with httpx.AsyncClient(timeout=20) as client:
+        # Multi-project spec, branch, PR, and merged fetches in parallel
+        specs_tasks = [
+            _fetch_wo_specs(client, p["repo"], p.get("wo_path") or WO_PATH)
+            for p in configured_projects
+        ]
+        branch_tasks = [
+            _fetch_active_branches(client, p["repo"])
+            for p in configured_projects
+        ]
+        pr_tasks = [
+            _fetch_open_pr_wos(client, p["repo"])
+            for p in configured_projects
+        ]
+        merged_count_tasks = [
+            _fetch_merged_wo_count_this_week(client, p["repo"])
+            for p in configured_projects
+        ]
+        recently_merged_tasks = [
+            _fetch_recently_merged_wo_prs(client, p["repo"])
+            for p in configured_projects
         ]
 
-        results = await asyncio.gather(
-            primary_specs_task,
-            active_branches_task,
-            pr_wos_task,
-            merged_task,
-            merged_wo_prs_task,
-            *secondary_tasks,
+        n_proj = len(configured_projects)
+        all_results = await asyncio.gather(
+            *specs_tasks,
+            *branch_tasks,
+            *pr_tasks,
+            *merged_count_tasks,
+            *recently_merged_tasks,
         )
 
-    primary_specs: dict[int, dict] = results[0]
-    active_branch_wos: set[int] = results[1]
-    pr_wos: set[int] = results[2]
-    merged_this_week: int = results[3]
-    merged_wo_prs: dict[int, str] = results[4]  # {wo_num: pr_html_url}
+    specs_results: list[dict[int, dict]] = list(all_results[:n_proj])
+    branch_results: list[set[int]] = list(all_results[n_proj : 2 * n_proj])
+    pr_results: list[set[int]] = list(all_results[2 * n_proj : 3 * n_proj])
+    merged_count_results: list[int] = list(all_results[3 * n_proj : 4 * n_proj])
+    recently_merged_results: list[dict[int, str]] = list(all_results[4 * n_proj : 5 * n_proj])
+
+    merged_this_week: int = sum(merged_count_results)
+    merged_wo_prs: dict[int, str] = {}
+    for r in recently_merged_results:
+        merged_wo_prs.update(r)
+
+    primary_specs: dict[int, dict] = specs_results[0] if specs_results else {}
 
     # If GitHub returned no specs (rate-limited or network error), preserve the last-good
     # output so the queue doesn't go empty and running WOs keep their position.
-    if not primary_specs and _prev_output:
+    if not any(specs_results) and _prev_output:
         print("[orchestrator] poll: GitHub returned empty specs — keeping last-good output (rate limit?)")
         _orchestrator_output = {**_prev_output, "generated_at": now_str, "stale": True}
         return
@@ -4289,19 +4304,20 @@ async def poll() -> None:
     # Spec files that already say Done/Deferred/Superseded must close a
     # leftover in_progress claim — otherwise dashboard apply_live_status
     # treats dispatch as live and refuses to honor the merged PR.
-    for num, spec in primary_specs.items():
-        if not _is_done(spec.get("status", "")):
-            continue
-        wo_id = f"WO-{num}"
-        entry = _dispatch_state.get(wo_id)
-        if entry is None or entry.get("status") in ("complete", "rejected"):
-            continue
-        entry["status"] = "complete"
-        entry["completed_at"] = _utcnow()
-        entry["step"] = entry.get("step") or "spec marked done"
-        _dispatch_state[wo_id] = entry
-        _db_append_step(wo_id, "complete", step="spec marked done (auto-reconcile)")
-        reconciled += 1
+    for s_dict in specs_results:
+        for num, spec in s_dict.items():
+            if not _is_done(spec.get("status", "")):
+                continue
+            wo_id = f"WO-{num}"
+            entry = _dispatch_state.get(wo_id)
+            if entry is None or entry.get("status") in ("complete", "rejected"):
+                continue
+            entry["status"] = "complete"
+            entry["completed_at"] = _utcnow()
+            entry["step"] = entry.get("step") or "spec marked done"
+            _dispatch_state[wo_id] = entry
+            _db_append_step(wo_id, "complete", step="spec marked done (auto-reconcile)")
+            reconciled += 1
     if reconciled:
         _save_dispatch()
         print(f"[orchestrator] poll: auto-completed {reconciled} WO(s) from merged PRs")
@@ -4323,7 +4339,8 @@ async def poll() -> None:
         active_branch_wos.update(branch_results[idx])
         pr_wos.update(pr_results[idx])
 
-    global _specs_cache
+    global _open_pr_wos, _specs_cache
+    _open_pr_wos = set(pr_wos)
     _specs_cache = dict(specs)  # snapshot for PM chat context injection
 
     # Sets for board summary use all specs
@@ -4342,8 +4359,7 @@ async def poll() -> None:
 
     # Build plan dict from DB (queue / phases / milestones)
     plan_dict = _db_build_plan_dict()
-    wo_statuses = _build_wo_statuses(primary_specs, active_branch_wos, pr_wos,
-                                     {n for n in done_wos if n in primary_specs})
+    wo_statuses = _build_wo_statuses(specs, active_branch_wos, pr_wos, done_wos)
     plan_next = next_wo(plan_dict, wo_statuses) if plan_dict.get("queue") else None
     plan_queue_sorted = sorted_queue(plan_dict, wo_statuses)
 
@@ -4438,7 +4454,7 @@ async def poll() -> None:
             wo_num = int(wo_id.replace("WO-", ""))
         except ValueError:
             continue
-        spec = primary_specs.get(wo_num, {})
+        spec = specs.get(wo_num, {})
         priority = spec.get("priority", "P2")
         threshold = STUCK_THRESHOLDS.get(priority, timedelta(hours=24))
         idle = now_dt - last_seen_dt
