@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-09-12
+last_verified: 2026-09-13
 covers_wos:
   - WO-1008
   - WO-1052
