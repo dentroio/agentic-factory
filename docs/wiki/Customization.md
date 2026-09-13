@@ -1,13 +1,14 @@
 ---
 title: "Customization"
 description: "Adapting the factory to your project: AI review rules, observability thresholds, CI template, WO templates, documentation enforcement, agent process docs, and agent memory"
-last_verified: 2026-08-31
+last_verified: 2026-09-07
 covers_wos:
   - WO-1014
   - WO-1021
   - WO-1023
   - WO-1032
   - WO-1040
+  - WO-1097
 doc_owner: factory-team
 ---
 
@@ -88,12 +89,21 @@ If you're adding WOs to a **product** repo, start from [docs/adopters/WO_SPEC_FO
 
 Documentation debt used to accumulate silently — code could merge without any corresponding doc update. The factory now enforces documentation completeness as part of the review chain:
 
-- A WO spec can include a `## Documentation Required` checklist. When the WO is created, this checklist is parsed and stored as JSON (`docs_required`) on the queue record.
+- A WO spec can include a `## Documentation Required` checklist. When the WO is created, this checklist is parsed and stored as JSON (`docs_required`) on the queue record. Sentinel values (`None`, `N/A`, `not applicable`) are ignored so they do not trip the reviewer.
 - The coding agent's prompt includes a **documentation mandate**: it is told explicitly which doc files must be updated, and is instructed not to request human validation until each item is checked off.
 - A fifth reviewer role, **documentation**, runs after the security/architecture/correctness/performance reviewers on the PR diff. It checks whether each `docs_required` item is meaningfully addressed in the diff — not code quality, just completeness.
 - Unfulfilled items come back as `HIGH` severity findings, which block the chain the same way other blocking findings do. If `docs_required` is empty, the documentation reviewer step is skipped entirely.
 
-To use this, add a `## Documentation Required` section to your WO specs listing the specific files/sections that must change (e.g. README env var tables, architecture diagrams, in-app help copy).
+To use this, add a `## Documentation Required` section to your WO specs listing the specific files/sections that must change (e.g. README env var tables, architecture diagrams, wiki pages, in-app help).
+
+### Product `DOC_MAP.json`
+
+If the product checkout has `docs/factory/DOC_MAP.json`, the PM draft prompt injects its triggers so new WOs get a `Documentation Required` section automatically. Keep that map pointed at **real** paths:
+
+- Operator wiki under `wiki/docs/` (mirrored to `frontend/public/help/` via `npm run sync:help` / prebuild when the product uses that layout)
+- Route → help mapping (e.g. Clarion’s `frontend/src/lib/inAppHelpMap.ts`) so new UI pages resolve in the Docs panel
+
+The optional [Doc Writer Agent](Doc-Writer-Agent) refreshes stale wiki pages and re-syncs the in-app help mirror on a schedule.
 
 ## Agent process docs
 

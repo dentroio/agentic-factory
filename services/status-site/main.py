@@ -2083,8 +2083,9 @@ async def settings_deploy_harness_cd(request: Request):
             if r.status_code >= 400:
                 detail = r.text
                 try:
-                    detail = r.json().get("detail") or r.json().get("error") or detail
-                except Exception:
+                    data = r.json()
+                    detail = data.get("detail") or data.get("error") or detail
+                except (ValueError, TypeError, KeyError):
                     pass
                 return RedirectResponse(
                     url=f"/settings/deploy-harness?error={quote(str(detail)[:200])}",
@@ -2120,8 +2121,9 @@ async def settings_deploy_harness_prefs(request: Request):
             if r.status_code >= 400:
                 detail = r.text
                 try:
-                    detail = r.json().get("error") or r.json().get("detail") or detail
-                except Exception:
+                    data = r.json()
+                    detail = data.get("error") or data.get("detail") or detail
+                except (ValueError, TypeError, KeyError):
                     pass
                 return RedirectResponse(
                     url=f"/settings/deploy-harness?error={quote(str(detail)[:200])}",
