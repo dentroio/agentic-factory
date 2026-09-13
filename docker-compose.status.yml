@@ -30,7 +30,7 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_REPO=${GITHUB_REPO}
       - SITE_TITLE=${SITE_TITLE:-AI Factory}
-      - REFRESH_SECONDS=${REFRESH_SECONDS:-60}
+      - REFRESH_SECONDS=${REFRESH_SECONDS:-180}
       - WO_PATH=${WO_PATH:-docs/project_management/work_orders}
       - RUNS_PATH=${RUNS_PATH:-docs/factory/runs}
       - PLAN_PATH=${PLAN_PATH:-docs/factory/PLAN.json}

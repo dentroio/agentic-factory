@@ -39,7 +39,7 @@ templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 SITE_TITLE = os.getenv("SITE_TITLE", "AI Factory Status")
-REFRESH_SECONDS = int(os.getenv("REFRESH_SECONDS", "120"))
+REFRESH_SECONDS = int(os.getenv("REFRESH_SECONDS", "180"))
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 WATCHDOG_PATH = Path(os.getenv("WATCHDOG_PATH", "/watchdog/watchdog.json"))
@@ -53,6 +53,12 @@ RUNS_PATH_LOCAL = os.getenv("RUNS_PATH", "docs/factory/runs")
 LOG_PATH = os.getenv("LOG_PATH", "/var/log/factory-agent/out.log")
 FACTORY_CONFIG_PATH = Path(os.getenv("FACTORY_CONFIG_PATH", "/config/factory-config.json"))
 LOCAL_REPO_MOUNT = os.getenv("LOCAL_REPO_MOUNT", "")
+# Cap Contents API fan-out when the mount's blob SHAs drift from default branch
+# (common when LOCAL_REPO_PATH sits on a feature branch). Without this, one
+# board refresh can request hundreds of files and trip the rate limit.
+MAX_WO_CONTENT_FETCH = int(os.getenv("MAX_WO_CONTENT_FETCH", "15"))
+# Engineering /ci page only — never fan out checks on Overview/PM refresh.
+MAX_PR_CHECK_FETCH = int(os.getenv("MAX_PR_CHECK_FETCH", "8"))
 
 def _orch_headers() -> dict:
     """Authorization header for orchestrator write requests."""
@@ -235,16 +241,33 @@ async def _load_primary_wos() -> dict[int, WOSpec] | None:
             f for f in listing
             if f["name"] not in mounted or _git_blob_sha1(mounted[f["name"]]) != f.get("sha")
         ]
+        # Prefer mount content when many files drift — one refresh must not
+        # download the entire WO tree from the Contents API.
+        missing_from_mount = [f for f in stale if f["name"] not in mounted]
+        sha_drift = [f for f in stale if f["name"] in mounted]
+        to_fetch = list(missing_from_mount)
+        used_mount_for_drift = False
+        if len(sha_drift) <= MAX_WO_CONTENT_FETCH:
+            to_fetch.extend(sha_drift)
+        elif sha_drift:
+            used_mount_for_drift = True
+            warnings.append(
+                f"{len(sha_drift)} work order file(s) differ from {default_branch} on disk — "
+                f"using the local checkout for content (capped GitHub fetches at "
+                f"{MAX_WO_CONTENT_FETCH}) to avoid API rate limits."
+            )
         downloads = await asyncio.gather(
-            *[gh.get_file_content(f["path"], ref=default_branch) for f in stale],
+            *[gh.get_file_content(f["path"], ref=default_branch) for f in to_fetch],
             return_exceptions=True,
         )
         downloaded = {
             f["name"]: c.encode("utf-8")
-            for f, c in zip(stale, downloads)
+            for f, c in zip(to_fetch, downloads)
             if not isinstance(c, Exception)
         }
-        missed = len(stale) - len(downloaded)
+        missed = len(missing_from_mount) - sum(
+            1 for f in missing_from_mount if f["name"] in downloaded
+        )
         if missed:
             warnings.append(
                 f"{missed} work order file(s) on {default_branch} could not be downloaded — "
@@ -255,7 +278,7 @@ async def _load_primary_wos() -> dict[int, WOSpec] | None:
             for f in listing
             if f["name"] in downloaded or f["name"] in mounted
         ]
-        trusted = not missed
+        trusted = (not missed) and (not used_mount_for_drift)
 
     parsed: list[tuple[str, WOSpec]] = []
     for name, raw in entries:
@@ -365,24 +388,22 @@ _last_open_prs_error: str | None = None
 
 
 async def _load_open_prs() -> list[dict]:
+    """Open PRs for board columns — no per-PR check-run fan-out.
+
+    Fetching check-runs for every open PR is 2 GitHub calls each and was the
+    main dashboard rate-limit amp (Overview + PM + auto-refresh). CI detail
+    stays on /ci with a capped fetch.
+    """
     global _last_open_prs_error
     try:
         prs = await gh.list_open_prs()
         _last_open_prs_error = None
     except Exception as e:
-        # An empty list here is indistinguishable in the UI from "genuinely no
-        # open PRs" — any transient GitHub API failure (rate limit, auth,
-        # network) looks identical to a healthy quiet repo. Remember the last
-        # failure so the dashboard can show it was a failure, not a fact.
         _last_open_prs_error = str(e)
         return []
     results = []
     for pr in prs:
         wo_num = extract_wo_number_from_pr_title(pr.get("title", ""))
-        checks = await gh.get_pr_checks(pr["number"])
-        passing = sum(1 for c in checks if c.get("conclusion") == "success")
-        failing = sum(1 for c in checks if c.get("conclusion") in ("failure", "timed_out"))
-        pending = sum(1 for c in checks if c.get("status") in ("queued", "in_progress"))
         created = pr.get("created_at", "")
         results.append(
             {
@@ -394,15 +415,11 @@ async def _load_open_prs() -> list[dict]:
                 "created_at": created,
                 "age": format_duration(created) if created else "unknown",
                 "labels": [l["name"] for l in pr.get("labels", [])],
-                "checks_passing": passing,
-                "checks_failing": failing,
-                "checks_pending": pending,
-                "checks_total": len(checks),
-                "ci_state": (
-                    "failing"
-                    if failing
-                    else ("pending" if pending else "passing") if checks else "unknown"
-                ),
+                "checks_passing": 0,
+                "checks_failing": 0,
+                "checks_pending": 0,
+                "checks_total": 0,
+                "ci_state": "unknown",
             }
         )
     return sorted(results, key=lambda x: x["created_at"])
@@ -629,53 +646,83 @@ async def dashboard(request: Request):
 
 @app.get("/wo/{number}", response_class=HTMLResponse)
 async def wo_detail(request: Request, number: int):
-    try:
-        # Same ref and same tie-break as the board — otherwise a WO with an
-        # AGENT-BRIEF companion shows one file here and the other one there.
-        default_branch = await gh.get_default_branch()
-        files = await gh.list_wo_files(ref=default_branch)
-        candidates = sorted(
-            (f for f in files if f["name"].startswith(f"WO-{number}-")),
-            key=lambda f: spec_file_rank(f["name"]),
+    def _spec_from_mount() -> WOSpec | None:
+        local_files = sorted(
+            (
+                (name, raw)
+                for name, raw in _read_mounted_wo_files().items()
+                if name.startswith(f"WO-{number}-")
+            ),
+            key=lambda item: spec_file_rank(item[0]),
         )
-        if not candidates:
-            # No spec file, but the board still shows a card for this WO when it
-            # has a branch, an open PR or a dispatch entry — apply_live_status()
-            # synthesizes exactly that placeholder for the Overview and PM
-            # boards. The detail page used to skip straight to a bare 404 here,
-            # so clicking a card like WO-486 — labelled "stalled" on the board,
-            # with a real pushed branch behind it — landed on a page with no
-            # branch, no dispatch state, nothing: strictly less information
-            # than the card the user clicked from. Run it through the same
-            # reconciliation the boards use instead of a second, poorer path.
-            branches, prs, dispatch, merged_window = await asyncio.gather(
-                _load_active_branches(), _load_open_prs(), _load_dispatch(), gh.list_merged_prs(days=56)
-            )
-            wos: dict[int, WOSpec] = {}
-            apply_live_status(wos, branches, prs, dispatch, merged_prs=merged_window.prs, repo=GITHUB_REPO)
-            spec = wos.get(number)
-            if spec is None:
-                return HTMLResponse(
-                    f"<h1 style='font-family:monospace;padding:2rem'>WO-{number} has no spec file on "
-                    f"{default_branch}</h1><p style='font-family:monospace;padding:0 2rem'>It may exist "
-                    "only as an open PR, a branch, or a dispatch entry.</p>",
-                    status_code=404,
+        if not local_files:
+            return None
+        name, raw = local_files[0]
+        return parse_wo_file(raw.decode("utf-8", errors="replace"), name, repo=GITHUB_REPO)
+
+    try:
+        # Prefer the mount when GitHub is rate-limited or the WO is queue-local.
+        if gh.rate_limit_active():
+            spec = _spec_from_mount()
+            if spec is not None:
+                pass  # use mount; skip GitHub
+            else:
+                raise gh.GitHubRateLimited(
+                    f"GitHub API cooling down {gh.rate_limit_remaining_seconds()}s "
+                    f"and WO-{number} is not on the local mount"
                 )
         else:
-            match = candidates[0]
-            content = await gh.get_file_content(match["path"], ref=default_branch)
-            spec = parse_wo_file(content, match["name"])
+            spec = None
+
+        if spec is None:
+            # Same ref and same tie-break as the board — otherwise a WO with an
+            # AGENT-BRIEF companion shows one file here and the other one there.
+            default_branch = await gh.get_default_branch()
+            files = await gh.list_wo_files(ref=default_branch)
+            candidates = sorted(
+                (f for f in files if f["name"].startswith(f"WO-{number}-")),
+                key=lambda f: spec_file_rank(f["name"]),
+            )
+            if not candidates:
+                spec = _spec_from_mount()
+                if spec is None:
+                    branches, prs, dispatch, merged_window = await asyncio.gather(
+                        _load_active_branches(),
+                        _load_open_prs(),
+                        _load_dispatch(),
+                        gh.list_merged_prs(days=56),
+                    )
+                    wos: dict[int, WOSpec] = {}
+                    apply_live_status(
+                        wos, branches, prs, dispatch, merged_prs=merged_window.prs, repo=GITHUB_REPO
+                    )
+                    spec = wos.get(number)
+                if spec is None:
+                    return HTMLResponse(
+                        f"<h1 style='font-family:monospace;padding:2rem'>WO-{number} has no spec file on "
+                        f"{default_branch}</h1><p style='font-family:monospace;padding:0 2rem'>It may exist "
+                        "only as an open PR, a branch, or a dispatch entry.</p>",
+                        status_code=404,
+                    )
+            else:
+                match = candidates[0]
+                content = await gh.get_file_content(match["path"], ref=default_branch)
+                spec = parse_wo_file(content, match["name"])
     except Exception as exc:
-        return templates.TemplateResponse(
-            request=request,
-            name="error.html",
-            context={
-                "site_title": SITE_TITLE,
-                "message": f"Could not load WO-{number}: {exc}",
-                "refresh_seconds": 60,
-            },
-            status_code=502,
-        )
+        spec = _spec_from_mount()
+        if spec is None:
+            rate_limited = isinstance(exc, gh.GitHubRateLimited) or "rate limit" in str(exc).lower()
+            return templates.TemplateResponse(
+                request=request,
+                name="error.html",
+                context={
+                    "site_title": SITE_TITLE,
+                    "message": f"Could not load WO-{number}: {exc}",
+                    "refresh_seconds": 60,
+                    "error_kind": "rate_limit" if rate_limited else "github",
+                },
+                status_code=502,
+            )
     # Load thread (non-fatal if orchestrator is down)
     thread_messages: list[dict] = []
     try:
@@ -904,9 +951,10 @@ async def ci_dashboard(request: Request):
     )
     watchdog = _load_watchdog()
 
-    # Per-check breakdown for each PR with flaky detection
+    # Per-check breakdown — capped. Full fan-out here previously doubled the
+    # board's rate-limit burn on every /ci load.
     pr_checks: list[dict] = []
-    for pr in prs:
+    for pr in prs[:MAX_PR_CHECK_FETCH]:
         raw_checks = await gh.get_pr_checks(pr["number"])
         checks_detail = []
         is_flaky = False
