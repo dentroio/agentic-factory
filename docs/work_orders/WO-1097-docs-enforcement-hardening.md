@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** agent-runner, status-site, scripts
 **Depends on:** WO-1023
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete (merged in #333)
 
 ---
 
@@ -41,7 +41,7 @@ Separately (product repo): Clarion `DOC_MAP.json` `new_ui_page` still points at 
 - [x] Unit tests cover the above
 - [x] Customization wiki updated
 - [x] `docs/project_management/BACKLOG.md` — WO-1097 entry
-- [ ] `make ci-local` passes
+- [x] `make ci-local` passes
 
 ## Documentation Required
 
@@ -57,4 +57,4 @@ Separately (product repo): Clarion `DOC_MAP.json` `new_ui_page` still points at 
 - **Auto-merge:** yes (after human verifies)
 - **PM docs:** CAPABILITY_STATUS.md, BACKLOG.md
 
-**Product follow-up (Clarion, separate PR):** update `docs/factory/DOC_MAP.json` `new_ui_page` to `wiki/docs/` + `frontend/src/lib/inAppHelpMap.ts`.
+**Product follow-up (Clarion):** updated `docs/factory/DOC_MAP.json` `new_ui_page` to `wiki/docs/` + `frontend/src/lib/inAppHelpMap.ts` (merged in dentroio/clarion#842).
