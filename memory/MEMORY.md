@@ -18,6 +18,7 @@
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
+- [orchestrator-queue-is-not-repo-scoped](auto_wo1103.md) — The dispatch queue table has no repo column, so any factory instance can accidentally enqueue/claim WOs belonging to another repo (e.g. engine WOs on a product factory) unless explicitly gated.
 - [auto_wo1099](auto_wo1099.md)
 - [orchestrator-multi-repo-polling-invariants](auto_wo1098.md) — poll() must load configured_projects and gather multi-repo results before combine; LOCAL_REPO_MOUNT branches are primary-repo-only
 - [docs-required-parser-duplicated-across-services](auto_wo1097.md) — parse_docs_required logic is duplicated in both services/status-site/wo_parser.py and services/agent-runner/prompt_builder.py and must be kept in sync manually
