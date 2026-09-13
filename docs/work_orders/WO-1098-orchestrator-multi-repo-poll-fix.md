@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** orchestrator
 **Depends on:** WO-1089
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete (merged in #336)
 
 ---
 
@@ -50,12 +50,12 @@ NameError: name 'configured_projects' is not defined
 
 ## Acceptance Criteria
 
-- [ ] `poll()` runs without `NameError` when one or more projects are configured.
-- [ ] Multi-repo specs, active branches, and open PRs are fetched in parallel and aggregated.
-- [ ] `_fetch_active_branches` only queries `LOCAL_REPO_MOUNT` when `repo == GITHUB_REPO`.
-- [ ] Unit tests verify multi-project polling aggregation and lack of undefined variable errors.
-- [ ] Orchestrator Docker container runs cleanly without polling exceptions in logs.
-- [ ] `make ci-local` passes.
+- [x] `poll()` runs without `NameError` when one or more projects are configured.
+- [x] Multi-repo specs, active branches, and open PRs are fetched in parallel and aggregated.
+- [x] `_fetch_active_branches` only queries `LOCAL_REPO_MOUNT` when `repo == GITHUB_REPO`.
+- [x] Unit tests verify multi-project polling aggregation and lack of undefined variable errors.
+- [x] Orchestrator Docker container runs cleanly without polling exceptions in logs.
+- [x] `make ci-local` passes.
 
 ## Execution
 
