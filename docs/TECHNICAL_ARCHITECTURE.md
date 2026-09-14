@@ -189,12 +189,12 @@ A FastAPI + Jinja2 server (port 8099) that renders the live dashboard, provides 
 | `/settings/plan/milestones` | POST handler — calls `github_writer.add_milestone()` |
 | `/api/backends` | Proxies orchestrator `/api/backends` — available to the new WO form's JS |
 
-**CORS proxy (for Oryntra Chrome extension):**
+**CORS proxy (for Oryntra evidence relay):**
 
 | Route | Purpose |
 |-------|---------|
-| `POST /api/proxy/thread/{wo}/messages` | Relay to orchestrator — allows extension to post without browser CORS block |
-| `GET /api/proxy/thread/{wo}/images/{filename}` | Relay image from orchestrator to extension popup |
+| `POST /api/proxy/thread/{wo}/messages` | Relay to orchestrator — Oryntra backend (and any remaining browser clients) post without hitting orchestrator CORS |
+| `GET /api/proxy/thread/{wo}/images/{filename}` | Relay stored thread images |
 
 ---
 
@@ -429,26 +429,29 @@ id TEXT PRIMARY KEY, label TEXT, target_date TEXT, description TEXT
 
 ---
 
-### Oryntra Chrome Extension (`dentroio/Oryntra`)
+### Oryntra review cockpit (`dentroio/Oryntra`)
 
-A Chrome MV3 extension that lets engineers annotate browser screenshots and post them directly to a WO thread.
+Enterprise Oryntra is the factory's visual review surface. The Chrome MV3 extension
+runs Review Studio in the **side panel** on a real app tab. Capture and chat go to a
+**local Oryntra backend** (`http://127.0.0.1:4317`). That backend binds a session to a
+factory WO and relays screenshots/notes to the WO thread. Approve is review-only;
+**Send to Factory** creates a queue row for idle runners (claude, cursor, codex,
+gemini, …).
 
-**Extension components:**
-- `src/content.js` — injects a canvas overlay on the active tab; circle, arrow, text tools; undo; capture button
-- `src/background.js` — service worker; captures tab screenshot via `chrome.tabs.captureVisibleTab()`; composites canvas overlay onto screenshot; POSTs to factory proxy
-- `src/factory.js` — shared factory API client; reads config from `chrome.storage.sync`
-- `popup.html` / `popup.js` — extension popup; shows active WO and quick-post status
-- `options.html` / `options.js` — settings: factory URL, WO number, author name
+The older annotation-only client (WO-1011) is archived as Oryntra tag
+`legacy-annotation-extension`. Do not load it. Factory-side WO-1011 plumbing
+(orchestrator image storage, this proxy, thread rendering) stays — enterprise
+Oryntra uses those endpoints.
 
 **Data flow:**
 ```
-User draws annotation on page
+App tab + Oryntra side panel
     │
     ▼
-background.js captures screenshot (base64 PNG)
+Oryntra backend :4317 (session, screenshots, artifacts)
     │
     ▼
-POST /api/proxy/thread/{wo}/messages on status site (CORS proxy)
+POST /api/proxy/thread/{wo}/messages (status site)
     │
     ▼
 Orchestrator stores image → /data/threads/images/{wo}/{ts}.png
@@ -457,7 +460,9 @@ Orchestrator stores image → /data/threads/images/{wo}/{ts}.png
 WO detail thread panel renders inline image with click-to-zoom
 ```
 
-**Why a proxy?** Browser extensions cannot POST to a different origin (the orchestrator) without CORS. The status site proxy relays the request server-side, bypassing the browser's origin check.
+**Why a proxy?** Browser-origin clients cannot POST to the orchestrator without CORS.
+The status site proxy relays server-side. The Oryntra backend uses the same routes
+so evidence stays on the WO thread agents already read.
 
 ---
 

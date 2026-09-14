@@ -23,7 +23,7 @@ merged or verified. Detailed specs live in `docs/work_orders/`.
 | 2 | Optional weekly spend budget | Operator | Same page → `USAGE_BUDGET_USD_WEEK` |
 | 3 | Set `METRICS_ENDPOINT` | Operator | ✅ UI in WO-1099 — save URL under Deploy & Harness → Observability |
 | 4 | Clarion DOC_MAP `new_ui_page` → wiki/docs + inAppHelpMap | Product | ✅ Merged in dentroio/clarion#842 |
-| 5 | Oryntra deep integration | Eng | WO-1048 / WO-1049 — other agent |
+| 5 | Oryntra dogfood | Eng | Enterprise cockpit in dentroio/Oryntra#3; legacy client archived |
 | 6 | Exact LLM billing (not estimates) | Eng | Needs CLI/API usage hooks |
 
 ---

@@ -12,21 +12,17 @@
 
 ## Background
 
-The legacy annotation extension (WO-1011) lives on `feat/factory-thread-integration`
-in `dentroio/Oryntra` — a git lineage **unrelated** to current `main` (which holds
-enterprise Oryntra). GitHub refuses a PR between them ("no history in common").
-The branch received a fix on 2026-07-23 (commit `83ab15f`: auto-detect now uses
-`GET /api/factory/dispatch`; `/api/status` no longer exists) and works today, but it
-duplicates what WO-1047 delivers inside enterprise Oryntra.
+The legacy annotation extension (WO-1011) lived on an unrelated git lineage in
+`dentroio/Oryntra` (GitHub would not accept a PR onto `main`). That client received
+a fix on 2026-07-23 (commit `83ab15f`: auto-detect uses `GET /api/factory/dispatch`)
+and is archived as tag `legacy-annotation-extension`.
 
 ## What to Build
 
 1. **Archive, don't merge** — after WO-1047 ships and is dogfooded:
-   - Tag the branch head: `git tag legacy-annotation-extension 83ab15f` (or current
-     head) and push the tag.
-   - Add `docs/LEGACY_EXTENSION.md` on Oryntra `main` recording what it was, the tag,
-     and that WO-1047 superseded it.
-   - Delete the remote branch.
+   - Tag the lineage head: `git tag legacy-annotation-extension 83ab15f` (done).
+   - Add `docs/LEGACY_EXTENSION.md` on Oryntra recording the tag (done on PR #3).
+   - Delete the remote legacy branch (done).
 2. **Truth-up factory docs** in `dentroio/agentic-factory`:
    - `docs/project_management/CAPABILITY_STATUS.md` — Dimension 6 table currently
      points at the legacy branch; repoint capabilities to enterprise Oryntra and
@@ -40,10 +36,9 @@ duplicates what WO-1047 delivers inside enterprise Oryntra.
 
 ## Acceptance Criteria
 
-- [ ] Legacy branch tagged and deleted; tag resolves to the final commit
-- [ ] `docs/LEGACY_EXTENSION.md` exists on Oryntra `main` and names the tag
-- [ ] `grep -ri "feat/factory-thread-integration" docs/` in agentic-factory returns
-      nothing
+- [ ] Legacy lineage tagged and deleted; tag `legacy-annotation-extension` resolves to `83ab15f`
+- [ ] `docs/LEGACY_EXTENSION.md` exists on Oryntra and names the tag
+- [ ] Factory docs no longer name the deleted legacy Oryntra branch; they point at enterprise Oryntra
 - [ ] CAPABILITY_STATUS Open Gaps no longer claim Oryntra is unmerged; Dimension 6
       reflects enterprise Oryntra
 - [ ] WO-1011 endpoints untouched (smoke: POST test image through proxy still 200)

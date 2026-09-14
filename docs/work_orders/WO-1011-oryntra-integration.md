@@ -55,5 +55,6 @@ Text descriptions of visual bugs lose precision. "The button is in the wrong pla
 
 ## Execution
 
-- **Branch:** `wo/370-oryntra-integration` in `dentroio/agentic-factory`; `feat/factory-thread-integration` in `dentroio/Oryntra`
+- **Branch:** `wo/370-oryntra-integration` in `dentroio/agentic-factory`; Oryntra
+  annotation client later archived as tag `legacy-annotation-extension`
 - **PRs:** #20 (agentic-factory) merged 2026-07-04
