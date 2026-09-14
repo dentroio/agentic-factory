@@ -5,6 +5,7 @@
 **Effort:** S
 **Services:** agent-runner
 **Depends on:** WO-1041
+**Status:** ✅ Complete (2026-09-14)
 
 ---
 

@@ -77,7 +77,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Conflict advisor for dispatch order | ✅ | Service and file overlap detection + cycle-free `depends_on` edge generation | WO-1086 |
 | Durable execution history & audit trail | ✅ | Persists completed/failed/released runs, cycle times, failure categories, and metrics in SQLite (`/data/factory.db`) | WO-1088 |
 | Multi-repo autonomous orchestration | ✅ | Ingests projects from `factory-config.json` / `SECONDARY_REPOS`, parallel polling, repo-scoped conflict isolation, targeted dispatch; polling loop crash fixed | WO-1089, WO-1098 |
-| Product-spec queue gate | 🟡 | Refuse enqueue/claim for WOs without a product (`GITHUB_REPO`) spec; purge orphans on poll | WO-1103 |
+| Product-spec queue gate | ✅ | Refuse enqueue/claim for WOs without a product (`GITHUB_REPO`) spec; purge orphans on poll | WO-1103 |
 
 ## Dimension 4: Agent Runner (agent-runner, native launchd service — not Docker)
 
@@ -158,10 +158,10 @@ as tag `legacy-annotation-extension` — do not load it.
 
 ## Open Gaps
 
-1. **Continuous Deployment (CD)** — 🟡 Partial (WO-1094): `deploy.yml` + `make smoke` ship for the engine stack, but push-to-main stays off until a self-hosted runner is labeled `factory-deploy` and Actions variable `FACTORY_CD_ENABLED=true`. See `docs/CD_IMPLEMENTATION_PLAN.md` Part 0.
-2. **Oryntra dogfood** — enterprise cockpit is in [dentroio/Oryntra#3](https://github.com/dentroio/Oryntra/pull/3). Legacy annotation lineage is archived (tag `legacy-annotation-extension`). Remaining: merge that PR and keep factory WO-1011 endpoints.
-3. **JS/TS security scanning limited** — eslint-plugin-security falls back to regex if not installed. Regex covers 6 patterns. Impact: low for Python-heavy projects.
-4. **Exact LLM billing** — usage estimates (`len/4` tokens + crude USD rates) only; subscription CLIs do not always expose real usage. Optional hold via `USAGE_BUDGET_USD_WEEK`.
+1. **Continuous Deployment (CD)** — 🟡 Partial (WO-1094): `deploy.yml` + `make smoke` ship for the engine stack, but push-to-main stays off until a self-hosted runner is labeled `factory-deploy` and Actions variable `FACTORY_CD_ENABLED=true`. See `docs/CD_IMPLEMENTATION_PLAN.md` Part 0. **Deferred — operator planning.**
+2. **Operator: `METRICS_ENDPOINT`** — UI shipped (WO-1099); set a public JSON health URL under Settings → Deploy & Harness → Observability (localhost is not reachable from Actions).
+3. **Operator: weekly spend budget** — optional `USAGE_BUDGET_USD_WEEK` on the same page.
+4. **JS/TS security scan + API usage** — closing in WO-1105 (`wo/1105-js-scan-and-api-usage`): npx-pinned eslint-plugin-security; Anthropic SDK token recording. Subscription CLI coding runs remain estimates.
 
 ---
 
@@ -169,6 +169,9 @@ as tag `legacy-annotation-extension` — do not load it.
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
+| 2026-09-14 | Oryntra dogfood — enterprise cockpit on `main` ([PR #3](https://github.com/dentroio/Oryntra/pull/3)) | WO-1047–1051 |
+| 2026-09-14 | Orphan closer protects canonical implementation PRs | WO-1104 |
+| 2026-09-13 | Product-spec queue gate (refuse non-product WOs) | WO-1103 |
 | 2026-09-13 | Enterprise Oryntra is the review cockpit; legacy annotation client archived | WO-1051 |
 | 2026-09-12 | Deploy & Harness: METRICS_ENDPOINT observability settings | WO-1099 |
 | 2026-09-12 | Multi-repo polling loop crash fix | WO-1098 |

@@ -1,6 +1,6 @@
 # Factory Program Backlog — Operator & Engineering Todos
 
-_Last updated: 2026-09-13_
+_Last updated: 2026-09-14_
 
 Single checklist for closing the “UI-complete factory” loop. Check items off when
 merged or verified. Detailed specs live in `docs/work_orders/`.
@@ -9,22 +9,20 @@ merged or verified. Detailed specs live in `docs/work_orders/`.
 
 ## Now (in flight)
 
-- [ ] WO-1103 — Refuse non-product WOs on Clarion queue (`wo/1103-product-spec-queue-gate`) — **do not enqueue on Clarion**
-
-- [ ] WO-1099 — Settings UI: METRICS_ENDPOINT (`wo/1099-metrics-endpoint-settings`)
+_None — queue clear except CD planning (deferred)._
 
 ---
 
-## Next (after 1094–1099)
+## Next (operator / deferred eng)
 
 | # | Item | Owner | Notes |
 |---|------|-------|-------|
-| 1 | Enable CD in UI once runner is online | Operator | Settings → Deploy & Harness → toggle (needs `factory-deploy` runner) |
-| 2 | Optional weekly spend budget | Operator | Same page → `USAGE_BUDGET_USD_WEEK` |
-| 3 | Set `METRICS_ENDPOINT` | Operator | ✅ UI in WO-1099 — save URL under Deploy & Harness → Observability |
+| 1 | Enable CD in UI once runner is online | Operator | **Deferred — planning separately.** Needs `factory-deploy` runner + Settings → Deploy & Harness toggle |
+| 2 | Optional weekly spend budget | Operator | Settings → Deploy & Harness → `USAGE_BUDGET_USD_WEEK` |
+| 3 | Set `METRICS_ENDPOINT` | Operator | Public JSON health URL (not localhost) via Deploy & Harness → Observability |
 | 4 | Clarion DOC_MAP `new_ui_page` → wiki/docs + inAppHelpMap | Product | ✅ Merged in dentroio/clarion#842 |
-| 5 | Oryntra dogfood | Eng | Enterprise cockpit in dentroio/Oryntra#3; legacy client archived |
-| 6 | Exact LLM billing (not estimates) | Eng | Needs CLI/API usage hooks |
+| 5 | Oryntra dogfood | Eng | ✅ Merged [dentroio/Oryntra#3](https://github.com/dentroio/Oryntra/pull/3) 2026-09-14 |
+| 6 | Exact LLM billing (not estimates) | Eng | WO-1105 (`wo/1105-js-scan-and-api-usage`) — API usage hooks; subscription CLIs stay estimates |
 
 ---
 
@@ -32,6 +30,9 @@ merged or verified. Detailed specs live in `docs/work_orders/`.
 
 | WO | Title | Merged |
 |----|-------|--------|
+| WO-1104 | Orphan closer must not close canonical implementation PRs | 2026-09-14 (#346) |
+| WO-1103 | Refuse non-product WOs on the Clarion factory queue | 2026-09-13 (#342) |
+| WO-1099 | Settings UI: METRICS_ENDPOINT (observability) | 2026-09-13 (#340) |
 | WO-1098 | Multi-repo polling loop crash fix | 2026-09-12 (#336) |
 | WO-1097 | Docs enforcement hardening | 2026-09-12 (#333) |
 | WO-1094/1095/1096 | Engine CD + Deploy & Harness + factory guide | 2026-09-11 (#327) |

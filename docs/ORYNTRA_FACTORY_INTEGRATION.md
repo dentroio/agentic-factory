@@ -1,7 +1,7 @@
 # Oryntra ↔ Agentic Factory Integration Program
 
 **Created:** 2026-07-23
-**Status:** In progress (WO-1047 on Oryntra `main`; WO-1048–1051 on Oryntra PR #3)
+**Status:** ✅ Complete (WO-1047–1051 on Oryntra `main` via [PR #3](https://github.com/dentroio/Oryntra/pull/3), merged 2026-09-14)
 **Repos:** `dentroio/agentic-factory`, `dentroio/Oryntra`
 **Work orders:** WO-1047 – WO-1052
 
