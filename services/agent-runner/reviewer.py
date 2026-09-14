@@ -62,13 +62,13 @@ API_SURFACE_PATHS = (
 
 # Map file prefixes to the service(s) that must be rebuilt — profile overrides.
 _SERVICE_MAP: list[tuple[str, list[str]]] = [
-    ("services/data-service/",                      ["data-service"]),
-    ("services/correlation-service/",               ["correlation-service"]),
-    ("services/connector-service/",                 ["connector-service"]),
-    ("services/clustering-service/",                ["clustering-service"]),
-    ("services/user-service/",                      ["user-service"]),
-    ("services/gateway/",                           ["gateway"]),
-    ("frontend/",                                   ["frontend"]),
+    ("services/data-service/", ["data-service"]),
+    ("services/correlation-service/", ["correlation-service"]),
+    ("services/connector-service/", ["connector-service"]),
+    ("services/clustering-service/", ["clustering-service"]),
+    ("services/user-service/", ["user-service"]),
+    ("services/gateway/", ["gateway"]),
+    ("frontend/", ["frontend"]),
 ]
 
 # Track which validations we've reviewed this session (wo + requested_at)
@@ -85,7 +85,9 @@ async def _get_pending() -> list[dict]:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{ORCHESTRATOR_URL}/api/validations", headers=_AUTH)
             r.raise_for_status()
-            return [v for v in r.json() if v.get("status") == "pending" and v.get("pr_url")]
+            return [
+                v for v in r.json() if v.get("status") == "pending" and v.get("pr_url")
+            ]
     except Exception as e:
         _log(f"fetch validations failed: {e}")
         return []
@@ -94,6 +96,37 @@ async def _get_pending() -> list[dict]:
 def _pr_number(pr_url: str) -> int | None:
     m = re.search(r"/pull/(\d+)", pr_url)
     return int(m.group(1)) if m else None
+
+
+def _canonical_wo_branch(branch: str, wo_num: str | int) -> bool:
+    return bool(re.match(rf"wo/{int(wo_num)}-", branch or "", re.IGNORECASE))
+
+
+def should_close_completed_wo_pr(pr: dict, entry: dict) -> tuple[bool, str]:
+    """Decide whether stale PR cleanup may close a PR for a completed WO.
+
+    Dispatch/queue state is automation state. It is not enough to close a live
+    canonical implementation branch for the same WO; that branch is stronger
+    evidence that real work may still be pending and needs human review.
+    """
+    if entry.get("status") != "complete":
+        return False, "dispatch entry is not complete"
+
+    pr_url = entry.get("pr_url", "")
+    merged_pr_num = _pr_number(pr_url) if pr_url else None
+    current_pr_num = pr.get("number")
+    if not merged_pr_num:
+        return False, "complete entry has no recorded PR"
+    if merged_pr_num == current_pr_num:
+        return False, "PR is the recorded completion PR"
+
+    title = pr.get("title", "")
+    branch = pr.get("headRefName", "")
+    m = re.search(r"WO-(\d+)", title, re.I) or re.search(r"wo[/-](\d+)", branch, re.I)
+    if m and _canonical_wo_branch(branch, m.group(1)):
+        return False, "canonical WO implementation branch requires human review"
+
+    return True, f"WO already completed via PR#{merged_pr_num}"
 
 
 def _get_pr_diff(pr_url: str) -> str:
@@ -150,7 +183,9 @@ def _worktree_for_wo(wo_id: str, repo_path: str) -> str | None:
     if not repo_path:
         return None
     num = re.sub(r"^WO-", "", str(wo_id), flags=re.IGNORECASE)
-    matches = sorted(p for p in Path(repo_path).glob(f".worktrees/wo-{num}-*") if p.is_dir())
+    matches = sorted(
+        p for p in Path(repo_path).glob(f".worktrees/wo-{num}-*") if p.is_dir()
+    )
     return str(matches[0]) if matches else None
 
 
@@ -163,22 +198,33 @@ def _rebuild_and_smoke(repo_path: str, services: list[str]) -> tuple[bool, str]:
         _log(f"  rebuilding {svc}...")
         result = subprocess.run(
             ["make", "build-svc", f"SVC={svc}"],
-            cwd=repo_path, capture_output=True, text=True, timeout=300,
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
         if result.returncode != 0:
-            return False, f"build-svc {svc} failed:\n{result.stdout[-1500:]}\n{result.stderr[-500:]}"
+            return (
+                False,
+                f"build-svc {svc} failed:\n{result.stdout[-1500:]}\n{result.stderr[-500:]}",
+            )
 
     _log("  running smoke-test...")
     smoke = subprocess.run(
         ["make", "smoke-test"],
-        cwd=repo_path, capture_output=True, text=True, timeout=120,
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     passed = smoke.returncode == 0
     output = (smoke.stdout + smoke.stderr)[-2000:]
     return passed, output
 
 
-def _claude_review(wo_id: str, title: str, diff: str, has_ui: bool, has_api_surface: bool) -> tuple[bool, str]:
+def _claude_review(
+    wo_id: str, title: str, diff: str, has_ui: bool, has_api_surface: bool
+) -> tuple[bool, str]:
     """Call claude -p for a focused code review. Returns (approved, notes)."""
     from factory_profile import load_profile
 
@@ -214,7 +260,10 @@ REJECT must say exactly what to change."""
     try:
         r = subprocess.run(
             ["claude", "-p", prompt, "--model", REVIEW_MODEL],
-            input=None, capture_output=True, text=True, timeout=180,
+            input=None,
+            capture_output=True,
+            text=True,
+            timeout=180,
             env=_subscription_env(),
         )
         out = r.stdout.strip()
@@ -262,8 +311,13 @@ async def _post_thread(wo: str, content: str) -> None:
             await client.post(
                 f"{ORCHESTRATOR_URL}/api/thread/{wo}/messages",
                 headers=_AUTH,
-                json={"author": REVIEWER_NAME, "role": "agent", "type": "text",
-                      "content": content, "metadata": {}},
+                json={
+                    "author": REVIEWER_NAME,
+                    "role": "agent",
+                    "type": "text",
+                    "content": content,
+                    "metadata": {},
+                },
             )
     except Exception:
         pass
@@ -307,24 +361,43 @@ def _generate_verification_guide(
     changed_files = _changed_files(diff)
     ui_paths = tuple(profile.ui_paths) or UI_PATHS
     api_paths = tuple(profile.api_surface_paths) or API_SURFACE_PATHS
-    ui_files  = [f for f in changed_files if any(f.startswith(p) for p in ui_paths)]
+    ui_files = [f for f in changed_files if any(f.startswith(p) for p in ui_paths)]
     api_files = [f for f in changed_files if any(f.startswith(p) for p in api_paths)]
     other_files = [f for f in changed_files if f not in ui_files and f not in api_files]
 
-    spec_context = "\n".join(filter(None, [
-        f"Title: {wo_spec.get('title', title)}",
-        f"Notes: {wo_spec.get('notes', '')}" if wo_spec.get("notes") else "",
-        f"Services: {wo_spec.get('services', '')}" if wo_spec.get("services") else "",
-        f"Priority: {wo_spec.get('priority', '')}" if wo_spec.get("priority") else "",
-    ]))
+    spec_context = "\n".join(
+        filter(
+            None,
+            [
+                f"Title: {wo_spec.get('title', title)}",
+                f"Notes: {wo_spec.get('notes', '')}" if wo_spec.get("notes") else "",
+                (
+                    f"Services: {wo_spec.get('services', '')}"
+                    if wo_spec.get("services")
+                    else ""
+                ),
+                (
+                    f"Priority: {wo_spec.get('priority', '')}"
+                    if wo_spec.get("priority")
+                    else ""
+                ),
+            ],
+        )
+    )
 
     file_summary = []
     if ui_files:
-        file_summary.append(f"UI components ({len(ui_files)}): {', '.join(ui_files[:6])}")
+        file_summary.append(
+            f"UI components ({len(ui_files)}): {', '.join(ui_files[:6])}"
+        )
     if api_files:
-        file_summary.append(f"API routes/schemas ({len(api_files)}): {', '.join(api_files[:4])}")
+        file_summary.append(
+            f"API routes/schemas ({len(api_files)}): {', '.join(api_files[:4])}"
+        )
     if other_files:
-        file_summary.append(f"Backend ({len(other_files)}): {', '.join(other_files[:6])}")
+        file_summary.append(
+            f"Backend ({len(other_files)}): {', '.join(other_files[:6])}"
+        )
 
     prompt = f"""You are writing a verification checklist for a product owner who will manually test a completed feature.
 They are not a developer. Write in plain English. Be specific and concrete. Never include passwords or credentials.
@@ -366,7 +439,9 @@ and CI gates already confirmed correctness."""
     try:
         result = subprocess.run(
             ["claude", "-p", prompt, "--model", REVIEW_MODEL],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
             env=_subscription_env(),
         )
         text = result.stdout.strip()
@@ -376,10 +451,18 @@ and CI gates already confirmed correctness."""
         _log(f"generate_verification_guide failed: {e}")
 
     # Fallback — better than nothing
-    areas = " + ".join(filter(None, [
-        f"{len(ui_files)} UI file(s)" if ui_files else "",
-        f"{len(api_files)} API file(s)" if api_files else "",
-    ])) or "backend changes"
+    areas = (
+        " + ".join(
+            filter(
+                None,
+                [
+                    f"{len(ui_files)} UI file(s)" if ui_files else "",
+                    f"{len(api_files)} API file(s)" if api_files else "",
+                ],
+            )
+        )
+        or "backend changes"
+    )
     return (
         f"## {wo_id}: {title}\n\n"
         f"**PR #{pr_num}:** {pr_url}\n\n"
@@ -432,7 +515,7 @@ async def review_one(v: dict) -> None:
                 f"✅ **Code review passed**\n\n"
                 f"API routes or schemas changed — rebuilding the affected containers and running "
                 f"smoke tests to confirm nothing broke before asking for your review...\n\n"
-                f"Services being rebuilt: `{'`, `'.join(services)}`"
+                f"Services being rebuilt: `{'`, `'.join(services)}`",
             )
 
             worktree = _worktree_for_wo(wo, LOCAL_REPO_PATH)
@@ -441,24 +524,37 @@ async def review_one(v: dict) -> None:
                     None, _rebuild_and_smoke, worktree, services
                 )
                 if not build_ok:
-                    error_lines = [l for l in build_out.splitlines() if l.strip() and
-                                   any(w in l.lower() for w in ("error", "failed", "exception", "traceback"))]
-                    error_summary = "\n".join(error_lines[:5]) if error_lines else build_out[-400:]
+                    error_lines = [
+                        l
+                        for l in build_out.splitlines()
+                        if l.strip()
+                        and any(
+                            w in l.lower()
+                            for w in ("error", "failed", "exception", "traceback")
+                        )
+                    ]
+                    error_summary = (
+                        "\n".join(error_lines[:5]) if error_lines else build_out[-400:]
+                    )
                     msg = (
                         f"🔴 **Container build failed** — rejecting until the agent fixes this.\n\n"
                         f"**Error:**\n```\n{error_summary}\n```\n\n"
                         f"Services that failed to rebuild: `{'`, `'.join(services)}`"
                     )
                     await _post_thread(wo, msg)
-                    await _reject(wo, f"Container rebuild failed: {error_summary[:300]}")
+                    await _reject(
+                        wo, f"Container rebuild failed: {error_summary[:300]}"
+                    )
                     return
                 await _post_thread(
                     wo,
                     f"✅ **Containers rebuilt and smoke tests passed** — "
-                    f"`{'`, `'.join(services)}` are healthy."
+                    f"`{'`, `'.join(services)}` are healthy.",
                 )
             else:
-                _log(f"{wo}: no WO worktree — skipping rebuild of shared main checkout; routing to human")
+                _log(
+                    f"{wo}: no WO worktree — skipping rebuild of shared main checkout; routing to human"
+                )
                 await _post_thread(
                     wo,
                     "⏭️ **Skipped container rebuild** — no `.worktrees/wo-*` checkout for this WO, "
@@ -467,14 +563,16 @@ async def review_one(v: dict) -> None:
                 )
 
         guide = _generate_verification_guide(wo, title, pr_url, pr_num, diff, wo_spec)
-        _log(f"{wo}: code OK — requesting human sign-off (priority={wo_spec.get('priority') or 'unknown'})")
+        _log(
+            f"{wo}: code OK — requesting human sign-off (priority={wo_spec.get('priority') or 'unknown'})"
+        )
         await _post_thread(
             wo,
             f"✅ **Code review passed** — ready for your sign-off.\n\n"
             f"---\n\n"
             f"{guide}\n\n"
             f"---\n\n"
-            f"Use the **Approve** or **Reject** buttons in the factory dashboard when done."
+            f"Use the **Approve** or **Reject** buttons in the factory dashboard when done.",
         )
         return
 
@@ -484,7 +582,7 @@ async def review_one(v: dict) -> None:
         wo,
         f"✅ **Auto-approved** — backend-only change, no UI or API surface impact.\n\n"
         f"**Review summary:** {notes}\n\n"
-        f"This PR will be merged automatically."
+        f"This PR will be merged automatically.",
     )
     ok = await _approve(wo, notes)
     _log(f"{wo}: orchestrator {'accepted' if ok else 'FAILED'} approve")
@@ -496,7 +594,9 @@ async def _cleanup_stale_prs() -> None:
         return
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            dispatch_r = await client.get(f"{ORCHESTRATOR_URL}/api/dispatch", headers=_AUTH)
+            dispatch_r = await client.get(
+                f"{ORCHESTRATOR_URL}/api/dispatch", headers=_AUTH
+            )
             held_r = await client.get(f"{ORCHESTRATOR_URL}/api/held-wos", headers=_AUTH)
             queue_r = await client.get(f"{ORCHESTRATOR_URL}/api/queue", headers=_AUTH)
             if not all(r.status_code == 200 for r in (dispatch_r, held_r, queue_r)):
@@ -512,13 +612,25 @@ async def _cleanup_stale_prs() -> None:
 
         # Fetch open PRs
         result = subprocess.run(
-            ["gh", "pr", "list", "--repo", GITHUB_REPO, "--state", "open",
-             "--json", "number,title,headRefName"],
-            capture_output=True, text=True, timeout=30,
+            [
+                "gh",
+                "pr",
+                "list",
+                "--repo",
+                GITHUB_REPO,
+                "--state",
+                "open",
+                "--json",
+                "number,title,headRefName",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode != 0:
             return
         import json as _json
+
         open_prs = _json.loads(result.stdout)
 
         for pr in open_prs:
@@ -527,7 +639,9 @@ async def _cleanup_stale_prs() -> None:
             branch = pr.get("headRefName", "")
 
             # Extract WO number from title or branch name
-            m = re.search(r"WO-(\d+)", title, re.I) or re.search(r"wo[/-](\d+)", branch, re.I)
+            m = re.search(r"WO-(\d+)", title, re.I) or re.search(
+                r"wo[/-](\d+)", branch, re.I
+            )
             if not m:
                 continue
             wo_num = m.group(1)
@@ -537,25 +651,43 @@ async def _cleanup_stale_prs() -> None:
             if wo_num in deferred_wos:
                 _log(f"closing PR#{num} — {wo_id} is deferred")
                 subprocess.run(
-                    ["gh", "pr", "close", str(num), "--repo", GITHUB_REPO,
-                     "--comment", f"Auto-closed: {wo_id} moved to Deferred. PR will be reopened when WO is re-activated."],
-                    capture_output=True, timeout=30,
+                    [
+                        "gh",
+                        "pr",
+                        "close",
+                        str(num),
+                        "--repo",
+                        GITHUB_REPO,
+                        "--comment",
+                        f"Auto-closed: {wo_id} moved to Deferred. PR will be reopened when WO is re-activated.",
+                    ],
+                    capture_output=True,
+                    timeout=30,
                 )
                 continue
 
             # Case 2: dispatch entry is complete but PR is still open (orphaned)
             entry = dispatch.get(wo_id, {})
-            if entry.get("status") == "complete":
-                pr_url = entry.get("pr_url", "")
-                # Only close if this PR is NOT the one recorded as the merged PR
-                merged_pr_num = _pr_number(pr_url) if pr_url else None
-                if merged_pr_num and merged_pr_num != num:
-                    _log(f"closing PR#{num} — {wo_id} already completed via PR#{merged_pr_num}")
-                    subprocess.run(
-                        ["gh", "pr", "close", str(num), "--repo", GITHUB_REPO,
-                         "--comment", f"Auto-closed: {wo_id} was completed via PR#{merged_pr_num}. This PR is an orphan."],
-                        capture_output=True, timeout=30,
-                    )
+            should_close, reason = should_close_completed_wo_pr(pr, entry)
+            if should_close:
+                _log(f"closing PR#{num} — {reason}")
+                subprocess.run(
+                    [
+                        "gh",
+                        "pr",
+                        "close",
+                        str(num),
+                        "--repo",
+                        GITHUB_REPO,
+                        "--comment",
+                        f"Auto-closed: {wo_id} was completed via {reason.split(' via ', 1)[-1]}. "
+                        "This PR is an orphan.",
+                    ],
+                    capture_output=True,
+                    timeout=30,
+                )
+            elif entry.get("status") == "complete":
+                _log(f"leaving PR#{num} open — {wo_id}: {reason}")
 
     except Exception as e:
         _log(f"stale PR cleanup error: {e}")

@@ -1,4 +1,5 @@
 """AF-17: AI reviewer cannot auto-approve P0/P1 or UI/API-surface changes."""
+
 from __future__ import annotations
 
 import sys
@@ -39,9 +40,60 @@ def test_missing_priority_is_not_auto_approved():
 
 def test_claude_review_wraps_the_diff_as_data():
     text = (AGENT_RUNNER_DIR / "reviewer.py").read_text(encoding="utf-8")
-    assert "wrap_untrusted(\"pull request diff\"" in text
+    assert 'wrap_untrusted("pull request diff"' in text
     assert "from prompt_builder import wrap_untrusted" in text
     assert pb.UNTRUSTED_BEGIN
     assert "may_auto_approve(" in text
     assert "_worktree_for_wo" in text
     assert "shared main" in text
+
+
+def test_orphan_closer_preserves_canonical_implementation_branch():
+    pr = {
+        "number": 883,
+        "title": "fix(pm): WO-573 — refresh PROGRESS header on mark-done",
+        "headRefName": "wo/573-progress-header-backstop-v2",
+    }
+    entry = {
+        "status": "complete",
+        "pr_url": "https://github.com/dentroio/clarion/pull/873",
+    }
+
+    should_close, reason = reviewer.should_close_completed_wo_pr(pr, entry)
+
+    assert not should_close
+    assert "canonical WO implementation branch" in reason
+
+
+def test_orphan_closer_closes_non_canonical_duplicate_branch():
+    pr = {
+        "number": 883,
+        "title": "fix(pm): WO-573 — refresh PROGRESS header on mark-done",
+        "headRefName": "docs/mark-done-WO-573-883",
+    }
+    entry = {
+        "status": "complete",
+        "pr_url": "https://github.com/dentroio/clarion/pull/873",
+    }
+
+    should_close, reason = reviewer.should_close_completed_wo_pr(pr, entry)
+
+    assert should_close
+    assert reason == "WO already completed via PR#873"
+
+
+def test_orphan_closer_does_not_close_recorded_completion_pr():
+    pr = {
+        "number": 873,
+        "title": "docs(pm): mark WO-573 done",
+        "headRefName": "docs/mark-done-WO-573-872",
+    }
+    entry = {
+        "status": "complete",
+        "pr_url": "https://github.com/dentroio/clarion/pull/873",
+    }
+
+    should_close, reason = reviewer.should_close_completed_wo_pr(pr, entry)
+
+    assert not should_close
+    assert reason == "PR is the recorded completion PR"
