@@ -530,6 +530,7 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     slug = slug_from_title(title, wo_number)
     start_time = datetime.now(UTC)
     ask_calls: list[dict] = []
+    api_usage: list[dict] = []
 
     _log(f"Claiming {wo_id}: {title}")
     if not await claim(wo_id, slug, backend=preferred_agent):
@@ -852,11 +853,13 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         except Exception as e:
             _log(f"{wo_id} docs_required fetch failed ({e}) — documentation reviewer will be skipped as a result")
 
-        review_passed, all_findings = await run_review_chain(
+        review_passed, all_findings, review_usage = await run_review_chain(
             wo_spec, diff, monitor, security_findings,
             coding_backend=preferred_agent, docs_required=docs_required or None,
             wo_id=wo_id,
         )
+        if review_usage:
+            api_usage.extend(review_usage)
 
         if review_passed:
             break
@@ -966,17 +969,20 @@ async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
         _log(f"{wo_id} complete")
         update_memory_after_completion(wo_id, wo_spec)
         await usage_tracker.record_run(
-            ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, True, ask_calls, prompt=prompt
+            ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, True, ask_calls,
+            prompt=prompt, api_usage=api_usage,
         )
     elif decision == "rejected":
         _log(f"{wo_id} rejected — check the factory dashboard for guidance")
         await usage_tracker.record_run(
-            ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, False, ask_calls, prompt=prompt
+            ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, False, ask_calls,
+            prompt=prompt, api_usage=api_usage,
         )
     else:
         _log(f"{wo_id} approval timed out — leaving in awaiting_human state")
         await usage_tracker.record_run(
-            ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, False, ask_calls, prompt=prompt
+            ORCHESTRATOR_URL, wo_id, preferred_agent, start_time, False, ask_calls,
+            prompt=prompt, api_usage=api_usage,
         )
 
 

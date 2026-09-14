@@ -223,7 +223,7 @@ def _run_sdk_reviewer_sync(
     previous_findings: list[dict],
     api_key: str,
     model: str,
-) -> list[dict]:
+) -> tuple[list[dict], dict]:
     cfg = REVIEWER_CONFIG[reviewer_name]
     previous_str = (
         json.dumps(previous_findings, indent=2)
@@ -264,7 +264,12 @@ def _run_sdk_reviewer_sync(
     for block in response.content:
         if hasattr(block, "type") and block.type == "tool_use" and block.name == "submit_finding":
             findings.append(dict(block.input))
-    return findings
+    usage: dict = {"reviewer": reviewer_name, "backend": "claude-sdk"}
+    resp_usage = getattr(response, "usage", None)
+    if resp_usage is not None:
+        usage["input_tokens"] = int(getattr(resp_usage, "input_tokens", 0) or 0)
+        usage["output_tokens"] = int(getattr(resp_usage, "output_tokens", 0) or 0)
+    return findings, usage
 
 
 async def _run_sdk_reviewer(
@@ -273,7 +278,7 @@ async def _run_sdk_reviewer(
     diff: str,
     previous_findings: list[dict],
     api_key: str,
-) -> list[dict]:
+) -> tuple[list[dict], dict]:
     config = await _fetch_agent_config()
     model = config.get("automation_model", "claude-sonnet-5")
     return await asyncio.wait_for(
@@ -486,10 +491,10 @@ async def run_review_chain(
     coding_backend: str = "",
     docs_required: list[dict] | None = None,
     wo_id: str = "",
-) -> tuple[bool, list[dict]]:
+) -> tuple[bool, list[dict], list[dict]]:
     """Run the full review chain for the WO's priority level.
 
-    Returns (chain_passed, all_findings).
+    Returns (chain_passed, all_findings, api_usage).
 
     When an Anthropic key is available (local ANTHROPIC_API_KEY env var, or one
     configured via the dashboard's Settings -> Authentication), all 4 reviewers
@@ -510,9 +515,10 @@ async def run_review_chain(
     """
     priority = wo_spec.get("priority", "P2")
     reviewer_names = REVIEW_CHAIN.get(priority, REVIEW_CHAIN["P2"])
+    api_usage: list[dict] = []
 
     if not reviewer_names:
-        return True, list(previous_findings)
+        return True, list(previous_findings), api_usage
 
     all_findings = list(previous_findings)
     chain_passed = True
@@ -541,7 +547,9 @@ async def run_review_chain(
                     msg_type="text",
                 )
                 continue
-            findings: list[dict] = result  # type: ignore[assignment]
+            findings, usage = result  # type: ignore[misc]
+            if usage.get("input_tokens") or usage.get("output_tokens"):
+                api_usage.append(usage)
             blocking = [f for f in findings if f.get("severity") in cfg["blocking_severities"]]
             passed = len(blocking) == 0
             if not passed:
@@ -704,4 +712,4 @@ async def run_review_chain(
                 msg_type="text",
             )
 
-    return chain_passed, all_findings
+    return chain_passed, all_findings, api_usage
