@@ -18,6 +18,7 @@
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
+- [reviewer-stale-pr-cleanup-canonical-branch-guard](auto_wo1104.md) — agent-runner's stale-PR auto-closer must never close a PR on a canonical wo/{num}-* branch, even if dispatch marks the WO "complete"
 - [orchestrator-queue-is-not-repo-scoped](auto_wo1103.md) — The dispatch queue table has no repo column, so any factory instance can accidentally enqueue/claim WOs belonging to another repo (e.g. engine WOs on a product factory) unless explicitly gated.
 - [auto_wo1099](auto_wo1099.md)
 - [orchestrator-multi-repo-polling-invariants](auto_wo1098.md) — poll() must load configured_projects and gather multi-repo results before combine; LOCAL_REPO_MOUNT branches are primary-repo-only
