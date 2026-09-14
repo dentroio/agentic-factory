@@ -139,22 +139,27 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 ## Dimension 6: Oryntra Chrome Extension (dentroio/Oryntra)
 
-| Capability | Status | Notes | Branch |
+Enterprise Oryntra on `main` is the supported client (Review Studio side panel →
+local backend `:4317` → factory HTTP). The WO-1011 annotation client is archived
+as tag `legacy-annotation-extension` — do not load it.
+
+| Capability | Status | Notes | Source |
 |------------|--------|--------|--------|
-| Canvas annotation overlay (circle, arrow, text, undo) | ✅ | Injected content script | feat/factory-thread-integration |
-| Tab screenshot capture via service worker | ✅ | `chrome.tabs.captureVisibleTab()` | feat/factory-thread-integration |
-| Annotation composited onto screenshot | ✅ | Canvas overlay drawn over screenshot | feat/factory-thread-integration |
-| POST to factory thread proxy | ✅ | `image_data` + `content` + `source_url` | feat/factory-thread-integration |
-| Extension popup with active WO display | ✅ | Auto-detects from `/api/status` | feat/factory-thread-integration |
-| Settings page (factory URL, WO, author name) | ✅ | `chrome.storage.sync` | feat/factory-thread-integration |
-| Auto-detect active WO from factory | ✅ | Polls `/api/status` dispatch state | feat/factory-thread-integration |
+| Spatial capture from a real browser tab | ✅ | Side panel + `captureVisibleTab` | Oryntra `main` / PR #3 |
+| Evidence relay to factory WO thread | ✅ | Backend posts via status-site proxy | WO-1047 |
+| Bind session ↔ factory WO | ✅ | Live work picker + thread memory | WO-1047 |
+| Export approved artifact as factory WO | ✅ | Send to Factory; auth required | WO-1048 |
+| Validation queue (Approve WO / Reject) | ✅ | `awaiting_human` in Studio + side panel | WO-1049 |
+| Factory as execution target | ✅ | IDE chip when dispatch is reachable | WO-1050 |
+| Live dispatch progress (queued → PR) | ✅ | Bound bar + FactoryPanel | WO-1050 |
+| WO-1011 image storage / proxy / thread render | ✅ | Factory plumbing kept; client changed | WO-1011 |
 
 ---
 
 ## Open Gaps
 
 1. **Continuous Deployment (CD)** — 🟡 Partial (WO-1094): `deploy.yml` + `make smoke` ship for the engine stack, but push-to-main stays off until a self-hosted runner is labeled `factory-deploy` and Actions variable `FACTORY_CD_ENABLED=true`. See `docs/CD_IMPLEMENTATION_PLAN.md` Part 0.
-2. **Oryntra deep integration & PR merge** — `WO-1048` (artifact export) & `WO-1049` (validation queue) in backlog; `feat/factory-thread-integration` branch in `dentroio/Oryntra` ready for merge.
+2. **Oryntra dogfood** — enterprise cockpit is in [dentroio/Oryntra#3](https://github.com/dentroio/Oryntra/pull/3). Legacy annotation lineage is archived (tag `legacy-annotation-extension`). Remaining: merge that PR and keep factory WO-1011 endpoints.
 3. **JS/TS security scanning limited** — eslint-plugin-security falls back to regex if not installed. Regex covers 6 patterns. Impact: low for Python-heavy projects.
 4. **Exact LLM billing** — usage estimates (`len/4` tokens + crude USD rates) only; subscription CLIs do not always expose real usage. Optional hold via `USAGE_BUDGET_USD_WEEK`.
 
@@ -164,6 +169,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
+| 2026-09-13 | Enterprise Oryntra is the review cockpit; legacy annotation client archived | WO-1051 |
 | 2026-09-12 | Deploy & Harness: METRICS_ENDPOINT observability settings | WO-1099 |
 | 2026-09-12 | Multi-repo polling loop crash fix | WO-1098 |
 | 2026-09-11 | Docs enforcement: mandate in coding prompt, None/N/A parse skip, Doc Writer empty-response harden | WO-1097 |

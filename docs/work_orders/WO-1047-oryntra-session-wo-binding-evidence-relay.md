@@ -61,9 +61,9 @@ In `dentroio/Oryntra` (`packages/server` unless noted):
 
 - The status-site proxy injects orchestrator auth — Oryntra needs **no factory
   credentials**. Do not add any Vault/API_SECRET plumbing.
-- `GET /api/status` does not exist on the status site. The legacy extension broke on
-  this; fixed 2026-07-23 on `feat/factory-thread-integration` (commit `83ab15f`) —
-  copy the endpoint usage from there, not from any older reference.
+- `GET /api/status` does not exist on the status site. The legacy annotation
+  client broke on this; fixed 2026-07-23 in commit `83ab15f` (now tag
+  `legacy-annotation-extension`) — copy `GET /api/factory/dispatch`, not `/api/status`.
 - Pipeline verified live 2026-07-23: POST with 1×1 base64 PNG to
   `/api/proxy/thread/WO-ORYNTRA-TEST/messages` → orchestrator saved image, returned
   `image_url`, and `GET /api/proxy/thread/.../images/{filename}` served

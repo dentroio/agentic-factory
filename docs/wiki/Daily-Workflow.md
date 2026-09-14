@@ -75,6 +75,8 @@ Audience views: `/` (floor), `/pm` (programs/velocity), `/ci` (runners and flaky
 
 Before commit on P0-P2 work, the agent asks you to verify the **running product** (URL/hints from [`factory.yaml`](Product-Profile)). Approve in the thread when correct; describe fixes when not — the agent iterates. P3 docs-only work skips this because no running behavior changed.
 
+For UI work, **enterprise Oryntra** is the cockpit: Chrome side panel → local backend `:4317` → bind the WO → Approve in the app → **Send to Factory** or **Approve WO** / **Reject** at `awaiting_human`. Do not load the archived annotation extension (Oryntra tag `legacy-annotation-extension`).
+
 ## After approval
 
 1. Agent commits and opens a PR on the **product**  

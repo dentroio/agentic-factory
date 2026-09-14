@@ -1,7 +1,7 @@
 # Oryntra ↔ Agentic Factory Integration Program
 
 **Created:** 2026-07-23
-**Status:** Proposed
+**Status:** In progress (WO-1047 on Oryntra `main`; WO-1048–1051 on Oryntra PR #3)
 **Repos:** `dentroio/agentic-factory`, `dentroio/Oryntra`
 **Work orders:** WO-1047 – WO-1052
 
@@ -9,27 +9,22 @@
 
 ## Context
 
-Two generations of Oryntra exist:
+Two generations of Oryntra existed:
 
 1. **Legacy annotation extension** (WO-1011, shipped 2026-07-04) — a small Chrome MV3
-   extension that captures a tab screenshot, lets the human draw on it, and POSTs it to
-   the factory WO thread via the status-site CORS proxy. Lives on the
-   `feat/factory-thread-integration` branch of `dentroio/Oryntra` (unrelated git history
-   to current `main`). The factory side of this — orchestrator image storage/serving,
-   status-site proxy, inline thread rendering — is merged and verified working.
+   extension that captured a tab screenshot, let the human draw on it, and POSTed it to
+   the factory WO thread via the status-site CORS proxy. That client lived on an
+   unrelated git lineage and is **archived** as tag `legacy-annotation-extension`
+   (commit `83ab15f`). The factory side — orchestrator image storage/serving,
+   status-site proxy, inline thread rendering — stays; enterprise Oryntra uses it.
 
-2. **Enterprise Oryntra** (current `main` of `dentroio/Oryntra`) — a full "live AI
-   product review room": Chrome extension + side-panel Review Studio, Node/Fastify
-   backend on `localhost:4317`, spatial capture (mouse, clicks, element identity,
-   screenshots), an LLM facilitator that turns feedback into structured artifacts
-   (change requests, doc updates, architecture notes, **work orders**), an IDE registry,
-   and MCP handoff to Cursor / VS Code / Windsurf. Phases 0–6 complete.
+2. **Enterprise Oryntra** (`main` of `dentroio/Oryntra`) — live AI product review:
+   Chrome extension + side-panel Review Studio, Node/Fastify backend on
+   `localhost:4317`, spatial capture, facilitator artifacts, IDE registry, MCP
+   handoff, and factory bind / export / validation / execution-target (WO-1047–1050).
 
-Enterprise Oryntra has **no factory integration**. Its artifacts hand off to a local
-IDE; its evidence stays in its own SQLite. The factory has **no visual feedback
-surface** other than the legacy extension. This program wires them together so Oryntra
-becomes the factory's human-verification cockpit, and the factory becomes an execution
-target for Oryntra's artifacts.
+Oryntra is the factory's human-verification cockpit. The factory is an execution
+queue for Oryntra artifacts (Send to Factory), not a subprocess of Oryntra.
 
 ## Factory integration surfaces (all verified live 2026-07-23)
 
@@ -110,3 +105,23 @@ own history inflating "next" to 1036 instead of 442) caught during verification.
    reservation endpoint~~ — done; moot either way, `POST /api/factory/wos` remains
    the authoritative numbering path and 1048 should still use that, not the
    reservation endpoint.
+
+## WO-1050 findings (2026-09-13)
+
+**Factory as execution target.** A **Factory** chip appears in Oryntra's IDE registry
+only while `GET {FACTORY_URL}/api/factory/dispatch` returns OK. Selecting it sets
+`preferredIde=factory`: Approve still does not create a WO; handoff is **Send to
+Factory** (WO-1048). MCP implement is skipped. Live dispatch (queued → claimed →
+in_progress → PR → `awaiting_human`) shows on the bound session; `awaiting_human`
+feeds the WO-1049 validation queue.
+
+**Queue pin.** Oryntra does **not** pin exported WOs to the front of the factory
+queue. Order is the factory PM's call (`ORDER BY position ASC`; new rows append at
+`max(position)+10`). Pinning from Review Studio would bypass the dashboard.
+
+**Auto-dispatch vs artifact approval.** Two distinct gates:
+
+1. Oryntra **Approve** — review-only. Does not start Cursor and does not queue a WO.
+2. Oryntra **Send to Factory** — creates the WO. Factory **pre-dispatch approval**
+   (WO-1036 / `REQUIRE_APPROVAL_FOR`, default P1) remains a factory-side gate after
+   the row exists, then an idle runner claims it.
