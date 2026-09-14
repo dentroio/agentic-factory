@@ -22,7 +22,7 @@ _None — queue clear except CD planning (deferred)._
 | 3 | Set `METRICS_ENDPOINT` | Operator | Public JSON health URL (not localhost) via Deploy & Harness → Observability |
 | 4 | Clarion DOC_MAP `new_ui_page` → wiki/docs + inAppHelpMap | Product | ✅ Merged in dentroio/clarion#842 |
 | 5 | Oryntra dogfood | Eng | ✅ Merged [dentroio/Oryntra#3](https://github.com/dentroio/Oryntra/pull/3) 2026-09-14 |
-| 6 | Exact LLM billing (not estimates) | Eng | WO-1105 (`wo/1105-js-scan-and-api-usage`) — API usage hooks; subscription CLIs stay estimates |
+| 6 | Exact LLM billing (API paths) | Eng | ✅ WO-1105 records Anthropic SDK usage; subscription CLI coding runs remain estimates |
 
 ---
 
@@ -30,6 +30,7 @@ _None — queue clear except CD planning (deferred)._
 
 | WO | Title | Merged |
 |----|-------|--------|
+| WO-1105 | JS security scan + API usage recording | 2026-09-14 (#351) |
 | WO-1104 | Orphan closer must not close canonical implementation PRs | 2026-09-14 (#346) |
 | WO-1103 | Refuse non-product WOs on the Clarion factory queue | 2026-09-13 (#342) |
 | WO-1099 | Settings UI: METRICS_ENDPOINT (observability) | 2026-09-13 (#340) |
@@ -37,9 +38,6 @@ _None — queue clear except CD planning (deferred)._
 | WO-1097 | Docs enforcement hardening | 2026-09-12 (#333) |
 | WO-1094/1095/1096 | Engine CD + Deploy & Harness + factory guide | 2026-09-11 (#327) |
 | WO-1093 | LLM harness hardening | 2026-09-07 |
-| WO-1092 | Draft ports + remount | 2026-09-06 |
-| WO-1091 | Adoption DX | 2026-09-04 |
-| WO-1090 | Runner auth / zero-trust | 2026-08-31 |
 
 ---
 

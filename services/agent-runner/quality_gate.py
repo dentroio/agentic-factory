@@ -339,41 +339,74 @@ async def run_semgrep(worktree: str) -> tuple[bool, list[dict], str | None]:
         return True, [], f"semgrep output could not be parsed ({e}) — scan may not have completed: {out[-300:]}"
 
 
-# Dangerous JS/TS patterns that warrant a security flag.
+# Dangerous JS/TS patterns that warrant a security flag (regex fallback).
+_JS_EXTS = (".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx")
 _JS_DANGER_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\beval\s*\("), "eval() usage — potential code injection"),
     (re.compile(r"\.innerHTML\s*=(?!=)"), "innerHTML assignment — potential XSS"),
+    (re.compile(r"\.outerHTML\s*=(?!=)"), "outerHTML assignment — potential XSS"),
+    (re.compile(r"dangerouslySetInnerHTML"), "dangerouslySetInnerHTML — potential XSS"),
     (re.compile(r"document\.write\s*\("), "document.write() — potential XSS"),
     (re.compile(r"new\s+Function\s*\("), "new Function() — potential code injection"),
     (re.compile(r"child_process"), "child_process import — ensure inputs are sanitised"),
+    (re.compile(r"\bexec(?:File|Sync)?\s*\("), "exec()/execFile() — command injection risk"),
+    (re.compile(r"(?:local|session)Storage\.setItem\s*\(\s*['\"](?:token|password|secret|api[_-]?key)"),
+     "Sensitive value written to web storage"),
     (re.compile(r'(password|secret|api_key|apikey)\s*=\s*["\'][^"\']{6,}["\']', re.I),
      "Hardcoded credential"),
 ]
 
+# Blocking eslint-plugin-security rules (errors only; noisy rules stay off).
+_ESLINT_SECURITY_RULES = {
+    "security/detect-eval-with-expression": "error",
+    "security/detect-non-literal-regexp": "error",
+    "security/detect-non-literal-fs-filename": "error",
+    "security/detect-child-process": "error",
+    "security/detect-new-buffer": "error",
+    "security/detect-pseudoRandomBytes": "error",
+    "security/detect-buffer-noassert": "error",
+    "security/detect-disable-mustache-escape": "error",
+}
+
 
 async def run_js_security(worktree: str) -> tuple[bool, list[dict]]:
-    """Scan JS/TS files changed by this branch for dangerous patterns."""
-    js_files_rel = await _changed_files(worktree, (".js", ".ts", ".mjs", ".cjs"))
+    """Scan JS/TS files changed by this branch for dangerous patterns.
+
+    Prefers eslint-plugin-security via `npx --yes` so the plugin is available
+    even when the product repo does not declare it. Falls back to regex if
+    eslint cannot run or its JSON output cannot be parsed.
+    """
+    js_files_rel = await _changed_files(worktree, _JS_EXTS)
     if not js_files_rel:
         return True, []
 
     root = Path(worktree)
     js_files = [root / f for f in js_files_rel]
 
-    # Try eslint first
+    # Pin eslint 8 + plugin so --no-eslintrc keeps working (eslint 9 is flat-config only).
     rc, out = await _run(
-        ["npx", "eslint", "--no-eslintrc", "--plugin", "security",
-         "--rule", '{"security/detect-eval-with-expression": "error"}',
-         "--format", "json", "--ext", ".js,.ts", *[str(p) for p in js_files]],
+        [
+            "npx", "--yes",
+            "-p", "eslint@8.57.1",
+            "-p", "eslint-plugin-security@3.0.1",
+            "eslint",
+            "--no-eslintrc",
+            "--plugin", "security",
+            "--rule", json.dumps(_ESLINT_SECURITY_RULES),
+            "--format", "json",
+            "--ext", ".js,.ts,.mjs,.cjs,.jsx,.tsx",
+            *[str(p) for p in js_files],
+        ],
         worktree,
-        timeout=60,
+        timeout=120,
     )
-    if rc != -1:
+    if rc != -1 and out.strip().startswith("["):
         try:
             results = json.loads(out)
             blockers = [
                 {"file": r["filePath"], "line": m["line"], "issue": m["message"],
-                 "severity": "HIGH" if m["severity"] == 2 else "MEDIUM"}
+                 "severity": "HIGH" if m["severity"] == 2 else "MEDIUM",
+                 "scanner": "eslint-plugin-security"}
                 for r in results
                 for m in r.get("messages", [])
                 if m.get("severity", 0) >= 2
@@ -395,6 +428,7 @@ async def run_js_security(worktree: str) -> tuple[bool, list[dict]]:
                             "line": lineno,
                             "issue": desc,
                             "severity": "HIGH",
+                            "scanner": "regex-fallback",
                         })
         except OSError:
             pass

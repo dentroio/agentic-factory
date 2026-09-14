@@ -1,4 +1,4 @@
-"""Records WO run metrics (duration + estimated tokens/cost) to the orchestrator."""
+"""Records WO run metrics (duration + token/cost) to the orchestrator."""
 from __future__ import annotations
 
 import os
@@ -42,11 +42,38 @@ def estimate_cost_usd(
     prompt_tokens: int,
     ask_tokens: int,
     env: dict[str, str] | None = None,
+    exact: bool = False,
 ) -> float:
-    """Estimate USD for prompt + ask traffic (completion assumed ~prompt size)."""
-    # Assume completion ≈ prompt for coding runs; ask answers ≈ ask prompts.
-    total = prompt_tokens * 2 + ask_tokens * 2
+    """USD cost for prompt + completion/ask traffic.
+
+    When exact=True, prompt_tokens/ask_tokens are treated as real
+    input/output counts (no *2 completion assumption).
+    """
+    if exact:
+        total = prompt_tokens + ask_tokens
+    else:
+        # Assume completion ≈ prompt for coding runs; ask answers ≈ ask prompts.
+        total = prompt_tokens * 2 + ask_tokens * 2
     return round((total / 1_000_000.0) * rate_for_backend(backend, env), 6)
+
+
+def _sum_api_usage(
+    ask_calls: list[dict] | None,
+    api_usage: list[dict] | None,
+) -> tuple[int, int]:
+    """Sum provider input/output tokens from api_usage and ask_calls."""
+    inp = 0
+    out = 0
+    for u in list(api_usage or []) + list(ask_calls or []):
+        try:
+            inp += int(u.get("input_tokens") or u.get("prompt_tokens") or 0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            out += int(u.get("output_tokens") or u.get("completion_tokens") or 0)
+        except (TypeError, ValueError):
+            pass
+    return inp, out
 
 
 def build_usage_record(
@@ -57,13 +84,35 @@ def build_usage_record(
     ask_calls: list[dict],
     prompt: str = "",
     env: dict[str, str] | None = None,
+    api_usage: list[dict] | None = None,
 ) -> dict:
-    prompt_tokens = estimate_tokens(prompt)
-    ask_text = "\n".join(
-        str(c.get("question", "") or c.get("prompt", "") or c.get("content", ""))
-        for c in (ask_calls or [])
-    )
-    ask_tokens = estimate_tokens(ask_text)
+    api_in, api_out = _sum_api_usage(ask_calls, api_usage)
+    if api_in or api_out:
+        prompt_tokens = api_in
+        ask_tokens = api_out
+        usage_source = "api"
+        cost = estimate_cost_usd(
+            backend=backend,
+            prompt_tokens=prompt_tokens,
+            ask_tokens=ask_tokens,
+            env=env,
+            exact=True,
+        )
+    else:
+        prompt_tokens = estimate_tokens(prompt)
+        ask_text = "\n".join(
+            str(c.get("question", "") or c.get("prompt", "") or c.get("content", ""))
+            for c in (ask_calls or [])
+        )
+        ask_tokens = estimate_tokens(ask_text)
+        usage_source = "estimate"
+        cost = estimate_cost_usd(
+            backend=backend,
+            prompt_tokens=prompt_tokens,
+            ask_tokens=ask_tokens,
+            env=env,
+            exact=False,
+        )
     return {
         "ts": datetime.now(UTC).isoformat(),
         "wo": wo_id,
@@ -73,12 +122,10 @@ def build_usage_record(
         "ask_calls": ask_calls or [],
         "prompt_tokens_est": prompt_tokens,
         "ask_tokens_est": ask_tokens,
-        "estimated_cost_usd": estimate_cost_usd(
-            backend=backend,
-            prompt_tokens=prompt_tokens,
-            ask_tokens=ask_tokens,
-            env=env,
-        ),
+        "prompt_tokens": prompt_tokens if usage_source == "api" else None,
+        "completion_tokens": ask_tokens if usage_source == "api" else None,
+        "usage_source": usage_source,
+        "estimated_cost_usd": cost,
     }
 
 
@@ -138,9 +185,16 @@ async def record_run(
     success: bool,
     ask_calls: list[dict],
     prompt: str = "",
+    api_usage: list[dict] | None = None,
 ) -> None:
     record = build_usage_record(
-        wo_id, backend, start_time, success, ask_calls, prompt=prompt
+        wo_id,
+        backend,
+        start_time,
+        success,
+        ask_calls,
+        prompt=prompt,
+        api_usage=api_usage,
     )
     try:
         async with httpx.AsyncClient(timeout=10) as client:

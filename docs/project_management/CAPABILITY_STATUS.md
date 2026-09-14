@@ -88,7 +88,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | GitHub WO spec fetch for prompt building | ✅ | `fetch_wo_markdown()` reads from GitHub API | WO-365 |
 | Configurable worktree path per WO | ✅ | `WORKTREE_BASE` env var | WO-365 |
 | Quality gate: `make ci-local` + bandit + semgrep | ✅ | Runs in parallel; blocking on failure | WO-1012 |
-| Quality gate: JS/TS security scan | ✅ | eslint-plugin-security or regex fallback | fix/factory-quality-alignment |
+| Quality gate: JS/TS security scan | ✅ | npx pins eslint@8 + eslint-plugin-security; JSX/TSX; regex fallback expanded | WO-1105 |
 | Semgrep threshold: ERROR only (not WARNING) | ✅ | Prevents false-positive blocks | fix/factory-quality-alignment |
 | Multi-agent peer review chain | ✅ | 4 reviewers (security, architecture, correctness, performance) for all non-P3 WOs | WO-1013 |
 | Documentation completeness enforcement | ✅ | `docs_required` parse skips None/N/A; coding **DOCUMENTATION MANDATE**; 5th reviewer when non-empty; Doc Writer empty-response resilient | WO-1023, WO-1097 |
@@ -106,7 +106,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Validation `reject_reason` storage | ✅ | `ValidationDecision` stores explicit `reject_reason` (accepts both `reason` and `notes` fields); filters rejections without actionable feedback from retry context | fix/factory-resilience |
 | Central tool policy (`tool_policy.py`) | ✅ | Claude allowlist + permission mode; Gemini YOLO / Cursor trust env knobs; logged per run | WO-1093 |
 | Repo `memory/` bridged into coding prompts | ✅ | `MEMORY.md` + recent `auto_*.md` capped into Factory Memory (AF-38) | WO-1093 |
-| Usage token/cost estimates + weekly budget hold | ✅ | `prompt_tokens_est` / `estimated_cost_usd`; `USAGE_BUDGET_USD_WEEK` blocks claims when over | WO-1093 |
+| Usage token/cost + weekly budget hold | ✅ | Prefer Anthropic SDK `input_tokens`/`output_tokens` (`usage_source=api`); else `len/4` estimates; `USAGE_BUDGET_USD_WEEK` blocks claims when over | WO-1093, WO-1105 |
 | Review-chain untrusted diff/notes framing | ✅ | `build_reviewer_prompt` uses `wrap_untrusted` | WO-1093 |
 | Factory status site — live feed timestamps | ✅ | Local browser HH:MM:SS prefix on each live feed line | fix/factory-resilience |
 | Factory status site — WO last-seen relative time | ✅ | WO cards show `HH:MM UTC · Xs/Xm/Xh ago` from `last_seen` field | fix/factory-resilience |
@@ -161,7 +161,7 @@ as tag `legacy-annotation-extension` — do not load it.
 1. **Continuous Deployment (CD)** — 🟡 Partial (WO-1094): `deploy.yml` + `make smoke` ship for the engine stack, but push-to-main stays off until a self-hosted runner is labeled `factory-deploy` and Actions variable `FACTORY_CD_ENABLED=true`. See `docs/CD_IMPLEMENTATION_PLAN.md` Part 0. **Deferred — operator planning.**
 2. **Operator: `METRICS_ENDPOINT`** — UI shipped (WO-1099); set a public JSON health URL under Settings → Deploy & Harness → Observability (localhost is not reachable from Actions).
 3. **Operator: weekly spend budget** — optional `USAGE_BUDGET_USD_WEEK` on the same page.
-4. **JS/TS security scan + API usage** — closing in WO-1105 (`wo/1105-js-scan-and-api-usage`): npx-pinned eslint-plugin-security; Anthropic SDK token recording. Subscription CLI coding runs remain estimates.
+4. **Subscription CLI billing** — coding runs via Claude/Cursor/Codex/Gemini CLIs still estimate tokens (providers do not always expose usage). API review harness records real tokens (WO-1105).
 
 ---
 
@@ -169,6 +169,7 @@ as tag `legacy-annotation-extension` — do not load it.
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
+| 2026-09-14 | JS/TS security scan: npx-pinned eslint-plugin-security + API usage recording | WO-1105 |
 | 2026-09-14 | Oryntra dogfood — enterprise cockpit on `main` ([PR #3](https://github.com/dentroio/Oryntra/pull/3)) | WO-1047–1051 |
 | 2026-09-14 | Orphan closer protects canonical implementation PRs | WO-1104 |
 | 2026-09-13 | Product-spec queue gate (refuse non-product WOs) | WO-1103 |
