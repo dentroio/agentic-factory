@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-09-13
+last_verified: 2026-09-14
 covers_wos:
   - WO-1008
   - WO-1052
@@ -50,66 +50,4 @@ Under the hood, the agent-runner host exposes `GET/PUT /api/product` and `POST /
 
 ### One-click remount (WO-1092)
 
-Changing the local path used to require a full `make restart` (which rebuilds images) before Docker picked up the new mount. Get Started and Settings → Authentication now show a **Remount Docker** button whenever `restart_required` is set: it calls `POST /api/product/remount` on the agent-runner host (bearer-gated, proxied through the orchestrator), which recreates the compose stack against the current env — no image rebuild, just a fast recreate so the new `LOCAL_REPO_PATH` mount takes effect. Full `make restart` is still the fallback for changes that do need a rebuild (e.g. code changes to the engine itself).
-
-WO-1092 also fixed a port clash where Cursor, Codex, and Gemini agent-runners all defaulted to the same draft-server port and stepped on each other (`Address already in use`), which could leave the orchestrator talking to a stale draft server and `/api/product` returning 404. Each agent now binds a distinct `DRAFT_PORT` (cursor 8101, claude 8102, codex 8103, gemini 8104), so multiple agents can run against the same product concurrently.
-
-## CLI path: `factory doctor` and `factory init`
-
-For scripting, CI, or if you prefer the terminal:
-
-```bash
-# Scaffold a fresh or existing product repo
-make init            # wraps scripts/factory_init.py
-# or non-interactively:
-python3 scripts/factory_init.py --path ~/code/your-app --name "Your App" --non-interactive
-
-# Check that everything is wired correctly
-make doctor          # wraps scripts/factory_doctor.py
-```
-
-`factory init` scaffolds:
-
-- `docs/project_management/work_orders/`
-- `docs/factory/runs/.gitkeep`
-- `docs/factory/patterns.md`
-- a root `factory.yaml`
-- `AGENT_PROCESS.md` (copied from the engine's `docs/adopters/PROCESS.md`)
-- optionally a sample `WO-001-hello.md` with `--sample-wo`
-
-It refuses to overwrite existing files unless you pass `--force`, and prints next steps (labels to create, how to point the engine's prefs at the new repo, and to run `make doctor` afterward).
-
-`factory doctor` checks, in order:
-
-- `GITHUB_REPO` is set and shaped like `owner/name`
-- `LOCAL_REPO_PATH` exists and is a real git checkout
-- the local checkout's remote matches `GITHUB_REPO` (hard fail on mismatch — this is the #1 cause of "wired to the wrong repo")
-- the product's `factory.yaml` (or `docs/factory/profile.yaml`) loads
-- the configured `verify` command is runnable, or a matching Makefile target exists
-- the WO specs directory is present
-- `gh` reachability, if available, for labels and WO path
-
-It exits non-zero only on hard failures and prints a fix hint for each one. Use `--product PATH` to doctor a product tree directly (useful in CI, or before you've pointed the engine's prefs anywhere).
-
-## Template vs BYO
-
-You can adopt the factory two ways:
-
-- **Template**: start a new product from the adopter kit as a clean starting point, then run `factory init` inside it.
-- **BYO (bring your own)**: point the engine at an existing repo and run `factory init` (or the UI's "Prepare files" step) to add just the missing adopter files — WO directory, `factory.yaml`, `AGENT_PROCESS.md`, `patterns.md`. Nothing else in your repo is touched.
-
-Either way, the adopter surface is intentionally small: a WO directory, a `factory.yaml`/profile, and a patterns file the agents read before making changes. See `docs/adopters/BYO.md` for the step-by-step checklist.
-
-## Stranger-clone guarantee
-
-The default (non-legacy) profile and patterns file ship with **zero references to Clarion** — verified by a dedicated regression test (`tests/unit/test_stranger_clone.py`) that fails CI if any Clarion-specific string leaks into the default path (`agent-setup.sh`, `prompt_builder.py`, root `README.md`, or the default patterns file). Someone cloning `agentic-factory` fresh and pointing it at their own repo gets a genuinely blank slate.
-
-The one exception is the live Dentro/Clarion instance itself, which still loads `clarion_patterns.md` via `FACTORY_LEGACY_PRODUCT` — that legacy path is intentionally preserved and does not affect anyone else's adoption.
-
-## GitHub token requirements
-
-Store a **fine-grained GitHub PAT** (`github_pat_...`) in Keychain, scoped to the repos you're adopting (your product, plus `agentic-factory` if you're contributing back). Grant Contents, Pull requests, Issues, and Actions permissions.
-
-The factory's tooling actively rejects other token shapes:
-
-- Classic PATs (`ghp_...`) are refused — they can write every repo the token owner can reach, which is far
+Chang
