@@ -66,10 +66,11 @@ Two stores, now bridged:
 
 ## Cost & budget
 
-`POST /api/usage` records duration plus estimates:
+`POST /api/usage` records duration plus token/cost fields:
 
-- `prompt_tokens_est` / `ask_tokens_est` (`len/4`)
-- `estimated_cost_usd` (crude per-backend rates; override `USAGE_RATE_<BACKEND>_PER_MTOK`)
+- Prefer **provider usage** when present (`prompt_tokens` / `completion_tokens` from Anthropic SDK review harness)
+- Otherwise `prompt_tokens_est` / `ask_tokens_est` (`len/4`)
+- `estimated_cost_usd` (per-backend rates; override `USAGE_RATE_<BACKEND>_PER_MTOK`); `usage_source` is `api` or `estimate`
 
 `GET /api/usage` summary includes `estimated_cost_usd_week` and `tokens_est_week`.
 
@@ -78,10 +79,10 @@ to stop new claims when weekly estimated spend meets the cap. `0` (default) disa
 
 ## What remains open
 
-- **CD enablement** — use Settings → Deploy & Harness after a `factory-deploy` runner is online; see [BACKLOG.md](../project_management/BACKLOG.md)
+- **CD enablement** — deferred; plan separately, then Settings → Deploy & Harness after a `factory-deploy` runner is online
 - **Observability endpoint** — set `METRICS_ENDPOINT` on the same page (Observability section); must be reachable from GitHub Actions
 - **True sandbox** — Bash inside the allowlist is still powerful; worktree + gates are the remaining defense
-- **Exact tokens/billing** — estimates only (subscription CLIs do not always expose usage)
+- **Subscription CLI billing** — coding runs via Claude/Cursor/Codex/Gemini CLIs still estimate tokens (providers do not always expose usage)
 
 ## Related
 

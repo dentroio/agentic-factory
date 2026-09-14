@@ -1,6 +1,6 @@
 # Dentro AI Factory — Progress Tracker
 
-_Last updated: 2026-09-07_
+_Last updated: 2026-09-14_
 
 ---
 
@@ -19,8 +19,9 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
-| WO-1103 | Refuse non-product WOs on the Clarion factory queue | P2 | 🟡 In Progress | — |
-| WO-1099 | Settings UI: METRICS_ENDPOINT (observability) | P2 | 🟡 In Progress | — |
+| WO-1104 | Orphan closer must not close canonical implementation PRs | P2 | ✅ Complete | 2026-09-14 |
+| WO-1103 | Refuse non-product WOs on the Clarion factory queue | P2 | ✅ Complete | 2026-09-13 |
+| WO-1099 | Settings UI: METRICS_ENDPOINT (observability) | P2 | ✅ Complete | 2026-09-13 |
 | WO-1098 | Fix orchestrator multi-repo polling loop crash | P2 | ✅ Complete | 2026-09-12 |
 | WO-1097 | Docs enforcement hardening (mandate, parser, Doc Writer) | P2 | ✅ Complete | 2026-09-12 |
 | WO-1096 | In-app factory guide + inline ? help overhaul | P2 | ✅ Complete | 2026-09-11 |

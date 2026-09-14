@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** orchestrator, docs
 **Depends on:** —
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete (2026-09-13)
 
 ---
 

@@ -5,7 +5,7 @@
 **Effort:** S
 **Services:** orchestrator, status-site, docs
 **Depends on:** WO-1095
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete (2026-09-13)
 
 ---
 
