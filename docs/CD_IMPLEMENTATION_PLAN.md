@@ -26,6 +26,11 @@ The engine stack (`docker-compose.status.yml`) has a first-class workflow:
 Until that variable is set, merges do **not** trigger deploy; use
 **Actions → Deploy → Run workflow**. See `docs/work_orders/WO-1094-factory-cd.md`.
 
+The deploy job loads `FACTORY_ENV_FILE` (default
+`~/workspace/github/dentroio/agentic-factory/.env`) so
+`GITHUB_TOKEN` / `GITHUB_REPO` / `LOCAL_REPO_PATH` are available to
+`docker-compose.status.yml` (Actions checkout has no `.env`).
+
 Product apps (Clarion / adopters) still follow Parts 1–3 below with their own
 `deploy.yml` — do not reuse the engine workflow for product deploys.
 
