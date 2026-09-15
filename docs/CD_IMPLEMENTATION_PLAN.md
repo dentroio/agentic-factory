@@ -23,6 +23,12 @@ The engine stack (`docker-compose.status.yml`) has a first-class workflow:
 - Runner label: `factory-deploy`
 - Enable push-to-main: set Actions variable `FACTORY_CD_ENABLED=true`
 
+**Status (2026-09-15):** Part 0 enabled on this workstation —
+`factory-deploy-Mac` LaunchAgent runner online, Deploy workflow green,
+`FACTORY_CD_ENABLED=true`. Compose loads `FACTORY_ENV_FILE` (default engine
+`.env`). Docker Desktop `credsStore=desktop` was removed so LaunchAgent
+builds can pull public images without unlocking the login keychain.
+
 Until that variable is set, merges do **not** trigger deploy; use
 **Actions → Deploy → Run workflow**. See `docs/work_orders/WO-1094-factory-cd.md`.
 

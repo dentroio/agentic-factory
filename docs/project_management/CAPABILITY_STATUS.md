@@ -131,7 +131,7 @@ A living registry of what the system can do, at what fidelity, and what's still 
 | Stranger-clone / no-Clarion default-path regression | ✅ | Unit tests gate default profile + public surfaces | WO-1091 |
 | Unique per-backend draft ports | ✅ | Align AGENT_META with health_agent; bind failure hints | WO-1092 |
 | One-click Docker remount after LOCAL_REPO_PATH change | ✅ | Host `/api/product/remount` + Get Started / Auth button | WO-1092 |
-| Engine CD workflow (`deploy.yml`) | 🟡 | Self-hosted `factory-deploy`; push-to-main gated by `FACTORY_CD_ENABLED` | WO-1094 |
+| Engine CD workflow (`deploy.yml`) | ✅ | Self-hosted `factory-deploy`; `FACTORY_CD_ENABLED=true`; env-file + keychain notes in CD plan | WO-1094 |
 | Factory smoke (`make smoke`) | ✅ | status-site 200 + orchestrator up (200/401) | WO-1094 |
 | Settings → Deploy & Harness UI | ✅ | Toggle CD + harness prefs + METRICS_ENDPOINT without file edits | WO-1095, WO-1099 |
 | Program BACKLOG checklist | ✅ | `docs/project_management/BACKLOG.md` ordered todos | WO-1095 |
@@ -158,10 +158,9 @@ as tag `legacy-annotation-extension` — do not load it.
 
 ## Open Gaps
 
-1. **Continuous Deployment (CD)** — 🟡 Partial (WO-1094): `deploy.yml` + `make smoke` ship for the engine stack, but push-to-main stays off until a self-hosted runner is labeled `factory-deploy` and Actions variable `FACTORY_CD_ENABLED=true`. See `docs/CD_IMPLEMENTATION_PLAN.md` Part 0. **Deferred — operator planning.**
-2. **Operator: `METRICS_ENDPOINT`** — UI shipped (WO-1099); set a public JSON health URL under Settings → Deploy & Harness → Observability (localhost is not reachable from Actions).
-3. **Operator: weekly spend budget** — optional `USAGE_BUDGET_USD_WEEK` on the same page.
-4. **Subscription CLI billing** — coding runs via Claude/Cursor/Codex/Gemini CLIs still estimate tokens (providers do not always expose usage). API review harness records real tokens (WO-1105).
+1. **Operator: `METRICS_ENDPOINT`** — UI shipped (WO-1099); set a public JSON health URL under Settings → Deploy & Harness → Observability (localhost is not reachable from Actions).
+2. **Operator: weekly spend budget** — optional `USAGE_BUDGET_USD_WEEK` on the same page (currently off).
+3. **Subscription CLI billing** — coding runs via Claude/Cursor/Codex/Gemini CLIs still estimate tokens (providers do not always expose usage). API review harness records real tokens (WO-1105).
 
 ---
 
@@ -169,6 +168,7 @@ as tag `legacy-annotation-extension` — do not load it.
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
+| 2026-09-15 | Engine CD enabled — `factory-deploy-Mac` runner + `FACTORY_CD_ENABLED=true` + successful Deploy | WO-1094 |
 | 2026-09-14 | JS/TS security scan: npx-pinned eslint-plugin-security + API usage recording | WO-1105 |
 | 2026-09-14 | Oryntra dogfood — enterprise cockpit on `main` ([PR #3](https://github.com/dentroio/Oryntra/pull/3)) | WO-1047–1051 |
 | 2026-09-14 | Orphan closer protects canonical implementation PRs | WO-1104 |
