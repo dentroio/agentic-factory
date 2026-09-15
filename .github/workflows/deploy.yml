@@ -51,13 +51,20 @@ jobs:
             exit 1
           fi
           echo "Using env file: $ENV_FILE"
-          # LaunchAgents cannot unlock the macOS login keychain. Public image
-          # pulls do not need creds — use an empty Docker config for this job.
+          set -a
+          # shellcheck disable=SC1090
+          . "$ENV_FILE"
+          set +a
+          # LaunchAgents cannot unlock the macOS login keychain. Use an empty
+          # creds config but keep Docker Desktop's CLI plugins (compose).
           export DOCKER_CONFIG="${RUNNER_TEMP:-/tmp}/docker-config-$$"
           mkdir -p "$DOCKER_CONFIG"
           printf '%s\n' '{}' >"$DOCKER_CONFIG/config.json"
-          docker compose --env-file "$ENV_FILE" -f docker-compose.status.yml build
-          docker compose --env-file "$ENV_FILE" -f docker-compose.status.yml up -d
+          if [ -d "$HOME/.docker/cli-plugins" ]; then
+            ln -sfn "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
+          fi
+          docker compose -f docker-compose.status.yml build
+          docker compose -f docker-compose.status.yml up -d
           # Give containers a moment before smoke
           sleep 5
 
