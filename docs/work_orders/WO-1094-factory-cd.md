@@ -5,7 +5,7 @@
 **Effort:** M
 **Services:** docs, ci, scripts
 **Depends on:** none
-**Status:** 🟡 In Progress
+**Status:** ✅ Complete (2026-09-15 — runner online, Deploy green, `FACTORY_CD_ENABLED=true`)
 
 ---
 
