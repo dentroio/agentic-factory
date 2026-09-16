@@ -175,12 +175,16 @@ def wos_completed_by_merged_pr(pr: dict) -> list[int]:
 
     A title mention is not completion: 'docs(wo): file WO-508' and
     'docs(pm): program — WO-449–456' name WOs they did not implement.
-    Completion requires a wo/NNN- branch or a bare 'WO-NNN:' / mark-done
-    title. A 'docs(...)' / 'chore(...)'-scoped title never completes a WO by
+    Completion requires a wo/NNN- branch or a bare 'WO-NNN:' title.
+    A 'docs(...)' / 'chore(...)'-scoped title never completes a WO by
     mention alone ('docs(pm): WO-547 — … spec' filed the spec, it did not
-    implement the WO); those are credited only via a wo/NNN- branch or an
-    explicit mark-done. Spec-filing titles never complete, even on a
+    implement the WO). Spec-filing titles never complete, even on a
     wo/NNN- branch.
+
+    Mark-done titles on docs/chore branches (e.g. 'docs(pm): mark WO-583
+    done') only rewrite Status and must not complete the WO — that path
+    falsely closed incomplete P1 work. Mark-done still counts on a wo/NNN-
+    branch or a non-docs branch without a docs/chore title prefix.
     """
     title = (pr.get("title") or "").strip()
     head_ref = (pr.get("head") or {}).get("ref", "") or ""
@@ -193,10 +197,18 @@ def wos_completed_by_merged_pr(pr: dict) -> list[int]:
     if not _DOCS_SCOPE_PREFIX_RE.match(title):
         for m in re.finditer(r"(?i)\bWO-(\d+)\s*[:—]", title):
             nums.add(int(m.group(1)))
-    if re.search(r"(?i)\bmark(?:ed)?\b", title) and re.search(
+    # Mark-done titles on docs/chore branches (or docs(pm): … titles) only
+    # rewrite Status — they are not proof of implementation. Count them only
+    # when the PR is on a wo/NNN- branch (already in nums via branch_n) or on
+    # a non-docs branch without a docs/chore conventional-commit prefix.
+    is_mark_done = re.search(r"(?i)\bmark(?:ed)?\b", title) and re.search(
         r"(?i)\b(?:complete|done)\b", title
-    ):
-        nums.update(int(x) for x in re.findall(r"(?i)\bWO-(\d+)\b", title))
+    )
+    if is_mark_done:
+        docs_branch = head_ref.startswith(("docs/", "chore/"))
+        docs_title = bool(_DOCS_SCOPE_PREFIX_RE.match(title))
+        if branch_n is not None or (not docs_branch and not docs_title):
+            nums.update(int(x) for x in re.findall(r"(?i)\bWO-(\d+)\b", title))
     return sorted(nums)
 
 

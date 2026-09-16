@@ -132,8 +132,13 @@ COMPLETION_CASES = [
         [417, 1035],
     ),
     (
-        "mark-done docs PR",
+        "mark-done docs PR does not complete (Status-only rewrite)",
         {"head": {"ref": "docs/mark-499-504-done"}, "title": "docs(pm): mark WO-499 and WO-504 done"},
+        [],
+    ),
+    (
+        "mark-done on wo/NNN- branch still completes listed WOs",
+        {"head": {"ref": "wo/499-closeout"}, "title": "docs(pm): mark WO-499 and WO-504 done"},
         [499, 504],
     ),
     (

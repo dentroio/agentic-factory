@@ -68,7 +68,7 @@ from orchestrator_client import (
     request_validate,
 )
 from prompt_builder import (
-    build_prompt, format_prior_context, slug_from_title,
+    _coerce_text, build_prompt, format_prior_context, slug_from_title,
     update_memory_after_completion, update_memory_after_failure,
 )
 from quality_gate import (
@@ -311,7 +311,7 @@ async def _setup_worktree(wo_number: str | int, title: str) -> str:
     Otherwise falls back to a plain directory under WORKTREE_BASE.
     """
     num = re.sub(r"^WO-0*", "", str(wo_number)) or str(wo_number)
-    title_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:40].rstrip("-")
+    title_slug = re.sub(r"[^a-z0-9]+", "-", _coerce_text(title, default="unknown").lower()).strip("-")[:40].rstrip("-")
 
     if LOCAL_REPO_PATH:
         wrong = worktree_guard.refuse_wrong_branch(LOCAL_REPO_PATH, num)
@@ -420,7 +420,7 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
     staging so they never appear in WO commits.
     """
     num = re.sub(r"[^0-9]", "", wo_id)
-    branch = f"wo/{num}-{re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:40].rstrip('-')}"
+    branch = f"wo/{num}-{re.sub(r'[^a-z0-9]+', '-', _coerce_text(title, default='unknown').lower()).strip('-')[:40].rstrip('-')}"
 
     push_env = _ci_env(worktree)
 
@@ -526,7 +526,7 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
 async def run_wo(wo_spec: dict, preferred_agent: str = PREFERRED_AGENT) -> None:
     wo_number = wo_spec.get("wo", wo_spec.get("number", "?"))
     wo_id = f"WO-{wo_number}" if not str(wo_number).startswith("WO-") else str(wo_number)
-    title = wo_spec.get("title", "Unknown")
+    title = _coerce_text(wo_spec.get("title", "Unknown"), default="Unknown")
     slug = slug_from_title(title, wo_number)
     start_time = datetime.now(UTC)
     ask_calls: list[dict] = []
