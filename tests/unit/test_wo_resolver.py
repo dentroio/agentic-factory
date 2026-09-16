@@ -179,9 +179,15 @@ def test_wos_completed_by_merged_pr_counts_implementation():
         "title": "WO-1035: Resolve conflict: PR #455 — WO-417: Coverage Consolidation",
         "head": {"ref": "wo/1035-resolve-conflict"},
     }) == [417, 1035]
+    # Mark-done on a docs branch is Status-only — must NOT complete.
     assert wos_completed_by_merged_pr({
         "title": "docs(pm): mark WO-499 and WO-504 done",
         "head": {"ref": "docs/mark-499-504-done"},
+    }) == []
+    # Mark-done on a wo/NNN- branch still counts (branch + title WO refs).
+    assert wos_completed_by_merged_pr({
+        "title": "docs(pm): mark WO-499 and WO-504 done",
+        "head": {"ref": "wo/499-closeout"},
     }) == [499, 504]
     assert wos_completed_by_merged_pr({
         "title": "WO-493: Backfill WO-489 spec doc; document abandoned WO-491",
@@ -211,11 +217,15 @@ def test_wos_completed_by_merged_pr_ignores_docs_scoped_title_mentions():
         "title": "docs(pm): WO-551 — write the enforcement runbook",
         "head": {"ref": "wo/551-enforcement-runbook"},
     }) == [551]
-    # …and an explicit mark-done docs PR still counts regardless of prefix.
+    # Explicit mark-done docs PR must NOT complete (WO-583 false close).
     assert wos_completed_by_merged_pr({
         "title": "docs(pm): mark WO-499 and WO-504 done",
         "head": {"ref": "docs/mark-499-504-done"},
-    }) == [499, 504]
+    }) == []
+    assert wos_completed_by_merged_pr({
+        "title": "docs(pm): mark WO-583 done",
+        "head": {"ref": "docs/mark-done-WO-583-903"},
+    }) == []
 
 
 def test_classify_wo_status_strips_leading_emoji():

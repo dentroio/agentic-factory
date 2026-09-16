@@ -111,11 +111,21 @@ def load_repo_memory_lessons(
     return lessons
 
 
+def _coerce_text(value, *, default: str = "") -> str:
+    """Normalize orchestrator fields that may arrive as str or list."""
+    if value is None:
+        return default
+    if isinstance(value, (list, tuple, set)):
+        return " ".join(str(v).strip().strip("`") for v in value if v is not None and str(v).strip())
+    return str(value)
+
+
 def format_memory_context(memory: dict, wo_spec: dict, *, repo_lessons: list[str] | None = None) -> str:
     """Build the ## Factory Memory section for the agent prompt."""
     parts: list[str] = []
 
-    wo_services = wo_spec.get("services", "").lower()
+    # Orchestrator parses **Services:** into a list; older paths used a string.
+    wo_services = _coerce_text(wo_spec.get("services", "")).lower()
 
     # Relevant lessons (matching WO services or applies_to="all")
     lessons = memory.get("lessons", [])
@@ -502,5 +512,5 @@ def update_memory_after_failure(wo_id: str, failure_reason: str, services: str =
 
 
 def slug_from_title(title: str, wo_number: int | str) -> str:
-    clean = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    clean = re.sub(r"[^a-z0-9]+", "-", _coerce_text(title, default="unknown").lower()).strip("-")
     return f"{wo_number}-{clean[:40]}"

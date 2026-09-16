@@ -1773,8 +1773,12 @@ async def get_next(domain: str = "", repo: str = ""):
             continue
         # Domain filter — skip WOs not in this runner's domain
         if domain_tokens:
-            wo_services = wo.get("services", "").lower()
-            wo_priority = wo.get("priority", "").upper()
+            raw_services = wo.get("services", "")
+            if isinstance(raw_services, (list, tuple, set)):
+                wo_services = " ".join(str(s) for s in raw_services).lower()
+            else:
+                wo_services = str(raw_services or "").lower()
+            wo_priority = str(wo.get("priority", "") or "").upper()
             docs_domain = any(t in ("docs", "p3") for t in domain_tokens)
             if docs_domain:
                 if not ("none" in wo_services or "docs" in wo_services or wo_priority == "P3"):
@@ -2683,6 +2687,24 @@ async def auto_mark_done_wo(wo_id: str, pr_number: int | None = None,
         if n_val is not None:
             target_repo = (_specs_cache.get(n_val) or {}).get("repo")
     target_repo = target_repo or GITHUB_REPO
+
+    # Refuse Status-only / filing / reopen PRs — same completion rules as poll.
+    if pr_number is not None and wo_num.isdigit():
+        try:
+            async with httpx.AsyncClient(timeout=15) as gate_client:
+                pr_data = await _get(
+                    gate_client, f"/repos/{target_repo}/pulls/{pr_number}"
+                )
+            completed = wos_completed_by_merged_pr(pr_data)
+            if int(wo_num) not in completed:
+                msg = (
+                    f"refusing auto-mark-done for {wo_id}: PR #{pr_number} "
+                    f"does not complete this WO (completed={completed})"
+                )
+                print(f"[orchestrator] {msg}")
+                return {"ok": False, "wo": wo_id, "results": [], "errors": [msg]}
+        except Exception as exc:
+            print(f"[orchestrator] auto-mark-done gate check failed for {wo_id}: {exc}")
 
     target_wo_path = WO_PATH
     for p in _get_configured_repos():
@@ -4351,6 +4373,9 @@ async def poll() -> None:
     # Spec files that already say Done/Deferred/Superseded must close a
     # leftover in_progress claim — otherwise dashboard apply_live_status
     # treats dispatch as live and refuses to honor the merged PR.
+    # P0/P1 must not flip to complete from Status alone (a docs mark-done
+    # commit can rewrite Status without implementing the WO). Require a
+    # real PR URL or an existing trusted agent completion signal.
     for s_dict in specs_results:
         for num, spec in s_dict.items():
             if not _is_done(spec.get("status", "")):
@@ -4359,6 +4384,17 @@ async def poll() -> None:
             entry = _dispatch_state.get(wo_id)
             if entry is None or entry.get("status") in ("complete", "rejected"):
                 continue
+            priority = str(spec.get("priority") or "").upper()
+            if priority in ("P0", "P1"):
+                has_pr = bool(entry.get("pr_url") or entry.get("pr_number"))
+                agent = (entry.get("agent") or "").strip().lower()
+                trusted_agent = bool(agent) and agent != "unknown"
+                if not (has_pr and trusted_agent):
+                    print(
+                        f"[orchestrator] poll: refusing Status-only complete for "
+                        f"{wo_id} ({priority}) — no trusted PR completion"
+                    )
+                    continue
             entry["status"] = "complete"
             entry["completed_at"] = _utcnow()
             entry["step"] = entry.get("step") or "spec marked done"

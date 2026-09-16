@@ -52,6 +52,21 @@ def test_format_memory_includes_repo_lessons_without_json():
     assert "runner-auth" in text
 
 
+def test_format_memory_accepts_services_list():
+    """Orchestrator parses **Services:** into a list; .lower() must not crash."""
+    text = pb.format_memory_context(
+        {
+            "lessons": [
+                {"content": "keep frontend lean", "applies_to": ["frontend"], "source_wo": "WO-1"},
+            ]
+        },
+        {"services": ["`frontend`", "policy-service"]},
+        repo_lessons=[],
+    )
+    assert "keep frontend lean" in text
+    assert pb.slug_from_title(["Terminology", "cleanup"], 585).startswith("585-")
+
+
 def test_build_prompt_includes_tool_policy_and_memory(monkeypatch, tmp_path: Path):
     mem = tmp_path / "memory"
     mem.mkdir()

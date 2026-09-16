@@ -81,6 +81,45 @@ def _resolve_wo_for_pr(pr: dict) -> str | None:
     return f"WO-{n}" if n is not None else None
 
 
+_FILING_OR_REOPEN_TITLE_RE = _re.compile(
+    r"(?i)^(?:(?:docs|chore)(?:\([^)]*\))?:\s*)?(?:file|backfill|scope|reopen)\b"
+    r"|\breopen\b"
+)
+_DOCS_MARK_DONE_TITLE_RE = _re.compile(
+    r"(?i)^(?:docs|chore)(?:\([^)]*\))?:\s*mark(?:ed)?\b.*\b(?:done|complete)\b"
+)
+
+
+def _wos_completed_by_merged_pr(pr: dict) -> list[int]:
+    """WO numbers this merged PR should auto-mark done.
+
+    Mirrors orchestrator wo_resolver.wos_completed_by_merged_pr: docs/reopen/
+    filing/mark-done bookkeeping PRs must not complete implementation WOs.
+    """
+    title = (pr.get("title") or "").strip()
+    head_ref = (pr.get("head") or {}).get("ref", "") or ""
+    if _FILING_OR_REOPEN_TITLE_RE.search(title) or _DOCS_MARK_DONE_TITLE_RE.match(title):
+        return []
+    nums: set[int] = set()
+    branch_n = _extract_wo_from_branch(head_ref)
+    if branch_n is not None:
+        nums.add(branch_n)
+    # Title 'WO-NNN:' only when not a docs/chore conventional-commit scope.
+    if not _re.match(r"(?i)^(?:docs|chore)(?:\([^)]*\))?:\s", title):
+        for m in _re.finditer(r"(?i)\bWO-(\d+)\s*[:—]", title):
+            nums.add(int(m.group(1)))
+    # Mark-done on docs/chore branches is Status-only — never complete.
+    is_mark_done = _re.search(r"(?i)\bmark(?:ed)?\b", title) and _re.search(
+        r"(?i)\b(?:complete|done)\b", title
+    )
+    if is_mark_done:
+        docs_branch = head_ref.startswith(("docs/", "chore/"))
+        docs_title = bool(_re.match(r"(?i)^(?:docs|chore)(?:\([^)]*\))?:\s", title))
+        if branch_n is not None or (not docs_branch and not docs_title):
+            nums.update(int(x) for x in _re.findall(r"(?i)\bWO-(\d+)\b", title))
+    return sorted(nums)
+
+
 async def _fetch_open_prs(client: httpx.AsyncClient) -> list[dict]:
     return await _get(client, f"/repos/{GITHUB_REPO}/pulls", {"state": "open", "per_page": 100})
 
@@ -99,26 +138,26 @@ async def _fetch_recently_merged_prs(client: httpx.AsyncClient, since_seconds: i
 
 
 async def _notify_mark_done(pr: dict, already_notified: set[str]) -> None:
-    """Call orchestrator auto-mark-done for a merged WO PR (once per WO)."""
+    """Call orchestrator auto-mark-done for WOs this PR actually completed."""
     if not ORCHESTRATOR_URL or not MARK_DONE_ENABLED:
         return
-    wo_id = _resolve_wo_for_pr(pr)
-    if not wo_id or wo_id in already_notified:
-        return
-    already_notified.add(wo_id)
-    params = {"pr_number": pr["number"], "merged_at": pr.get("merged_at", ""),
-              "pr_url": pr.get("html_url", "")}
-    try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            resp = await c.post(f"{ORCHESTRATOR_URL}/api/wos/{wo_id}/auto-mark-done",
-                                params=params, headers=_ORCH_AUTH)
-            if resp.status_code == 200:
-                print(f"[watchdog] auto-mark-done {wo_id}: {resp.json().get('results')}")
-            else:
-                print(f"[watchdog] auto-mark-done {wo_id} returned {resp.status_code}")
-    except Exception as e:
-        print(f"[watchdog] auto-mark-done {wo_id} error: {e}")
-
+    for n in _wos_completed_by_merged_pr(pr):
+        wo_id = f"WO-{n}"
+        if wo_id in already_notified:
+            continue
+        already_notified.add(wo_id)
+        params = {"pr_number": pr["number"], "merged_at": pr.get("merged_at", ""),
+                  "pr_url": pr.get("html_url", "")}
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                resp = await c.post(f"{ORCHESTRATOR_URL}/api/wos/{wo_id}/auto-mark-done",
+                                    params=params, headers=_ORCH_AUTH)
+                if resp.status_code == 200:
+                    print(f"[watchdog] auto-mark-done {wo_id}: {resp.json().get('results')}")
+                else:
+                    print(f"[watchdog] auto-mark-done {wo_id} returned {resp.status_code}")
+        except Exception as e:
+            print(f"[watchdog] auto-mark-done {wo_id} error: {e}")
 
 async def _fetch_pr_checks(client: httpx.AsyncClient, pr_number: int) -> list[dict]:
     commits = await _get(client, f"/repos/{GITHUB_REPO}/pulls/{pr_number}/commits")
