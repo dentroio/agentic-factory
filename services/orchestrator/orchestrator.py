@@ -590,6 +590,11 @@ def _save_advisor_depends() -> None:
 
 
 def _apply_advisor_edge(later: str, earlier: int, reason: str) -> None:
+    earlier_id = f"WO-{earlier}"
+    # Never serialize the queue behind a held WO (WO-588 hold stalled 584–589).
+    if earlier_id in _held_wos or later in _held_wos:
+        print(f"[orchestrator] advisor edge skipped (held): {later} → {earlier_id}")
+        return
     deps = _advisor_depends.setdefault(later, [])
     if earlier not in deps:
         deps.append(earlier)
@@ -616,6 +621,9 @@ def _effective_depends(wo: dict) -> list[int]:
                     n = int(str(d).replace("WO-", "").replace("wo-", ""))
                 except ValueError:
                     continue
+        # Held deps must not block the rest of the queue.
+        if f"WO-{n}" in _held_wos:
+            continue
         if n not in seen:
             seen.add(n)
             nums.append(n)
@@ -1680,28 +1688,36 @@ async def get_next(domain: str = "", repo: str = ""):
     if _pm_dispatch:
         dispatch = _pm_dispatch
         wo_id = dispatch["wo"]
-        occupied = _occupancy_reason_for(wo_id)
-        if occupied:
-            # Keep the PM request queued — occupancy can clear (PR merged,
-            # claim file completed) and the next poll should still honor it.
-            return {"wo": None, "reason": f"{wo_id} occupied — {occupied}"}
-        _pm_dispatch = None
-        existing = _dispatch_state.get(wo_id, {})
-        if existing.get("status") in active_statuses - {"complete"}:
-            return {"wo": None, "reason": f"{wo_id} already active"}
-        spec = _specs_cache.get(int(wo_id.replace("WO-", "")), {}) if _specs_cache else {}
-        target_repo = spec.get("repo", GITHUB_REPO)
-        if repo and target_repo != repo:
-            return {"wo": None, "reason": f"{wo_id} belongs to {target_repo}, not {repo}"}
-        return {
-            "wo": wo_id,
-            "title": spec.get("title", dispatch.get("title", wo_id)),
-            "priority": spec.get("priority", "P2"),
-            "effort": spec.get("effort", "M"),
-            "repo": target_repo,
-            "wo_path": spec.get("wo_path", WO_PATH),
-            "_dispatch_backend": dispatch.get("backend"),
-        }
+        # Held or occupied PM targets must not block the whole factory —
+        # WO-588 held with an open PR parked /api/next for days.
+        if wo_id in _held_wos:
+            print(f"[orchestrator] clearing PM dispatch for held {wo_id}")
+            _pm_dispatch = None
+        else:
+            occupied = _occupancy_reason_for(wo_id)
+            if occupied:
+                print(
+                    f"[orchestrator] clearing PM dispatch for occupied {wo_id}: {occupied}"
+                )
+                _pm_dispatch = None
+            else:
+                _pm_dispatch = None
+                existing = _dispatch_state.get(wo_id, {})
+                if existing.get("status") in active_statuses - {"complete"}:
+                    return {"wo": None, "reason": f"{wo_id} already active"}
+                spec = _specs_cache.get(int(wo_id.replace("WO-", "")), {}) if _specs_cache else {}
+                target_repo = spec.get("repo", GITHUB_REPO)
+                if repo and target_repo != repo:
+                    return {"wo": None, "reason": f"{wo_id} belongs to {target_repo}, not {repo}"}
+                return {
+                    "wo": wo_id,
+                    "title": spec.get("title", dispatch.get("title", wo_id)),
+                    "priority": spec.get("priority", "P2"),
+                    "effort": spec.get("effort", "M"),
+                    "repo": target_repo,
+                    "wo_path": spec.get("wo_path", WO_PATH),
+                    "_dispatch_backend": dispatch.get("backend"),
+                }
 
     plan = _orchestrator_output.get("plan", {})
     queue: list[dict] = plan.get("queue", [])
@@ -1804,6 +1820,15 @@ async def pm_dispatch_wo(wo: str, backend: str = "claude"):
     _pm_dispatch = {"wo": wo_id, "backend": backend}
     print(f"[orchestrator] PM dispatch queued: {wo_id} → {backend}")
     return {"ok": True, "wo": wo_id, "backend": backend}
+
+
+@app.delete("/api/pm/dispatch")
+async def clear_pm_dispatch():
+    """Clear a stuck PM direct-dispatch so /api/next can serve the normal queue."""
+    global _pm_dispatch
+    prev = _pm_dispatch
+    _pm_dispatch = None
+    return {"ok": True, "cleared": prev}
 
 
 @app.post("/api/pm/memory")
@@ -3522,16 +3547,18 @@ def _is_ready(status: str) -> bool:
     """Return True if the WO is ready to dispatch (Open or explicitly marked Ready).
 
     📋 Planned WOs exist in the spec file but are not yet actionable — they
-    must be promoted to 📋 Ready (or a plain 'open'/'ready' text status) before
-    the orchestrator will put them in the dispatch queue.
+    must be promoted to Ready/Open before the orchestrator will put them in
+    the dispatch queue. 🔲 Open (and other open-column emoji) must count —
+    WO-583 stalled because only 📋 Open was recognized.
     """
-    s = status.strip().lstrip("*").strip()
+    s = (status or "").strip().lstrip("*").strip()
+    if classify_wo_status(s) != "open":
+        return False
     sl = s.lower()
-    return (
-        sl.startswith(("ready", "open"))
-        or s.startswith("📋 Ready")
-        or s.startswith("📋 Open")
-    )
+    # Strip leading emoji / symbols then look for open/ready.
+    core = re.sub(r"^[^\w]+", "", sl).strip()
+    return core.startswith(("ready", "open")) or " ready" in f" {core}" or " open" in f" {core}"
+
 
 
 def _is_blocked(status: str) -> bool:
@@ -3947,7 +3974,11 @@ def _validate_spec(wo_num: int, spec: dict) -> list[str]:
     for section_group in SPEC_REQUIRED_SECTION_GROUPS:
         if not any(section.lower() in raw_lower for section in section_group):
             errors.append(f"missing section: one of {', '.join(section_group)}")
-    ac_lines = [ln for ln in raw.splitlines() if ln.strip().startswith("- [ ]")]
+    ac_lines = [
+        ln for ln in raw.splitlines()
+        if ln.strip().startswith("- [ ]")
+        or re.match(r"^\s*\d+\.\s+\S", ln)
+    ]
     if len(ac_lines) < SPEC_MIN_AC_ITEMS:
         errors.append(
             f"acceptance criteria has only {len(ac_lines)} checkbox item(s) — need at least {SPEC_MIN_AC_ITEMS}"
