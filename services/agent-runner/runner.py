@@ -35,6 +35,7 @@ from config import (
     AGENT_TIMEOUT,
     API_SECRET,
     AUTH_TOKEN,
+    CURSOR_API_KEY,
     DOMAIN_FILTER,
     GITHUB_REPO,
     HOSTNAME,
@@ -1023,6 +1024,17 @@ async def main(once: bool = False) -> None:
             run_backend = backend_override or active_backend
             if backend_override and backend_override != active_backend:
                 _log(f"PM dispatch override: backend={run_backend}")
+            # Refuse to claim with an unauthenticated cursor backend — it
+            # steals the WO, then exits with "Authentication required".
+            if run_backend == "cursor" and not CURSOR_API_KEY:
+                _log(
+                    "cursor backend selected but CURSOR_API_KEY is unset — "
+                    "skipping claim (fix auth or set preferred backend)"
+                )
+                if once:
+                    break
+                await asyncio.sleep(POLL_INTERVAL)
+                continue
             wo_number = next_wo.get("wo", next_wo.get("number", "?"))
             wo_id = f"WO-{wo_number}" if not str(wo_number).startswith("WO-") else str(wo_number)
             try:

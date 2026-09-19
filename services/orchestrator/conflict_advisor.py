@@ -287,25 +287,42 @@ def merge_edges(
     llm: list[dict],
     advisor_edges: dict[str, list[int]],
     open_by_id: dict[str, dict],
+    *,
+    held_wos: set[str] | None = None,
+    max_fan_in: int = 2,
+    max_edges: int = 12,
 ) -> list[dict]:
-    """Dedupe, refuse cycles, refuse unknown WOs. Deterministic wins on conflict."""
+    """Dedupe, refuse cycles, refuse unknown/held WOs. Cap fan-in per later WO.
+
+    max_fan_in stops the advisor from serializing an entire program behind one
+    WO (Enforce suite: WO-587 waited on 583–590 and froze the factory).
+    """
+    held = held_wos or set()
     working = graph_from(list(open_by_id.values()), advisor_edges)
     accepted: list[dict] = []
     seen: set[tuple[str, int]] = set()
+    fan_in: dict[str, int] = {k: len(v) for k, v in working.items()}
     for edge in deterministic + llm:
+        if len(accepted) >= max_edges:
+            break
         later = edge["later"]
         earlier = int(edge["earlier"])
         key = (later, earlier)
         if key in seen:
+            continue
+        if later in held or wo_id_for(earlier) in held:
             continue
         if later not in open_by_id or wo_id_for(earlier) not in open_by_id:
             continue
         later_wo = open_by_id[later]
         if earlier in existing_depends(later_wo, working):
             continue
+        if fan_in.get(later, 0) >= max_fan_in:
+            continue
         if would_cycle(working, later, earlier):
             continue
         working.setdefault(later, []).append(earlier)
+        fan_in[later] = fan_in.get(later, 0) + 1
         seen.add(key)
         accepted.append(edge)
     return accepted
@@ -316,6 +333,7 @@ async def run_advisor_pass(
     advisor_edges: dict[str, list[int]],
     anthropic_key: str = "",
     apply_edge: Callable[[str, int, str], Any] | None = None,
+    held_wos: set[str] | None = None,
 ) -> dict:
     """Propose and optionally persist edges. Returns a summary for intelligence status."""
     open_by_id = {}
@@ -329,7 +347,9 @@ async def run_advisor_pass(
 
     deterministic = propose_deterministic_edges(normalized, advisor_edges)
     llm = await llm_extra_edges(anthropic_key, normalized)
-    accepted = merge_edges(deterministic, llm, advisor_edges, open_by_id)
+    accepted = merge_edges(
+        deterministic, llm, advisor_edges, open_by_id, held_wos=held_wos or set()
+    )
 
     actions: list[str] = []
     for edge in accepted:

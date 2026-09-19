@@ -539,14 +539,20 @@ async def run_review_chain(
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
+        errored = 0
+        completed = 0
         for reviewer_name, result in zip(reviewer_names, results):
             cfg = REVIEWER_CONFIG[reviewer_name]
             if isinstance(result, Exception):
+                errored += 1
                 await monitor.post(
-                    f"⚠️ **{reviewer_name} reviewer** error: {result} — skipping.",
+                    f"⚠️ **{reviewer_name} reviewer** error: {result} — counting as chain failure "
+                    f"(reviewers must not silently skip).",
                     msg_type="text",
                 )
+                chain_passed = False
                 continue
+            completed += 1
             findings, usage = result  # type: ignore[misc]
             if usage.get("input_tokens") or usage.get("output_tokens"):
                 api_usage.append(usage)
@@ -568,7 +574,15 @@ async def run_review_chain(
             if wo_id:
                 await checkin(wo_id, f"review chain: {reviewer_name} done")
 
-        if not chain_passed:
+        # Fail closed: zero successful reviewers (e.g. all 401) must not look like a pass.
+        if completed == 0 and reviewer_names:
+            chain_passed = False
+            await monitor.post(
+                f"🔴 **Review chain failed closed** — all {errored} reviewer(s) errored "
+                f"(often invalid API key). Fix auth before human validation.",
+                msg_type="text",
+            )
+        elif not chain_passed:
             await monitor.post(
                 "🔴 **Review chain found blocking issues.** Agent must fix before human review.",
                 msg_type="text",
@@ -618,9 +632,10 @@ async def run_review_chain(
             if response is None:
                 kind = "timed out" if isinstance(last_error, TimeoutError) else f"errored: {last_error}"
                 await monitor.post(
-                    f"⚠️ **{reviewer_name} reviewer** {kind} twice — skipping.",
+                    f"⚠️ **{reviewer_name} reviewer** {kind} twice — counting as chain failure.",
                     msg_type="text",
                 )
+                chain_passed = False
                 continue
 
             findings = parse_reviewer_response(response)

@@ -245,7 +245,11 @@ _validations: list[dict] = []           # pending human validations
 _orchestrator_output: dict = {}         # last poll snapshot
 _held_wos: set[str] = set()            # WO IDs on hold (skip, don't claim)
 _specs_cache: dict[int, dict] = {}     # all merged WO specs from last poll (primary + secondary)
-_pm_dispatch: dict | None = None       # PM-requested direct dispatch {wo, backend, title}
+# PM direct-dispatch: in-memory only; expires so a held/occupied target cannot
+# park /api/next forever (WO-588 stall).
+PM_DISPATCH_TTL_SECONDS = int(os.getenv("PM_DISPATCH_TTL_SECONDS", "900"))
+_pm_dispatch: dict | None = None       # {wo, backend, queued_at}
+
 _plan_overlay: list[dict] = []         # spec-file WOs not in PLAN.json — runtime-only, never written to disk
 _approval_skips: dict[str, str] = {}   # wo_id → ISO timestamp until approval is bypassed
 # WOs a human has explicitly approved this session, independent of dispatch
@@ -562,6 +566,8 @@ def _save_dispatch() -> None:
 
 def _save_held() -> None:
     dispatch_control.atomic_write_json(HOLD_PATH, sorted(_held_wos))
+    # Holding a WO must not leave it as an advisor blocker for the rest of the queue.
+    _prune_advisor_depends()
 
 
 def _load_advisor_depends() -> None:
@@ -580,6 +586,40 @@ def _load_advisor_depends() -> None:
         _advisor_depends = cleaned
     except Exception:
         _advisor_depends = {}
+    _prune_advisor_depends()
+
+
+def _prune_advisor_depends(*, max_fan_in: int = 2) -> bool:
+    """Drop held endpoints and cap fan-in so stale edges cannot freeze /api/next."""
+    global _advisor_depends
+    changed = False
+    pruned: dict[str, list[int]] = {}
+    for later, nums in list(_advisor_depends.items()):
+        if later in _held_wos:
+            changed = True
+            continue
+        kept: list[int] = []
+        for n in nums:
+            earlier_id = f"WO-{n}"
+            if earlier_id in _held_wos:
+                changed = True
+                continue
+            if len(kept) >= max_fan_in:
+                changed = True
+                continue
+            if n not in kept:
+                kept.append(n)
+        if kept:
+            pruned[later] = kept
+        elif later in _advisor_depends:
+            changed = True
+        if kept != list(_advisor_depends.get(later) or []):
+            changed = True
+    if changed:
+        _advisor_depends = pruned
+        _save_advisor_depends()
+        print(f"[orchestrator] pruned conflict advisor edges (fan_in≤{max_fan_in}, held skipped)")
+    return changed
 
 
 def _save_advisor_depends() -> None:
@@ -596,9 +636,13 @@ def _apply_advisor_edge(later: str, earlier: int, reason: str) -> None:
         print(f"[orchestrator] advisor edge skipped (held): {later} → {earlier_id}")
         return
     deps = _advisor_depends.setdefault(later, [])
-    if earlier not in deps:
-        deps.append(earlier)
-        _save_advisor_depends()
+    if earlier in deps:
+        return
+    if len(deps) >= 2:
+        print(f"[orchestrator] advisor edge skipped (fan-in cap): {later} already waits on {deps}")
+        return
+    deps.append(earlier)
+    _save_advisor_depends()
     thread_store.append_message(later, thread_store.system_message(
         f"🔀 Conflict advisor: wait for **WO-{earlier}** — {reason}"
     ))
@@ -1310,6 +1354,11 @@ class ValidationDecision(BaseModel):
     decided_by: str
     notes: str = ""
     reason: str = ""  # alias used by claude-reviewer; prefer over notes
+    # When true, close the open implementation PR after reject. Default false:
+    # keep the PR open and park as awaiting_human so humans/agents can iterate
+    # (WO-588: reject then "we need the PR open + hold").
+    close_pr: bool = False
+    hold: bool = False  # also add to held_wos so /api/next skips until un-held
 
     def reject_reason(self) -> str:
         return self.reason or self.notes
@@ -1478,6 +1527,7 @@ async def _run_conflict_advisor() -> dict:
         _advisor_depends,
         anthropic_key=_get_anthropic_key(),
         apply_edge=_apply_advisor_edge,
+        held_wos=set(_held_wos),
     )
 
 
@@ -1688,10 +1738,20 @@ async def get_next(domain: str = "", repo: str = ""):
     if _pm_dispatch:
         dispatch = _pm_dispatch
         wo_id = dispatch["wo"]
-        # Held or occupied PM targets must not block the whole factory —
-        # WO-588 held with an open PR parked /api/next for days.
-        if wo_id in _held_wos:
-            print(f"[orchestrator] clearing PM dispatch for held {wo_id}")
+        queued_at = dispatch.get("queued_at") or ""
+        expired = False
+        if queued_at:
+            try:
+                age = (datetime.now(UTC) - datetime.fromisoformat(
+                    queued_at.replace("Z", "+00:00")
+                )).total_seconds()
+                expired = age > PM_DISPATCH_TTL_SECONDS
+            except ValueError:
+                expired = True
+        # Held, occupied, or expired PM targets must not block the whole factory.
+        if wo_id in _held_wos or expired:
+            why = "held" if wo_id in _held_wos else f"expired (>{PM_DISPATCH_TTL_SECONDS}s)"
+            print(f"[orchestrator] clearing PM dispatch for {wo_id}: {why}")
             _pm_dispatch = None
         else:
             occupied = _occupancy_reason_for(wo_id)
@@ -1817,9 +1877,15 @@ async def pm_dispatch_wo(wo: str, backend: str = "claude"):
     global _pm_dispatch
     _refuse_if_paused()
     wo_id = wo.upper() if wo.upper().startswith("WO-") else f"WO-{wo}"
-    _pm_dispatch = {"wo": wo_id, "backend": backend}
+    _pm_dispatch = {"wo": wo_id, "backend": backend, "queued_at": _utcnow()}
     print(f"[orchestrator] PM dispatch queued: {wo_id} → {backend}")
-    return {"ok": True, "wo": wo_id, "backend": backend}
+    return {"ok": True, "wo": wo_id, "backend": backend, "queued_at": _pm_dispatch["queued_at"]}
+
+
+@app.get("/api/pm/dispatch")
+async def get_pm_dispatch():
+    """Inspect the in-flight PM direct-dispatch (if any)."""
+    return {"pm_dispatch": _pm_dispatch, "ttl_seconds": PM_DISPATCH_TTL_SECONDS}
 
 
 @app.delete("/api/pm/dispatch")
@@ -1888,6 +1954,50 @@ async def resume_factory():
 @app.get("/api/held-wos")
 async def get_held_wos():
     return sorted(_held_wos)
+
+
+@app.get("/api/stalls")
+async def get_stalls():
+    """Dashboard: why the factory is not progressing — held, aged retries, PM dispatch, advisor edges."""
+    now = datetime.now(UTC)
+    stalled: list[dict] = []
+    for wo_id, entry in sorted(_dispatch_state.items()):
+        status = entry.get("status") or ""
+        if status not in (
+            "retry_queued", "awaiting_commit", "awaiting_human", "rejected",
+            "pending_approval", "preflight_held", "stale",
+        ):
+            continue
+        age_s = None
+        for ts_key in ("retried_at", "stale_at", "last_seen", "claimed_at"):
+            raw = entry.get(ts_key)
+            if not raw:
+                continue
+            try:
+                age_s = (now - datetime.fromisoformat(str(raw).replace("Z", "+00:00"))).total_seconds()
+                break
+            except ValueError:
+                pass
+        occ = _occupancy_reason_for(wo_id)
+        stalled.append({
+            "wo": wo_id,
+            "status": status,
+            "step": entry.get("step") or "",
+            "attempt_count": entry.get("attempt_count", 0),
+            "pr_url": entry.get("pr_url") or "",
+            "held": wo_id in _held_wos,
+            "age_seconds": int(age_s) if age_s is not None else None,
+            "occupancy": occ,
+            "advisor_depends": _advisor_depends.get(wo_id, []),
+        })
+    return {
+        "held_wos": sorted(_held_wos),
+        "pm_dispatch": _pm_dispatch,
+        "pm_dispatch_ttl_seconds": PM_DISPATCH_TTL_SECONDS,
+        "advisor_edge_count": sum(len(v) for v in _advisor_depends.values()),
+        "stalled": stalled,
+        "generated_at": _utcnow(),
+    }
 
 
 @app.post("/api/wos/{wo_id}/hold")
@@ -2429,6 +2539,7 @@ async def reject_validation(wo: str, decision: ValidationDecision):
     # Reject ALL pending validations for this WO (duplicates accumulate when
     # multiple runners claim the same WO concurrently).
     rejected_count = 0
+    pr_url = ""
     for v in _validations:
         if v["wo"] == wo and v["status"] == "pending":
             v["status"] = "rejected"
@@ -2437,20 +2548,46 @@ async def reject_validation(wo: str, decision: ValidationDecision):
             v["notes"] = decision.notes
             v["reject_reason"] = decision.reject_reason()
             rejected_count += 1
+            pr_url = pr_url or (v.get("pr_url") or "")
 
     if rejected_count == 0:
         raise HTTPException(status_code=404, detail=f"No pending validation for {wo}")
 
     _save_validations()
     if wo in _dispatch_state:
-        _dispatch_state[wo]["status"] = "rejected"
+        # Keep the PR linked. Default: park as awaiting_human so the work is
+        # visible and the open PR can be fixed — not a silent rejected dead-end.
+        entry = _dispatch_state[wo]
+        if pr_url and not entry.get("pr_url"):
+            entry["pr_url"] = pr_url
+        if decision.hold or (pr_url and not decision.close_pr):
+            entry["status"] = "awaiting_human"
+            entry["step"] = entry.get("step") or "rejected — PR kept open for follow-up"
+        else:
+            entry["status"] = "rejected"
+        _dispatch_state[wo] = entry
         _save_dispatch()
 
+    guidance = decision.reject_reason()
     thread_store.append_message(wo, thread_store.system_message(
         f"✗ Rejected by **{decision.decided_by}**"
-        + (f"\n\nGuidance: {decision.notes}" if decision.notes else "")
+        + (f"\n\nGuidance: {guidance}" if guidance else "")
+        + (
+            f"\n\nPR kept open: {pr_url}" if pr_url and not decision.close_pr else ""
+        )
     ))
-    print(f"[orchestrator] {wo} rejected by {decision.decided_by} ({rejected_count} pending cleared): {decision.notes}")
+    print(f"[orchestrator] {wo} rejected by {decision.decided_by} ({rejected_count} pending cleared): {guidance}")
+
+    if decision.hold or (pr_url and not decision.close_pr):
+        _held_wos.add(wo)
+        _save_held()
+        thread_store.append_message(wo, thread_store.system_message(
+            f"⏸️ **Held** after reject — agents will skip {wo} until un-held"
+            + (" (PR left open for follow-up)" if pr_url and not decision.close_pr else "")
+        ))
+
+    if decision.close_pr and pr_url:
+        asyncio.create_task(_close_pr_after_reject(wo, pr_url, guidance))
 
     # Auto-hold the WO after 3 cumulative rejections so agents don't spin forever.
     total_rejections = sum(1 for v in _validations if v["wo"] == wo and v["status"] == "rejected")
@@ -2462,7 +2599,13 @@ async def reject_validation(wo: str, decision: ValidationDecision):
         ))
         print(f"[orchestrator] {wo} auto-held after {total_rejections} rejections")
 
-    return {"ok": True, "rejected": rejected_count}
+    return {
+        "ok": True,
+        "rejected": rejected_count,
+        "held": wo in _held_wos,
+        "pr_url": pr_url,
+        "close_pr": decision.close_pr,
+    }
 
 
 @app.delete("/api/dispatch/{wo_id}")
@@ -3422,6 +3565,40 @@ async def _get(client: httpx.AsyncClient, path: str, params: dict | None = None)
     resp = await client.get(url, headers=_headers(), params=params or {})
     resp.raise_for_status()
     return resp.json()
+
+
+async def _close_pr_after_reject(wo_id: str, pr_url: str, guidance: str) -> None:
+    """Close an implementation PR after an explicit reject+close_pr decision."""
+    m = re.search(r"/pull/(\d+)", pr_url or "")
+    if not m:
+        print(f"[orchestrator] {wo_id}: cannot close PR — bad url {pr_url!r}")
+        return
+    pr_num = int(m.group(1))
+    body = (
+        f"Closed after factory rejection of {wo_id}.\n\n"
+        + (f"Guidance:\n{guidance}\n" if guidance else "")
+    )
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            await client.post(
+                f"https://api.github.com/repos/{GITHUB_REPO}/issues/{pr_num}/comments",
+                headers=_headers(),
+                json={"body": body},
+            )
+            resp = await client.patch(
+                f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_num}",
+                headers=_headers(),
+                json={"state": "closed"},
+            )
+            if resp.status_code in (200, 201):
+                print(f"[orchestrator] {wo_id}: closed PR #{pr_num} after reject")
+                thread_store.append_message(wo_id, thread_store.system_message(
+                    f"🔒 Closed PR #{pr_num} after reject (close_pr=true)"
+                ))
+            else:
+                print(f"[orchestrator] {wo_id}: close PR #{pr_num} failed: {resp.status_code}")
+    except Exception as e:
+        print(f"[orchestrator] {wo_id}: close PR #{pr_num} error: {e}")
 
 
 async def _get_repo_variable(client: httpx.AsyncClient, repo: str, name: str) -> str | None:

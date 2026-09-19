@@ -120,8 +120,8 @@ def test_retry_queued_allows_own_dirty_tree_but_not_open_pr():
     )
 
 
-def test_retry_queued_ignores_unreadable_host_worktree():
-    """Orchestrator runs in Docker; host worktrees look unreadable via git."""
+def test_unreadable_host_worktree_never_occupies():
+    """Docker mounts of host `.worktrees` often can't resolve `.git` — not occupancy."""
     occ = _load_occupancy()
     unread = {
         "exists": True,
@@ -129,8 +129,9 @@ def test_retry_queued_ignores_unreadable_host_worktree():
             "path": "wo-502-x", "branch": "", "dirty": True, "ahead": 0, "git_ok": False,
         }],
     }
+    assert "readable git" in (occ.reason_from_worktrees(502, unread) or "")
     assert occ.occupancy_reason(wo_num=502, worktrees=unread, factory_status="retry_queued") is None
-    assert occ.occupancy_reason(wo_num=502, worktrees=unread, factory_status="") is not None
+    assert occ.occupancy_reason(wo_num=502, worktrees=unread, factory_status="") is None
 
 
 def test_retry_queued_still_refuses_wrong_branch():
@@ -199,6 +200,18 @@ def test_orchestrator_never_merges_operator_working_tree():
     assert "import occupancy" in text
     assert "_occupancy_reason_for" in text
     assert "/api/dispatch/{wo_id}/park" in text
+
+
+def test_reject_parks_awaiting_human_and_holds_by_default():
+    text = (ORCH / "orchestrator.py").read_text(encoding="utf-8")
+    assert "close_pr: bool = False" in text
+    assert "_close_pr_after_reject" in text
+    # Default reject with open PR must park + hold, not silently re-queue.
+    assert 'entry["status"] = "awaiting_human"' in text
+    assert "PR left open for follow-up" in text
+    assert "PM_DISPATCH_TTL_SECONDS" in text
+    assert 'async def clear_pm_dispatch' in text or "@app.delete(\"/api/pm/dispatch\")" in text
+    assert 'async def get_stalls' in text or '"/api/stalls"' in text
 
 
 def test_get_next_and_claim_call_occupancy():

@@ -165,11 +165,13 @@ def occupancy_reason(
     wt = reason_from_worktrees(wo_num, worktrees)
     if not wt:
         return None
+    # Docker mounts of host `.worktrees` often can't resolve the `.git` file
+    # (absolute host path). That is not external occupancy — ignore it always.
+    if "not a readable git checkout" in wt:
+        return None
     if retrying:
         # Reclaiming factory's own tree is allowed; a worktree whose HEAD is
-        # another WO's branch is not. "not a readable git checkout" is what
-        # Docker sees for host worktrees (`.git` file points at a host path)
-        # and must not block Retry.
+        # another WO's branch is not.
         if "not wo/" in wt:
             return wt
         return None

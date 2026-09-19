@@ -90,7 +90,9 @@ def test_clone_product_scrubs_token_on_failure(tmp_path, monkeypatch):
     assert pat not in str(exc.value)
 
 
-def test_configure_product_scaffolds(tmp_path):
+def test_configure_product_scaffolds(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_REPO", raising=False)
+    monkeypatch.delenv("LOCAL_REPO_PATH", raising=False)
     app = tmp_path / "my-app"
     app.mkdir()
     result = ps.configure_product(

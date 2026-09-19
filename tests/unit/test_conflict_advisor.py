@@ -119,6 +119,51 @@ def test_parse_llm_edges_bad_json():
     assert adv.parse_llm_edges("not json", {1}) == []
 
 
+def test_merge_edges_skips_held_wos():
+    adv = _load()
+    open_by = {
+        "WO-583": {"wo": "WO-583", "number": 583, "priority": "P1", "services": "docs",
+                   "files_likely_changed": [], "depends_on": []},
+        "WO-588": {"wo": "WO-588", "number": 588, "priority": "P1", "services": "docs",
+                   "files_likely_changed": [], "depends_on": []},
+    }
+    proposed = [{"later": "WO-583", "earlier": 588, "reason": "shared", "source": "deterministic"}]
+    accepted = adv.merge_edges(proposed, [], {}, open_by, held_wos={"WO-588"})
+    assert accepted == []
+
+
+def test_merge_edges_caps_fan_in():
+    adv = _load()
+    open_by = {
+        f"WO-{n}": {"wo": f"WO-{n}", "number": n, "priority": "P1", "services": "docs",
+                    "files_likely_changed": [], "depends_on": []}
+        for n in (583, 584, 585, 586)
+    }
+    proposed = [
+        {"later": "WO-586", "earlier": 583, "reason": "a", "source": "deterministic"},
+        {"later": "WO-586", "earlier": 584, "reason": "b", "source": "deterministic"},
+        {"later": "WO-586", "earlier": 585, "reason": "c", "source": "deterministic"},
+    ]
+    accepted = adv.merge_edges(proposed, [], {}, open_by, max_fan_in=2)
+    assert len(accepted) == 2
+    assert {e["earlier"] for e in accepted} == {583, 584}
+
+
+def test_merge_edges_caps_total_edges():
+    adv = _load()
+    open_by = {
+        f"WO-{n}": {"wo": f"WO-{n}", "number": n, "priority": "P2", "services": "frontend",
+                    "files_likely_changed": [], "depends_on": []}
+        for n in range(100, 110)
+    }
+    proposed = [
+        {"later": f"WO-{later}", "earlier": earlier, "reason": "x", "source": "deterministic"}
+        for earlier, later in zip(range(100, 109), range(101, 110))
+    ]
+    accepted = adv.merge_edges(proposed, [], {}, open_by, max_edges=3)
+    assert len(accepted) == 3
+
+
 def test_orchestrator_unions_advisor_depends():
     text = (ORCH / "orchestrator.py").read_text(encoding="utf-8")
     get_next = text.split("async def get_next")[1].split("async def ")[0]
@@ -127,3 +172,6 @@ def test_orchestrator_unions_advisor_depends():
     assert "conflict_advisor" in text
     assert "_run_conflict_advisor" in text
     assert "conflict_advisor.json" in text
+    assert "held_wos" in text
+    assert "PM_DISPATCH_TTL_SECONDS" in text
+    assert "/api/stalls" in text
