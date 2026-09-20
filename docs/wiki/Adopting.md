@@ -1,13 +1,12 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-09-14
+last_verified: 2026-09-20
 covers_wos:
   - WO-1008
   - WO-1052
-  - WO-1058
   - WO-1091
-  - WO-1092
+  - WO-1103
 doc_owner: factory-team
 ---
 
@@ -37,17 +36,4 @@ The engine never needs write access to anything beyond `GITHUB_REPO`. There is n
 
 ## Fastest path: UI-first onboarding
 
-As of WO-1091, you don't need to hand-edit prefs files to wire up a product. In the dashboard:
-
-1. Open **Settings → Authentication**.
-2. Set the **local path** for your product's clone (or use the built-in **Clone** action to check it out from `GITHUB_REPO`).
-3. Use **Prepare files** to scaffold the adopter files your product is missing (see `factory init` below — this calls the same scaffolder).
-4. Restart when prompted so the orchestrator and agent-runner pick up the new path.
-
-The **Overview** page shows a setup banner/CTA whenever the product isn't fully wired (no local path, no `factory.yaml`, etc.), linking straight back to Settings → Authentication.
-
-Under the hood, the agent-runner host exposes `GET/PUT /api/product` and `POST /api/product/clone`, proxied through the orchestrator. Updating `GITHUB_REPO` via the Secrets UI takes effect immediately — no restart required just to point at a different repo (a restart is still needed to remount the local path).
-
-### One-click remount (WO-1092)
-
-Chang
+As of WO-1091, you don't need to hand-edit prefs files to wire up a product
