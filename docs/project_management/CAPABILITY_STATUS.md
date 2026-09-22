@@ -1,6 +1,6 @@
 # Dentro AI Factory — Capability Status
 
-_Last updated: 2026-09-07_
+_Last updated: 2026-09-20_
 
 A living registry of what the system can do, at what fidelity, and what's still open.
 
@@ -117,11 +117,12 @@ A living registry of what the system can do, at what fidelity, and what's still 
 
 | Capability | Status | Notes | WO |
 |------------|--------|-------|----|
-| GitHub Actions CI pipeline (lint, test, static check) | ✅ | Blocks merge on failure | — |
-| AI code review (Claude) | ✅ | Advisory — never blocks merge | — |
+| GitHub Actions CI pipeline (engine: tests + Gitleaks) | ✅ | Blocks merge on failure; product repos keep their own CI | WO-1106 |
+| AI code review (Claude) | ✅ | Blocks merge on "Review required" or a missing verdict | WO-1106 |
 | Secret detection (Gitleaks) | ✅ | Blocks on detected secrets; required check | WO-1072, WO-1085 |
-| Merge advisor (synthesized recommendation) | ✅ | ✅/⚠️/❌ in PR comments | — |
-| Self-healing CI (auto-update behind-main branches) | ✅ | | — |
+| Risk Tier Approval Gate | ✅ | P0/P1 need Approve or `risk-tier-approved`; required check | — |
+| Merge advisor (synthesized recommendation) | ✅ | ✅/⚠️/❌ in PR comments; never a gate | — |
+| Self-healing CI (auto-fix + auto-update behind-main) | ✅ | Auto-fix/review-applier require the `agent-pr` label on the PR | WO-1106 |
 | `.agents/` entry point for Google Antigravity / Gemini | ✅ | Skills + workflows subdirs | — |
 | Docker Compose single-command deploy | ✅ | `docker compose -f docker-compose.status.yml up -d` | — |
 | Codex workflow dispatch (`.github/workflows/codex-dispatch.yml`) | ✅ | Triggered via `/api/dispatch-codex` | WO-1008 |
@@ -168,6 +169,7 @@ as tag `legacy-annotation-extension` — do not load it.
 
 | Date | Capability | WO / Fix |
 |------|------------|----|
+| 2026-09-20 | Runner applies `agent-pr`; engine CI docs match the live four required checks | WO-1106 |
 | 2026-09-15 | Engine CD enabled — `factory-deploy-Mac` runner + `FACTORY_CD_ENABLED=true` + successful Deploy | WO-1094 |
 | 2026-09-14 | JS/TS security scan: npx-pinned eslint-plugin-security + API usage recording | WO-1105 |
 | 2026-09-14 | Oryntra dogfood — enterprise cockpit on `main` ([PR #3](https://github.com/dentroio/Oryntra/pull/3)) | WO-1047–1051 |

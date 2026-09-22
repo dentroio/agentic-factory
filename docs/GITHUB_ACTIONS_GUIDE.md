@@ -19,19 +19,27 @@ You write instructions for that robot in YAML files stored in `.github/workflows
 
 ## The Big Picture: What Happens When an Agent Opens a PR
 
-Here's the full sequence from "agent pushes code" to "code is on main":
+Here's the full sequence from "agent pushes code" to "code is on main".
+
+There are **two** CI shapes. This guide used to describe Clarion's product
+gate as if it ran on the factory engine. They are not the same:
+
+| Place | Required merge checks |
+|-------|------------------------|
+| **Engine** (`dentroio/agentic-factory`) | `Unit Tests`, `Secret Detection (Gitleaks)`, `Claude Code Review`, `Risk Tier Approval Gate` |
+| **Product** (`GITHUB_REPO`, e.g. Clarion) | That repo's own language CI (Clarion: Lint, Unit Tests, Frontend, Migration Safety, Gitleaks, `PR Gate`, Claude Code Review) |
+
+Engine `ci.yml` runs **two** jobs in parallel (Gitleaks + pytest). Product
+repos paste extra workflows from `templates/github/` and keep their own `ci.yml`.
 
 ```
-Agent pushes branch + opens PR
+Agent pushes branch + opens PR (runner adds the `agent-pr` label)
            │
            ▼
     ┌──────────────────────────────────────────────┐
-    │  CI (ci.yml) runs 5 checks in parallel:      │
-    │    1. Secret Detection (Gitleaks)             │
-    │    2. Lint (Black + Ruff)                    │
-    │    3. Unit Tests (pytest)                    │
-    │    4. Frontend (TypeScript + build)           │
-    │    5. Migration Safety                        │
+    │  Engine CI (ci.yml)                          │
+    │    1. Secret Detection (Gitleaks)            │
+    │    2. Unit Tests (pytest)                    │
     └──────────────────────────────────────────────┘
            │
            ▼
@@ -43,7 +51,7 @@ Agent pushes branch + opens PR
            │
            ▼
     ┌──────────────────────────────────────────────┐
-    │  Self-Healing (if needed):                   │
+    │  Self-Healing (agent-pr PRs only):           │
     │    • CI failed? → ci-auto-fix.yml tries fix  │
     │    • AI said "Needs attention"?              │
     │      → ai-review-applier.yml patches code    │
@@ -59,8 +67,8 @@ Agent pushes branch + opens PR
            ▼
     ┌──────────────────────────────────────────────┐
     │  Merge Decision                              │
-    │    P1: Human clicks Merge after reviewing    │
-    │    P2: Auto-merge fires when all checks pass │
+    │    P0/P1: Human clicks Merge after reviewing │
+    │    P2/P3: Auto-merge fires when checks pass  │
     └──────────────────────────────────────────────┘
            │
            ▼
@@ -81,19 +89,18 @@ Agent pushes branch + opens PR
 
 **Trigger:** Any PR opened or updated against `main`. Also runs on every push to `main`.
 
-**The 5 checks it runs (all in parallel, so it's fast):**
+**On this engine** the two jobs run in parallel:
 
 | Check | What it looks for |
 |-------|-------------------|
 | **Secret Detection** | Scans every commit for passwords, API keys, tokens accidentally committed. Uses Gitleaks. If it finds one, the PR is blocked hard. |
-| **Lint** | Runs Black (Python formatter) and Ruff (Python linter). If your code isn't formatted correctly or has style violations, it fails. |
-| **Unit Tests** | Runs `pytest tests/unit/`. If any test fails, the PR is blocked. |
-| **Frontend** | Runs TypeScript type-check + test + build on the React frontend. |
-| **Migration Safety** | Verifies every new database migration file is registered in `adapter.py`. This prevents "migration exists but never runs" bugs. |
+| **Unit Tests** | Runs `pytest tests/unit/` and requires at least 20 test files. If any test fails, the PR is blocked. |
 
-**The Gate job:** After all 5 checks finish, a final "PR Gate" job collects their results. If any single check failed, Gate fails. The GitHub Ruleset requires Gate to pass before merge is allowed — this is what actually blocks the merge button.
+Local `make ci-local` also runs `scripts/pre_pr_check.py`. That is extra local strictness, not a GitHub required check.
 
-**Key point:** CI runs **code quality checks only**. It does NOT deploy anything. It runs on GitHub's cloud servers — your Docker containers are never touched.
+**Product repos** (Clarion and other `GITHUB_REPO` apps) have a larger CI: Lint, Frontend, Migration Safety, and often a `PR Gate` aggregator. Those jobs live in the **product** `.github/workflows/ci.yml`, not here.
+
+**Key point:** Engine CI runs **code quality checks only**. It does NOT deploy anything (CD is `deploy.yml`, gated by `FACTORY_CD_ENABLED`). It runs on GitHub's cloud servers — your Docker containers are never touched.
 
 ---
 
@@ -174,7 +181,7 @@ Agent pushes branch + opens PR
 **Trigger:** Runs right after `ai-review.yml` completes.
 
 **Signals it reads:**
-- Did CI pass or fail? (all 5 checks)
+- Did CI pass or fail? (engine: Unit Tests + Gitleaks)
 - What was the AI review verdict? (LGTM / Needs attention / Review required)
 - Did a previous verifier find any unmet acceptance criteria?
 - What does the diff look like? (risk indicators)
@@ -222,12 +229,12 @@ It's called a "pull request" because you're asking the repository to "pull" your
 
 1. **Agent creates a branch** — e.g., `wo/288-network-ai-agent`
 2. **Agent commits code** to that branch
-3. **Agent opens a PR** with `gh pr create`
-4. **CI runs** (all 5 checks in parallel, ~9 minutes)
+3. **Agent opens a PR** with `gh pr create --label agent-pr`
+4. **CI runs** (engine: Gitleaks + Unit Tests in parallel)
 5. **AI review runs** (posts a review comment)
-6. **Self-healing kicks in** if needed (auto-fix or review applier)
+6. **Self-healing kicks in** if needed (auto-fix or review applier — `agent-pr` only)
 7. **Merge advisor posts** a recommendation
-8. **Merge happens** — either auto (P2) or human approves (P1)
+8. **Merge happens** — either auto (P2/P3) or human approves (P0/P1)
 9. **Branch is deleted** after merge
 10. **auto-update-prs.yml fires** to update other open branches
 
@@ -293,10 +300,10 @@ gh pr merge --auto --squash
 This tells GitHub: "When all required checks pass, automatically squash-merge this PR — no human needs to click anything."
 
 The merge will fire the moment:
-- All required CI checks pass (Gate job = green)
+- All required CI checks pass
 - The AI review doesn't say "Review required"
 
-For P1 work orders, auto-merge is **not** used. A human must review the PR and click the merge button themselves. The merge advisor comment helps them make that decision quickly.
+For P0/P1 work orders, auto-merge is **not** used. A human must review the PR and click the merge button themselves. The merge advisor comment helps them make that decision quickly.
 
 ---
 
@@ -304,19 +311,18 @@ For P1 work orders, auto-merge is **not** used. A human must review the PR and c
 
 GitHub has a **ruleset** configured on `main` that lists the checks that MUST pass before merge is allowed. No one — not even an admin — can bypass these.
 
-The required checks on `main`:
+The required checks on **this engine's** `main` (ruleset `Protect main`):
 
 | Check name | What must pass |
 |------------|----------------|
 | `Secret Detection (Gitleaks)` | No secrets found in commits |
-| `Lint` | Black + Ruff clean |
 | `Unit Tests` | All pytest tests pass |
-| `Frontend (TypeScript + Build)` | tsc + npm test + npm build clean |
-| `Migration Safety Check` | All migration files registered in adapter.py |
 | `Claude Code Review` | AI review did not exit with "Review required" |
-| `PR Gate` | All of the above via the gate aggregator job |
+| `Risk Tier Approval Gate` | P0/P1 approved (or `risk-tier-approved`); P2/P3 pass |
 
-If any one of these is red, the merge button is disabled. Period.
+Clarion (the product) additionally requires `Lint (Black + Ruff)`, `Frontend (TypeScript + Build)`, `Migration Safety Check`, and `PR Gate`. Those names are **not** on this engine.
+
+If any required check is red, the merge button is disabled. Period.
 
 ---
 

@@ -127,15 +127,19 @@ If they only run locally (local Docker), skip this entirely. Note it in the envi
 
 This is required for AI code review, planning agent, merge advisor, and observability agent.
 
-#### 6. GitHub label — `new-wo`
+#### 6. GitHub labels — `new-wo`, `agent-pr`, `pm-sync`
 **Check:**
 ```bash
-gh label list --repo OWNER/REPO | grep new-wo
+gh label list --repo OWNER/REPO | grep -E 'new-wo|agent-pr|pm-sync'
 ```
 **Fix:**
 ```bash
 gh label create new-wo --color "#0075ca" --description "Triggers the planning agent to draft a WO spec"
+gh label create agent-pr --color "#0E8A16" --description "PRs opened by factory agents"
+gh label create pm-sync --color "#6F42C1" --description "Auto-generated PM/status-sync commits"
 ```
+
+`new-wo` triggers the planning agent. `agent-pr` must also be **applied to each agent PR** (the runner does this on `gh pr create`) or CI auto-fix / review applier will skip it. `pm-sync` marks bookkeeping PRs.
 
 #### 7. GitHub branch ruleset
 **Check:**
@@ -204,7 +208,7 @@ Run `python3 scripts/factory_status.py` to get a health snapshot. Common issues 
 
 **AI review is not blocking**
 - Verify `Claude Code Review` is in the required status checks in the GitHub Ruleset
-- Check that `ai-review.yml` has `if: steps.claude_review.outcome == 'failure'` on the final step
+- Confirm the "Enforce the review verdict" step is present and fail-closed (an empty or crashed review must not leave the job green)
 
 **Planning agent not triggering**
 - Verify the `new-wo` label exists

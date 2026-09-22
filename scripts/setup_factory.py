@@ -418,30 +418,47 @@ def phase_github_secret(state: dict) -> bool:
         return False
 
 
+ENGINE_LABELS = (
+    ("new-wo", "#0075ca", "Triggers the planning agent to draft a WO spec"),
+    ("agent-pr", "#0E8A16", "PRs opened by factory agents"),
+    ("pm-sync", "#6F42C1", "Auto-generated PM/status-sync commits"),
+)
+
+
 def phase_github_label(state: dict) -> bool:
-    step(7, "GitHub Label — new-wo")
+    step(7, "GitHub Labels — new-wo, agent-pr, pm-sync")
 
     code, out = run("gh label list 2>/dev/null")
-    if code == 0 and "new-wo" in out:
-        ok("'new-wo' label exists")
-        state["label"] = True
-        return True
-
     if code != 0:
         warn("gh CLI not authenticated — skipping label creation")
         return True
 
-    print()
-    info("The 'new-wo' label triggers the planning agent when applied to an issue.")
-    code2, out2 = run('gh label create new-wo --color "#0075ca" --description "Triggers the planning agent to draft a WO spec"')
-    if code2 == 0:
-        ok("Created 'new-wo' label")
+    missing = [name for name, _, _ in ENGINE_LABELS if name not in out]
+    if not missing:
+        ok("Labels exist: " + ", ".join(name for name, _, _ in ENGINE_LABELS))
         state["label"] = True
         return True
-    else:
-        warn(f"Could not create label: {out2}")
-        info('Create manually: gh label create new-wo --color "#0075ca"')
+
+    print()
+    info("These labels wire planning-agent (new-wo), CI auto-fix (agent-pr),")
+    info("and PM bookkeeping PRs (pm-sync).")
+    created_ok = True
+    for name, color, description in ENGINE_LABELS:
+        if name not in missing:
+            continue
+        code2, out2 = run(
+            f'gh label create {name} --color "{color}" --description "{description}"'
+        )
+        if code2 == 0:
+            ok(f"Created '{name}' label")
+        else:
+            created_ok = False
+            warn(f"Could not create '{name}': {out2}")
+            info(f'Create manually: gh label create {name} --color "{color}"')
+    if not created_ok:
         return False
+    state["label"] = True
+    return True
 
 
 def phase_github_ruleset(state: dict) -> bool:
@@ -454,8 +471,8 @@ def phase_github_ruleset(state: dict) -> bool:
             try:
                 rulesets = json.loads(out)
                 names = [r.get("name", "") for r in rulesets]
-                if "main-protection" in names:
-                    ok("'main-protection' ruleset exists")
+                if any(n in ("main-protection", "Protect main") for n in names):
+                    ok("main-protection ruleset exists")
                     state["ruleset"] = True
                     return True
             except Exception:
@@ -473,13 +490,12 @@ def phase_github_ruleset(state: dict) -> bool:
     info("  Name: main-protection")
     info("  Target branches: main")
     info("  Required status checks (add each by name):")
-    info("    • Claude Code Review")
-    info("    • Lint")
     info("    • Unit Tests")
-    info("    • Build")
     info("    • Secret Detection (Gitleaks)")
+    info("    • Claude Code Review")
+    info("    • Risk Tier Approval Gate")
     info()
-    warn("The names must match the 'name:' fields in ci.yml and ai-review.yml exactly.")
+    warn("The names must match the 'name:' fields in ci.yml, ai-review.yml, and risk-tier-approval.yml exactly.")
     print()
 
     if confirm("Have you created the ruleset?"):
