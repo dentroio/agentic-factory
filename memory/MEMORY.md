@@ -18,6 +18,7 @@
 - [dict.get() default trap](auto_fix-status-site-factory-500-null-claimed-at-breaks.md) — `dict.get(key, default)` does NOT apply the default when the key exists with value `None`, only when the key is absent
 
 ## Known Invariants
+- [agent-pr-label-required-for-ci-automation](auto_wo1106.md) — PRs opened by the agent runner must carry the `agent-pr` label or self-healing CI (auto-fix, review applier) silently never runs on them
 - [status-site-github-rate-limit-invariants](auto_fix-status-site-stop-dashboard-github-api-hammerin.md) — Constraints on GitHub API usage in services/status-site to avoid rate-limit storms
 - [orchestrator-queue-is-not-repo-scoped](auto_wo1103.md) — The dispatch queue table has no repo column, so any factory instance can accidentally enqueue/claim WOs belonging to another repo (e.g. engine WOs on a product factory) unless explicitly gated.
 - [auto_wo1099](auto_wo1099.md)
