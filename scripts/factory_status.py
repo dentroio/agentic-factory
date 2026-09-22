@@ -25,6 +25,7 @@ RED = "\033[31m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
 
+REQUIRED_LABELS = ("new-wo", "agent-pr", "pm-sync")
 PASS = f"{GREEN}✅{RESET}"
 WARN = f"{YELLOW}⚠️ {RESET}"
 FAIL = f"{RED}❌{RESET}"
@@ -130,11 +131,16 @@ def check_labels() -> bool:
     section("GitHub Labels")
     code, out = run("gh label list 2>/dev/null")
     if code != 0:
-        check("new-wo label", False, warn=True, detail="gh CLI not authenticated or no repo access")
+        check("engine labels", False, warn=True,
+              detail="gh CLI not authenticated or no repo access")
         return True
-    has_label = "new-wo" in out
-    fix = 'run: gh label create new-wo --color "#0075ca"' if not has_label else ""
-    return check("new-wo label", has_label, detail=fix)
+    missing = [name for name in REQUIRED_LABELS if name not in out]
+    if not missing:
+        return check("engine labels", True, detail=", ".join(REQUIRED_LABELS))
+    create = " ; ".join(
+        f'gh label create {name}' for name in missing
+    )
+    return check("engine labels", False, detail=f"missing: {', '.join(missing)} — {create}")
 
 
 def check_ruleset() -> bool:

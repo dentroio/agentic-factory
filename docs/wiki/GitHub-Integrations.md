@@ -1,8 +1,9 @@
 ---
 title: "GitHub Integrations"
 description: "Automated code review, planning, verification, and observability via GitHub Actions workflows"
-last_verified: 2026-08-31
-covers_wos: []
+last_verified: 2026-09-20
+covers_wos:
+  - WO-1106
 doc_owner: factory-team
 ---
 
@@ -39,7 +40,7 @@ The result: dependency failures that need human attention automatically enter th
 
 **Trigger:** Pull request opened or updated on `main`. Skips Dependabot PRs.
 
-Diffs source files against `main` (`.py`, `.ts`, `.tsx`, `.go`, `.java`, `.rs`), calls Claude with seven universal checks plus your project-specific checks from `scripts/review_context.txt`, and posts the review as a PR comment.
+Diffs the PR against `main` with an **exclusion** list (docs, images, lockfiles, vendored/minified output). Everything else is reviewed by default — there is no source-language allow-list. Calls Claude with seven universal checks plus your project-specific checks from `scripts/review_context.txt`, and posts the review as a PR comment.
 
 The review produces one of three verdicts:
 - **LGTM** — all checks pass, merge is not blocked
@@ -98,7 +99,7 @@ This workflow makes no AI calls — it is pure log relay. The goal is to give th
 
 Extracts the Suggestions section from the AI review comment, sends the suggestions plus the diff to Claude, and receives search-and-replace edits. The workflow applies the edits to the branch and pushes them with a `[ai-review-apply]` commit tag. The AI review runs again on the new push.
 
-This workflow only runs on agent PRs (identified by the `agent-pr` label or bot account username). It has a loop guard: commits tagged `[ai-review-apply]` do not trigger it again.
+This workflow only runs on agent PRs (identified by the `agent-pr` label on **that PR**, or a bot account username). Creating the label on the repo is not enough — the runner applies `--label agent-pr` when it opens the PR. It has a loop guard: commits tagged `[ai-review-apply]` do not trigger it again.
 
 ## auto-update-prs.yml
 
@@ -110,7 +111,7 @@ This closes the gap created by strict branch protection (branches behind `main` 
 
 ## ci-auto-fix.yml
 
-**Trigger:** CI fails on a PR labeled `agent-pr` or authored by a known bot account.
+**Trigger:** CI fails on a PR labeled `agent-pr` (applied by the runner) or authored by a known bot account.
 
 When CI fails on an agent PR, this workflow downloads the failure logs, fetches the PR diff, and calls Claude asking for a minimal patch to fix the failure. If Claude is confident about a fix, it applies search-and-replace edits to the branch files, commits with a `[ci-autofix]` tag, and pushes. CI re-runs automatically.
 
@@ -148,10 +149,17 @@ On a threshold violation, the observability agent calls Claude to write a concis
 
 ## Required GitHub Ruleset configuration
 
-For the AI code review block to enforce merge protection, add these as required status checks in your GitHub Ruleset (**Settings → Rules → Rulesets → New ruleset**):
+For the AI code review block to enforce merge protection, add these as required status checks in your GitHub Ruleset (**Settings → Rules → Rulesets**):
 
+**This engine:**
+
+- `Unit Tests`
+- `Secret Detection (Gitleaks)`
 - `Claude Code Review`
-- `Secret Detection (Gitleaks)` (if using Gitleaks in CI)
-- Any CI jobs (`Lint`, `Unit Tests`, `Build`) you want as gates
+- `Risk Tier Approval Gate`
+
+**Product repos:** protect `main` with **your** CI job names (template uses `CI`). Optional paste-ins from [`templates/github/`](../../templates/github/) add planning-agent / AI review on the product. Clarion additionally requires Lint, Frontend, Migration Safety, and `PR Gate`.
 
 Status check names must match the `name:` field in the workflow job exactly.
+
+Engine and product also need GitHub labels `new-wo`, `agent-pr`, and `pm-sync`. `agent-pr` must be applied to each agent PR, not only defined on the repo.

@@ -412,6 +412,73 @@ async def _build_change_summary(worktree: str) -> str:
     return " | ".join(parts) if parts else "No changes."
 
 
+AGENT_PR_LABEL = "agent-pr"
+
+
+def pr_create_argv(wo_id: str, title: str, branch: str, *, labeled: bool = True) -> list[str]:
+    """Build `gh pr create` argv.
+
+    `--label agent-pr` is what ci-auto-fix.yml and ai-review-applier.yml use to
+    tell an agent PR from a human one. Creating the label on the repo is not
+    enough — each PR has to carry it.
+    """
+    argv = [
+        "gh", "pr", "create",
+        "--title", f"{wo_id}: {title[:60]}",
+        "--body", (
+            f"## Summary\n\nImplemented by {AGENT_NAME} (backend: {PREFERRED_AGENT}) "
+            "via agentic factory.\n\n🤖 Submitted for human review before merge."
+        ),
+        "--base", "main",
+        "--head", branch,
+    ]
+    if labeled:
+        argv.extend(["--label", AGENT_PR_LABEL])
+    return argv
+
+
+async def _ensure_agent_pr_label(worktree: str) -> None:
+    """Create `agent-pr` if missing. Already-exists and permission errors are non-fatal."""
+    proc = await asyncio.create_subprocess_exec(
+        "gh", "label", "create", AGENT_PR_LABEL,
+        "--color", "0E8A16",
+        "--description", "PRs opened by factory agents",
+        cwd=worktree,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        out, _ = await _communicate(proc, timeout=GH)
+    except asyncio.TimeoutError:
+        _log(f"gh label create timed out after {GH}s — continuing")
+        return
+    if proc.returncode == 0:
+        return
+    msg = out.decode(errors="replace").strip().lower()
+    if "already exists" not in msg:
+        _log(f"could not ensure {AGENT_PR_LABEL} label: {msg[:200]}")
+
+
+async def _add_agent_pr_label(pr_url: str, worktree: str) -> None:
+    """Attach `agent-pr` after the PR exists. Never fails the caller."""
+    proc = await asyncio.create_subprocess_exec(
+        "gh", "pr", "edit", pr_url, "--add-label", AGENT_PR_LABEL,
+        cwd=worktree,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        out, _ = await _communicate(proc, timeout=GH)
+    except asyncio.TimeoutError:
+        _log(f"gh pr edit --add-label {AGENT_PR_LABEL} timed out after {GH}s")
+        return
+    if proc.returncode != 0:
+        _log(
+            f"could not add {AGENT_PR_LABEL} to {pr_url}: "
+            f"{out.decode(errors='replace').strip()[:200]}"
+        )
+
+
 async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, monitor) -> str:
     """Commit WO changes, push the branch, open a PR, and return the PR URL.
 
@@ -468,13 +535,12 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
 
     _log(f"{wo_id} pushed branch {branch}")
 
-    # Open PR
+    # Open PR. Ensure the label exists first so `--label agent-pr` does not
+    # fail the create; if it still fails, recover / retry unlabeled so a
+    # missing label never blocks the WO.
+    await _ensure_agent_pr_label(worktree)
     pr_proc = await asyncio.create_subprocess_exec(
-        "gh", "pr", "create",
-        "--title", f"{wo_id}: {title[:60]}",
-        "--body", f"## Summary\n\nImplemented by {AGENT_NAME} (backend: {PREFERRED_AGENT}) via agentic factory.\n\n🤖 Submitted for human review before merge.",
-        "--base", "main",
-        "--head", branch,
+        *pr_create_argv(wo_id, title, branch, labeled=True),
         cwd=worktree,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
     )
@@ -515,8 +581,28 @@ async def _commit_and_push(wo_id: str, slug: str, worktree: str, title: str, mon
     if existing:
         recovered_url = existing[0].get("url", "")
         _log(f"{wo_id} PR actually exists despite non-zero exit: {recovered_url}")
+        await _add_agent_pr_label(recovered_url, worktree)
         await monitor.post(f"✅ Committed, pushed, and PR opened: {recovered_url} (gh CLI reported an error, but the PR landed)")
         return recovered_url
+
+    unlabeled = pr_create_argv(wo_id, title, branch, labeled=False)
+    retry = await asyncio.create_subprocess_exec(
+        *unlabeled,
+        cwd=worktree,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        retry_out, _ = await _communicate(retry, timeout=GH)
+    except asyncio.TimeoutError:
+        retry_out = b""
+        _log(f"{wo_id} unlabeled gh pr create timed out after {GH}s")
+    retry_url = retry_out.decode(errors="replace").strip()
+    if retry.returncode == 0 and retry_url:
+        await _add_agent_pr_label(retry_url, worktree)
+        _log(f"{wo_id} PR created without --label (label may have been missing): {retry_url}")
+        await monitor.post(f"✅ Committed, pushed, and PR opened: {retry_url}")
+        return retry_url
 
     _log(f"{wo_id} gh pr create failed: {pr_url[:200]}")
     await monitor.post(f"✅ Changes pushed to `{branch}` — PR creation failed, will submit validate without pr_url")

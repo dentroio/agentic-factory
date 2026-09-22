@@ -1,6 +1,6 @@
 # Dentro AI Factory — Progress Tracker
 
-_Last updated: 2026-09-15_
+_Last updated: 2026-09-21_
 
 ---
 
@@ -19,6 +19,7 @@ Update this file **at the time of merge**, not before.
 
 | WO | Title | Priority | Status | Merged |
 |----|-------|----------|--------|--------|
+| WO-1106 | Apply `agent-pr` on runner PRs and correct engine CI docs | P2 | ✅ Complete | 2026-09-21 |
 | WO-1105 | Harden JS/TS security scan + record API token usage | P2 | ✅ Complete | 2026-09-14 |
 | WO-1104 | Orphan closer must not close canonical implementation PRs | P2 | ✅ Complete | 2026-09-14 |
 | WO-1103 | Refuse non-product WOs on the Clarion factory queue | P2 | ✅ Complete | 2026-09-13 |

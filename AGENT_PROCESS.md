@@ -186,6 +186,10 @@ The `ci-local` target should include:
 - Type check (if applicable)
 - Build check
 
+**On this engine** `make ci-local` is `test` + `pre-pr-check` + `secrets`. GitHub CI
+(`ci.yml`) runs unit tests and Gitleaks only — there is no lint, frontend, or
+migration job here. Product repos (for example Clarion) define their own CI.
+
 ---
 
 ## §4 Work Order Spec Format
@@ -337,21 +341,23 @@ Types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`
 
 ## §9 GitHub Actions (CI Pipeline)
 
-Every PR runs these jobs. All must pass before merge:
+This **engine** repo (`dentroio/agentic-factory`) is not a product app. Every PR
+to `main` must pass these required status checks (job `name:` fields must match
+the ruleset exactly):
 
-| Job | What it checks |
-|-----|---------------|
-| lint | Formatter + linter (project-specific) |
-| test | Unit test suite |
-| build | Build/compile check |
-| migration-check | Schema migration registry is consistent |
-| ai-review | Claude code review — fails the job on a "Review required" verdict, and on any run that produced no verdict at all |
+| Check | Workflow | What it checks |
+|-------|----------|----------------|
+| `Unit Tests` | `ci.yml` | `pytest tests/unit/` and at least 20 test files |
+| `Secret Detection (Gitleaks)` | `ci.yml` | No secrets in git history |
+| `Claude Code Review` | `ai-review.yml` | Fails on "Review required" or a missing verdict |
+| `Risk Tier Approval Gate` | `risk-tier-approval.yml` | P0/P1 need a human Approve or `risk-tier-approved`; P2/P3 pass |
 
-> **The AI review job is red-or-green on its own.** The repository ruleset's
-> `required_status_checks` should list `Unit Tests`, `Claude Code Review`,
-> `Risk Tier Approval Gate`, and `Secret Detection (Gitleaks)`. Until all four
-> are registered, treat a missing check as a signal a human must act on, not as
-> a gate that acts for you.
+Local `make ci-local` also runs `pre-pr-check` (static review of the diff). That
+step is not a GitHub required check.
+
+Product repos (`GITHUB_REPO`) keep **their own** language CI.
+Do not copy this engine's `ci.yml` into a product, and do not expect lint,
+frontend, or migration jobs to exist here — those belong to the product.
 
 After the AI review completes, the **Merge Advisor** (`merge-advisor.yml`) posts a synthesized recommendation comment on every P0/P1 PR. It is always the last comment before a human reviewer looks at the PR.
 

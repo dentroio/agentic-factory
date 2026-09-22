@@ -258,7 +258,8 @@ PROCESS_SECTION = """
 5.  Do not run the product verify command yourself — the runner quality gate runs it after this session
 6.  git add <specific files you changed> && git commit  (do NOT use git add -A)
 7.  git push -u origin <branch>
-8.  gh pr create — get the PR URL from the output
+8.  gh pr create --label agent-pr — get the PR URL from the output
+    (`agent-pr` opts CI auto-fix / review applier in; skip only if the label is missing)
 9.  Call POST /api/validate with ci_passed=true, security_passed=true, AND pr_url=<PR URL>
     The orchestrator REJECTS validation without a pr_url. Steps 6-8 are mandatory first.
 10. After human approval: for P2 run gh pr merge --auto --squash
