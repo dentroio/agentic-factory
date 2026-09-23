@@ -1,11 +1,12 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-09-21
+last_verified: 2026-09-23
 covers_wos:
   - WO-1008
   - WO-1052
   - WO-1091
+  - WO-1092
   - WO-1103
 doc_owner: factory-team
 ---
@@ -42,10 +43,11 @@ Go to **Settings → Authentication** in the dashboard:
 
 - Set the **local path** for your product's clone (or trigger a clone from `GITHUB_REPO` directly from the UI).
 - Click **prepare files** to scaffold the adopter kit (`factory.yaml`, `docs/factory/patterns.md`, WO spec directory) into that checkout without leaving the browser.
-- Saving the product repo in Settings updates `GITHUB_REPO` live for the running orchestrator (no restart needed to pick up the new repo for most read paths; an **agent restart hint** is shown when a full remount is required).
+- Saving the product repo in Settings updates `GITHUB_REPO` live for the running orchestrator (no restart needed to pick up the new repo for most read paths). When Docker still has the old path mounted, the UI shows a **Remount Docker** button (WO-1092) that recreates the containers with the new mount in place — no need to run `make restart` by hand.
+- Each local agent (Cursor, Claude, Codex, Gemini) binds to its own draft port, so switching products or running multiple agents at once no longer trips `Address already in use` errors.
 - If your product isn't wired up yet, the **Overview** page shows a setup CTA linking straight back to Authentication.
 
-This flow is driven by `product_setup.py` on the agent-runner host, proxied through the orchestrator as `GET/PUT /api/product` and `POST /api/product/clone` — all bearer-token gated, same as the rest of the admin API.
+This flow is driven by `product_setup.py` on the agent-runner host, proxied through the orchestrator as `GET/PUT /api/product`, `POST /api/product/clone`, and `POST /api/product/remount` — all bearer-token gated, same as the rest of the admin API.
 
 ## BYO path: scripts for the terminal
 
