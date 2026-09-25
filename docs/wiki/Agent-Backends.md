@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,13 +65,4 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer — **not** a coding backend. Disabled and advisory by default. Configure under **Settings → Agents / Reviewer Assignments**.
-
-| Setting | Typical |
-|---------|---------|
-| Endpoint | `http://localhost:8000` (OpenAI-compatible `/v1/chat/completions`) |
-| Model profile | Auto recommended, Antares 350M, Antares 1B, or Custom |
-| Run location | This machine, or another device on the LAN |
-| Mode | Advisory (default) or Blocking on configured severities |
-
-Antares runs alongside — not instead of — Bandit, Semgrep, and the JS security scan. The security reviewer role can be assigned to `antares`; architecture, correctness, performance, and documentation reviewers cannot select it. In advisory mode Antares findings are posted to the WO thread but never fail the security gate; in blocking mode, CRITICAL/HIGH (or whatever severities are configured) fail `security_passed`, and an unreachable/misconfigured endpoint also fails closed. Use **Test Antares Connection** in Settings → Agents to check reachability and available models before enabling it for real reviews.
+Optional Cisco Foundation AI reviewer
