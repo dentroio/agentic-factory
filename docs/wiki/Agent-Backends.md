@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-09-26
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,65 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Cisco Foundation AI's Antares models can be added as a purpose-built vulnerability-localization reviewer alongside the deterministic scanners (Bandit, Semgrep, JS/TS security scan) and the existing LLM peer-review chain. Antares is **disabled by default** and, when enabled, defaults to **advisory** mode — it never blocks a WO on its own findings unless you explicitly switch it to blocking.
+
+Configure it in **Settings → Agents → Reviewer Assignments**:
+
+- **Enable Antares security reviewer** — off by default.
+- **Run location** — `This machine` or `Another device on network`.
+- **Endpoint URL** — an OpenAI-compatible `POST {ANTARES_BASE_URL}/v1/chat/completions` server.
+- **Model profile** — `Auto recommended`, `Antares 350M` (`fdtn-ai/antares-350m`), `Antares 1B` (`fdtn-ai/antares-1b`), or `Custom` (any model name/path, including local GGUF conversions served via llama.cpp or another OpenAI-compatible runtime).
+- **Mode** — `Advisory` or `Blocking on configured severities` (CRITICAL/HIGH/MEDIUM/LOW checkboxes).
+- **Test Antares Connection** — checks reachability and, if the server exposes `GET /health` or `GET /v1/models`, shows available models; otherwise it shows the configured model with a warning that remote hardware suitability can't be verified.
+
+For local (`This machine`) auto-recommendation, the factory suggests Antares 350M on lower-memory Apple Silicon (M1, ≤8GB) or unknown hardware, and Antares 1B on 16GB+ Macs. It does not guess specs for a remote endpoint.
+
+`Antares` is only selectable for the **Security** reviewer slot — architecture, correctness, performance, and documentation reviewers cannot use it.
+
+When the security reviewer is set to `antares`, `review_chain.py` calls the Antares backend instead of Claude/Codex/Cursor/Gemini, includes prior Bandit/Semgrep/JS findings in its prompt so it can correlate or deduplicate, and posts structured findings (severity, file, line, issue, fix) to the WO thread in the normal review-thread format. `quality_gate.py` can also run an optional Antares scan in parallel with CI/Bandit/Semgrep/JS, contributing `antares_findings` / `antares_error` / `antares_passed` to the gate result. In advisory mode, a scan error, timeout, or malformed model response is visible in the thread but never fails `security_passed`; in blocking mode, configured severities (or an unreachable/required Antares) fail `security_passed`.
+
+Source is only sent to a remote endpoint if you explicitly point `ANTARES_BASE_URL` at one — the default is `http://localhost:8000`.
+
+## Relevant WO specs (completed features to document)
+
+### WO-1092-draft-ports-and-remount.md
+# WO-1092 — Unique draft ports + one-click product remount
+
+**Created:** 2026-09-06
+**Priority:** P2
+**Effort:** S
+**Services:** agent-runner, orchestrator, status-site, docs
+**Depends on:** WO-1091
+**Status:** ✅ Done
+
+---
+
+## Problem
+
+1. **Port clash:** Only the Claude LaunchAgent sets `DRAFT_PORT` (8102). Cursor / Codex / Gemini (and a stale secondary agent) all default to **8101**, so one process wins and the others fail with `Address already in use`. The orchestrator then talks to whatever stale draft server still holds 8101 — which is how Get Started saw `{"detail":"Not Found"}` for `/api/product`.
+
+2. **Manual remount:** After Get Started / Auth changes `LOCAL_REPO_PATH`, Docker still mounts the old path until the operator runs `make restart`. That breaks the UI-first loop.
+
+## What to Build
+
+1. **Unique draft ports** — Align `draft_server._AGENT_META` `extra_env.DRAFT_PORT` with `health_agent.RUNNER_PORTS` (cursor 8101, claude 8102, codex 8103, gemini 8104). Keep orchestrator candidate list in sync. On bind failure, log a clear remediation hint (which port, `lsof` / stop the other agent).
+
+2. **One-click remount** — Host `POST /api/product/remount` (bearer-gated) runs `scripts/compose-with-env.sh up -d --force-recreate` from the engine root (no image rebuild). Orchestrator proxies. Get Started + Auth show a **Remount Docker** action when `restart_required` (still keep the manual `make restart` hint as fallback).
+
+3. **Tests + docs** — Unit guards for port map parity; doctor/docs note remount button.
+
+## Out of scope
+
+- Full `make restart` (image rebuild) from the UI
+- Linux/systemd remount parity
+- Killing foreign processes that hold draft ports automatically
+- Multi-repo local path mounts
+
+## Do NOT change
+
+- Bearer gate on draft-server routes
+- Live Clarion legacy profile behavior
+
+## Acceptance Criteria
+
+- [x] Cursor / Claude / Codex / Gemini LaunchAgent meta each have distinct `DRAFT_PORT` values matching `health_agent.RUNNER_POR
