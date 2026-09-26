@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-09-25
+last_verified: 2026-09-26
 covers_wos:
   - WO-1008
   - WO-1052
@@ -66,25 +66,4 @@ make doctor
 
 `factory_init.py` creates `docs/project_management/work_orders/`, `docs/factory/runs/.gitkeep`, `docs/factory/patterns.md`, a root `factory.yaml`, and copies `docs/adopters/PROCESS.md` into your product as `AGENT_PROCESS.md`. Pass `--sample-wo` to also drop a minimal `WO-001-hello.md`. It refuses to overwrite existing files unless you pass `--force`.
 
-`factory_doctor.py` checks that `GITHUB_REPO` is shaped correctly, `LOCAL_REPO_PATH` exists and is a git checkout whose remote actually matches `GITHUB_REPO`, the product's `factory.yaml` loads, the configured `verify` command or Makefile target is runnable, and the WO spec directory is present. It exits non-zero with fix hints on any hard failure — use it as your "am I wired correctly?" gate before dispatching the first Work Order. Pass `--product PATH` to check a product tree independent of saved prefs (useful in CI).
-
-Both paths write to the same prefs file (`~/.config/factory-agent/prefs`); the UI and the scripts are interchangeable, and doctor will pass regardless of which one you used.
-
-## Keeping the two repos from colliding
-
-The two-repo model means the engine's own Work Orders (`agentic-factory`'s `docs/work_orders/`) and your product's Work Orders live in separate numbering spaces and separate queues. Two safeguards keep them from bleeding into each other:
-
-- **Per-repo WO numbering** — `/api/wos/reserve` and `/api/plan/next-wo-number` take the target `repo`/`wo_path` into account, so reserving a number for your product never collides with (or gets blocked by) the engine's own WO sequence, even when both happen to be in the same numeric range.
-- **Product-spec queue gate** — the orchestrator only queues/claims/offers Work Orders that have a real spec file in your product's WO path (or belong to `GITHUB_REPO` in the specs cache). Engine-only WOs posted by mistake are rejected (`POST /api/queue` → 400, `POST /api/claim` → 404) and any that slip in get auto-purged from the queue on the next poll — so runners never pick up engine housekeeping work against your product's worktree.
-
-## Optional: cloud agent path (no local runner)
-
-For products that don't need a local Docker/worktree agent-runner — typically `services: none` / docs-only Work Orders — the engine can dispatch a Codex run entirely inside GitHub Actions instead:
-
-```bash
-curl -X POST http://localhost:8100/api/dispatch-codex \
-  -H "Content-Type: application/json" \
-  -d '{"wo":"WO-362","slug":"sync-in-app-help"}'
-```
-
-This pre-claims the WO as `codex-gh-actions`, triggers a `workflow_dispatch` event against a `codex-dispatch.yml` workflow in your product repo, and lets the orchestrator's normal poll loop pick up the resulting branch/PR — no callback required. Your product repo needs its own `codex-dispatch.yml` (checkout → branch → run Codex → open PR) and an `OPENAI_API_KEY` secret; `GITHUB_TOKEN` is provided automatically by Actions.
+`factory_doctor.py` checks that `GITHUB_REPO` is shaped correctly, `LOCAL_REPO_PATH` exists and is a git checkout whose remote actually matches `GITHUB_REPO`, the product's `factory.yaml` loads, the configured `verify` command or Makef
