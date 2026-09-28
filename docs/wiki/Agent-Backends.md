@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-09-28
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,18 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Optional [Cisco Foundation AI](https://huggingface.co/fdtn-ai) security reviewer that runs alongside — not instead of — the deterministic Bandit / Semgrep / JS security scanners. Antares is purpose-built for vulnerability localization and can run on the factory host or on another device on the LAN, speaking an OpenAI-compatible `/v1/chat/completions` API.
+
+Configure it under **Settings → Agents / Reviewer Assignments**:
+
+| Setting | Values | Notes |
+|---------|--------|-------|
+| Enable | on / off | Disabled by default |
+| Run location | This machine / Another device on network | |
+| Endpoint URL | e.g. `http://localhost:8000` | OpenAI-compatible endpoint |
+| Model profile | Auto recommended / Antares 350M / Antares 1B / Custom | Auto recommends 350M vs 1B from local RAM (Apple Silicon ≤8GB → 350M, ≥16GB → 1B); if the remote endpoint exposes `/health` or `/v1/models`, the UI probes it, otherwise it warns that remote hardware can't be verified |
+| Mode | Advisory / Blocking | Advisory by default |
+| Blocking severities | CRITICAL / HIGH / MEDIUM / LOW | Only enforced in Blocking mode |
+| Test Antares Connection | button | Checks reachability and model availability without running a full review |
+
+Antares is selectable **only** for the Security reviewer slot — architecture, correctness, performance, and documentation reviewers can't be set to `antares`. In **advisory** mode a timeout, unreachable endpoint, or malformed model output never blocks validation; findings (deduplicated against prior Bandit/Semgrep/JS results) still post to the WO thread. In **blocking** mode, configured severities fail `security_passed`, and Antares being required-but-unreachable also fails closed. Existing scanners and the Claude/Codex/Cursor/Gemini review chain are unaffected when Antares is disabled.
