@@ -102,6 +102,21 @@ Update this file **at the time of merge**, not before.
 
 ---
 
+## Security audits
+
+Drafts from a Security Audit. They are not started, and product code waits until a person accepts one.
+
+Index: `docs/security-audits/2026-10-01-c3203fc3c8ce.md`
+
+| WO | Title | Priority | Status |
+|---|---|---|---|
+| WO-1107 | Security audit: Privilege and access checks | P0 | 🔵 Open |
+| WO-1108 | Security audit: Secrets, hashing, and transport | P0 | 🔵 Open |
+| WO-1109 | Security audit: Sensitive data in logs | P0 | 🔵 Open |
+| WO-1110 | Security audit: Command and query construction | P0 | 🔵 Open |
+| WO-1111 | Security audit: Redirects and path access | P1 | 🔵 Open |
+| WO-1112 | Security audit: Input and output checks | P1 | 🔵 Open |
+
 ## Milestones
 
 | Milestone | Target | Status |
