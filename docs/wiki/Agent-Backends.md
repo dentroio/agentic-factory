@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-01
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,11 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Optional Cisco Foundation AI reviewer for the **Security** role only — a complement to the existing Bandit / Semgrep / JS-TS scanners, not a replacement. Disabled by default; enable and configure it in **Settings → Agents**.
+
+- **Run location** — this machine (localhost) or another device on the LAN. The client talks to an OpenAI-compatible endpoint (`POST {ANTARES_BASE_URL}/v1/chat/completions`).
+- **Model profile** — Auto recommended, Antares 350M, Antares 1B, or Custom (any model id/GGUF path). For local runs, Auto recommends 350M on Apple M1 with ≤8GB RAM and 1B on 16GB+ (350M if hardware is unknown). For a network endpoint, the factory probes `GET /health` and `GET /v1/models` when the remote server exposes them; otherwise it shows the configured model with a warning that remote hardware can't be verified.
+- **Mode** — Advisory (default) posts structured findings to the WO thread without blocking validation; Blocking fails `security_passed` for the configured severities (CRITICAL/HIGH by default) and fails closed if Antares is required but unreachable.
+- **Test Antares Connection** — checks endpoint reachability and model availability from the UI without running a full review.
+- Only the Security reviewer slot can be set to `antares` — architecture, correctness, performance, and documentation reviewers can't select it.
+- In `quality_gate.py`, an Antares scan (diff-only by default) runs alongside CI, Bandit, Semgrep, and the JS/TS scan; its findings/errors are included in the structured result but never silently look like a clean scan.
