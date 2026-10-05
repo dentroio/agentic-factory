@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-05
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,25 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Optional security reviewer backend from Cisco Foundation AI, purpose-built for vulnerability localization. It runs **alongside**, not instead of, the existing Bandit, Semgrep, and JS/TS security scanners, and alongside the Claude/Cursor/Codex/Gemini peer-review chain.
+
+- **Disabled by default.** Enable it in **Settings → Agents** under the security reviewer / Antares section.
+- **Run location:** `This machine` or `Another device on network` — Antares talks to any OpenAI-compatible endpoint (`POST {ANTARES_BASE_URL}/v1/chat/completions`).
+- **Model profile:**
+  - `auto` (recommended) — the factory suggests a profile for local Apple Silicon (≤8GB RAM → Antares 350M, ≥16GB RAM → Antares 1B; unknown hardware defaults to 350M). For a remote endpoint it probes `GET /health` / `GET /v1/models` if available, and otherwise shows the configured model with a warning that remote hardware can't be verified.
+  - `fdtn-ai/antares-350m` — lower-memory / CPU-only machines
+  - `fdtn-ai/antares-1b` — higher-quality local review on 16GB+ Apple Silicon
+  - Custom — any model name or local GGUF path served through an OpenAI-compatible runtime
+- **Mode:**
+  - `advisory` (default) — findings are posted to the WO review thread but never block validation, even on malformed output or a timeout.
+  - `blocking` — `security_passed` fails when findings match the configured blocking severities (default `CRITICAL,HIGH`), or when Antares is required but unreachable.
+- **Test Antares Connection** checks endpoint reachability and, when the server exposes model metadata, confirms the selected model is available — without running a full review.
+- Antares is selectable **only** for the **Security** reviewer slot in manual reviewer assignment; it is not offered for architecture, correctness, performance, or documentation reviewers.
+
+Relevant env vars (agent-runner):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANTARES_ENABLED` | `false` | Master on/off toggle |
+| `ANTARES_BASE_URL` | `http://localhost:8000` | OpenAI-compatible endpoint (local or LAN) |
+| `ANTARES_MODEL` | — | `fdtn-ai/antares-350m`, `f
