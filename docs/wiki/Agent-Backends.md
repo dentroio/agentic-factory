@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-06
 covers_wos:
   - WO-1008
   - WO-1053
@@ -49,7 +49,7 @@ Both routes are gated by the factory's pause state: while the factory is paused,
 
 ## Cloud Codex (GitHub Actions)
 
-For WOs with `services: none` (often docs-only), the orchestrator can `workflow_dispatch` the product’s `codex-dispatch.yml` instead of a local runner.
+For WOs with `services: none` (often docs-only), the orchestrator can `workflow_dispatch` the product's `codex-dispatch.yml` instead of a local runner.
 
 | Requirement | Notes |
 |-------------|-------|
@@ -57,7 +57,7 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 | `OPENAI_API_KEY` | Product repo Actions secret — not engine Keychain |
 | Poll loop | Detects branch/PR; no callback |
 
-`POST /api/dispatch-codex` pre-claims as `codex-gh-actions`. Second dispatch → 409. Complements host `codex`; does not replace it for service-touching WOs.
+`POST /api/dispatch-codex` pre-claims as `codex-gh-actions`. Second dispatch → 409. On workflow-dispatch failure (bad repo, missing workflow) the orchestrator rolls back the claim and returns 502. The existing orchestrator poll loop then detects the agent-created branch/PR automatically — no callback needed. Complements host `codex`; does not replace it for service-touching WOs.
 
 ## Peer review backends
 
@@ -65,4 +65,38 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Antares is an optional reviewer backend built on Cisco Foundation AI's Antares models, purpose-built for vulnerability localization. It runs **alongside** the deterministic scanners (Bandit, Semgrep, JS/TS security scan) rather than replacing them, and can be assigned only to the **Security** reviewer role — not architecture, correctness, performance, or documentation.
+
+**Disabled by default.** When enabled, it defaults to **advisory** mode — findings are posted to the WO thread but never fail the gate. Blocking must be turned on explicitly.
+
+Configure in **Settings → Agents → Reviewer Assignments**:
+
+| Setting | Values | Notes |
+|---------|--------|-------|
+| Enable Antares | on/off | Off by default |
+| Run location | This machine / Another device on network | Determines the endpoint reachable from the factory host |
+| Endpoint URL | `ANTARES_BASE_URL` | OpenAI-compatible `/v1/chat/completions` server |
+| Model profile | Auto recommended / Antares 350M / Antares 1B / Custom | Auto recommends 350M vs 1B from local hardware (e.g. Apple M1 ≤8GB → 350M, ≥16GB → 1B); for remote endpoints the factory probes `/health` and `/v1/models` where available, otherwise shows the configured model with a caveat that remote hardware can't be verified |
+| Mode | Advisory / Blocking | Blocking requires explicit opt-in |
+| Blocking severities | CRITICAL / HIGH / MEDIUM / LOW | Only used in blocking mode |
+| Test Antares Connection | button | Checks reachability/model availability without running a full review |
+
+Underlying env vars (set via the UI, not hand-edited):
+
+```
+ANTARES_ENABLED=false
+ANTARES_BASE_URL=http://localhost:8000
+ANTARES_MODEL=fdtn-ai/antares-350m | fdtn-ai/antares-1b | custom
+ANTARES_API_KEY=
+ANTARES_TIMEOUT_SECONDS=120
+ANTARES_MODE=advisory | blocking
+ANTARES_BLOCKING_SEVERITIES=CRITICAL,HIGH
+```
+
+Behavior:
+
+- When the Security reviewer is set to `antares`, `review_chain.py` calls the Antares endpoint instead of Claude/Codex/Cursor/Gemini, including prior Bandit/Semgrep/JS findings in the prompt so Antares can reason about or deduplicate them.
+- `quality_gate.py` can also run an optional Antares scan over changed files in parallel with CI, Bandit, Semgrep, and the JS security scan, contributing `antares_findings` / `antares_error` / `antares_passed` to the gate result.
+- In advisory mode, Antares findings and errors (timeout, unreachable endpoint, malformed output) never block validation — they're surfaced in the WO thread only.
+- In blocking mode, configured severities fail `security_passed`, and an unreachable/required Antares endpoint fails closed.
+- Antares is never sent source code over a network endpoint unless you explicitly point `ANTARES_BASE_URL` at one.
