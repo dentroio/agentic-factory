@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-07
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,29 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Cisco Foundation AI's **Antares** models can serve as the Security reviewer, as a complement to the deterministic scanners (Bandit, Semgrep, JS/TS security scan) — not a replacement for them. Antares is **disabled by default**, and when enabled defaults to **advisory** mode.
+
+Configure it in **Settings → Agents** (or via the equivalent env vars):
+
+| Setting | Values | Notes |
+|---------|--------|-------|
+| Enable Antares | on/off | Off by default |
+| Run location | This machine / Another device on network | Local or LAN endpoint |
+| Endpoint URL | `ANTARES_BASE_URL` | e.g. `http://localhost:8000` — OpenAI-compatible `/v1/chat/completions` |
+| Model profile | Auto recommended / Antares 350M / Antares 1B / Custom | Auto recommends based on local hardware (M1 ≤8GB → 350M, ≥16GB → 1B); for remote endpoints the factory probes `/health` and `/v1/models` where available, otherwise shows a warning that remote suitability can't be verified |
+| Mode | Advisory / Blocking | Advisory is default |
+| Blocking severities | CRITICAL / HIGH / MEDIUM / LOW | Only used in Blocking mode |
+
+Use **Test Antares Connection** in Settings to check reachability and available models without running a full review.
+
+Behavior:
+
+- Antares findings are posted to the WO thread in the existing review-thread format, alongside prior Bandit/Semgrep/JS findings (included in its prompt so it can reason about or deduplicate them).
+- **Advisory mode:** findings are visible but never block the quality gate, even on timeout, unreachable endpoint, or malformed output.
+- **Blocking mode:** `security_passed` fails when configured severities are found, and fails closed if Antares is required but unreachable.
+- Only the **Security** reviewer role can be set to `antares` — architecture, correctness, performance, and documentation reviewers cannot select it.
+- Source code is only sent off-machine if you explicitly point `ANTARES_BASE_URL` at a remote/cloud endpoint.
+
+## Relevant design docs
+
+None provided.
