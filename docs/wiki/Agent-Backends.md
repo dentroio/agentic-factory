@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-10
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,29 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Optional Cisco Foundation AI reviewer, **disabled by default**. Antares is purpose-built for vulnerability localization and complements — it does not replace — the existing Bandit / Semgrep / JS security scanners and the Claude/Cursor/Codex/Gemini peer-review chain.
+
+Configure under **Settings → Agents → Reviewer Assignments**:
+
+- Enable toggle (off by default)
+- Run location: `This machine` or `Another device on network`
+- Endpoint URL (defaults to a local OpenAI-compatible server)
+- Model profile: `Auto recommended`, `Antares 350M`, `Antares 1B`, or `Custom`
+- Mode: `Advisory` (default) or `Blocking` on selected severities (CRITICAL/HIGH/MEDIUM/LOW)
+- **Test Antares Connection** — checks `/health` and `/v1/models` on the configured endpoint without running a full review
+
+Key env vars:
+
+```text
+ANTARES_ENABLED=false
+ANTARES_BASE_URL=http://localhost:8000
+ANTARES_MODEL=fdtn-ai/antares-350m | fdtn-ai/antares-1b | custom
+ANTARES_API_KEY=
+ANTARES_TIMEOUT_SECONDS=120
+ANTARES_MODE=advisory | blocking
+ANTARES_BLOCKING_SEVERITIES=CRITICAL,HIGH
+```
+
+Antares can only be selected for the **Security** reviewer slot — architecture, correctness, performance, and documentation reviewers never offer it. In **advisory** mode (default), findings are posted to the WO thread but never fail validation, even if Antares errors or times out. In **blocking** mode, `security_passed` fails when Antares reports a configured severity, or fails closed when Antares is required but unreachable. Bandit, Semgrep, JS scanning, and the other review backends behave exactly as before when Antares is disabled.
+
+For local recommendations, the factory suggests Antares 350M on Apple M1 with ≤8GB RAM and Antares 1B on M1/M2/M3 with ≥16GB RAM. For a remote/LAN endpoint, it probes `/health` and `/v1/models` when the server exposes them instead of guessing remote hardware.
