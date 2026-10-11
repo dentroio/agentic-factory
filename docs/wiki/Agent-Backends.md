@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-11
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,13 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Optional Cisco Foundation AI **Antares** reviewer — a vulnerability-localization model that complements the existing deterministic scanners (Bandit, Semgrep, JS security scan), not a replacement for them.
+
+- **Disabled by default**; enable it in **Settings → Agents** (Antares section). When enabled, it can be selected for the **Security** reviewer slot only — it is not offered for architecture, correctness, performance, or documentation reviewers.
+- **Run location:** this machine, or another device on the LAN (`ANTARES_BASE_URL` points at any OpenAI-compatible `/v1/chat/completions` endpoint).
+- **Model profiles:** Auto recommended, Antares 350M, Antares 1B, or Custom. Auto recommends 350M on Apple M1 with ≤8GB RAM (or unknown hardware) and 1B on M1/M2/M3 with 16GB+. For a network endpoint, the factory probes `/health` and `/v1/models` to show available models and reachability instead of guessing remote hardware.
+- **Mode:** `Advisory` (default) — findings are posted to the WO thread but never block validation, even on malformed output or an unreachable endpoint. `Blocking` — fails `security_passed` for configured severities (`ANTARES_BLOCKING_SEVERITIES`, default `CRITICAL,HIGH`), and fails closed if Antares is required but unreachable.
+- **Test Antares Connection** in Settings checks reachability and model availability without running a full review.
+- Antares findings are structured (severity, file, line, issue, fix), are treated as untrusted model output, and are included alongside prior Bandit/Semgrep/JS findings so the model can reason about or deduplicate related issues.
+
+Relevant env vars: `ANTARES_ENABLED`, `ANTARES_BASE_URL`, `ANTARES_MODEL`, `ANTARES_API_KEY`, `ANTARES_TIMEOUT_SECONDS`, `ANTARES_MODE`, `ANTARES_BLOCKING_SEVERITIES`.
