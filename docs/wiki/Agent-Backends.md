@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-12
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,12 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Optional Cisco Foundation AI reviewer, purpose-built for vulnerability localization. It complements — does not replace — the existing Bandit / Semgrep / JS security scan and the regular peer review chain.
+
+- **Disabled by default.** Enable it in **Settings → Agents**, in the Antares section.
+- **Run location:** this machine, or another device on the LAN. Set `ANTARES_BASE_URL` to an OpenAI-compatible endpoint (`POST {ANTARES_BASE_URL}/v1/chat/completions`).
+- **Model profile:** `Auto recommended`, `Antares 350M` (`fdtn-ai/antares-350m`), `Antares 1B` (`fdtn-ai/antares-1b`), or `Custom` (GGUF path or other model id). Auto picks 350M on ≤8GB Apple Silicon, 1B on ≥16GB, and falls back to 350M when hardware is unknown. For a network endpoint, the factory probes `GET /health` and `GET /v1/models` when the remote service exposes them, and otherwise shows the configured model with a warning that remote hardware can't be verified.
+- **Mode:** `Advisory` (default) posts structured findings to the WO thread without blocking validation. `Blocking` fails `security_passed` when configured severities (`ANTARES_BLOCKING_SEVERITIES`, default `CRITICAL,HIGH`) are found, or when Antares is required but unreachable/times out.
+- **Test Antares Connection** checks endpoint reachability and model availability without running a full review.
+- Antares is selectable only for the **Security** reviewer slot in manual reviewer assignment — it is not offered for architecture, correctness, performance, or documentation reviewers.
+- When enabled, `quality_gate.py` runs an Antares scan on changed files in parallel with CI, Bandit, Semgrep, and the JS security scan, contributing `antares_findings` / `antares_error` / `antares_passed` to the gate result. Existing scanners and reviewer behavior are unchanged when Antares is disabled.
