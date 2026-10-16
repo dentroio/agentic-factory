@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-16
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,27 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Cisco Foundation AI's Antares models can run as an additional **security reviewer** backend, alongside the existing deterministic scanners (Bandit, Semgrep, JS/TS security scan). Antares is purpose-built for vulnerability localization and is meant to complement those scanners, not replace them — Bandit/Semgrep/JS scan stay active whether or not Antares is enabled.
+
+**Disabled by default**, and **advisory by default** when enabled — findings post to the WO thread but never block validation unless you explicitly switch to blocking mode.
+
+Configure in **Settings → Agents → Reviewer Assignments**: Antares is selectable only for the **Security** reviewer slot — architecture, correctness, performance, and documentation reviewers cannot use it.
+
+| Setting | Values |
+|---------|--------|
+| Run location | This machine, or another device on the LAN |
+| Endpoint | OpenAI-compatible `/v1/chat/completions` server, e.g. `ANTARES_BASE_URL=http://localhost:8000` |
+| Model profile | Auto recommended, Antares 350M, Antares 1B, Custom |
+| Mode | Advisory (default) or Blocking |
+| Blocking severities | Any combination of CRITICAL/HIGH/MEDIUM/LOW, used only in blocking mode |
+
+For local mode, the factory recommends a profile from available RAM (e.g. Apple M1 ≤8GB → 350M, ≥16GB → 1B, unknown hardware → 350M). For a remote endpoint it probes `/health` and `/v1/models` if the server exposes them; otherwise it shows the configured model with a warning that remote hardware can't be verified. **Test Antares Connection** checks reachability/model availability without running a full review.
+
+Behavior:
+
+- Antares sees only the WO context, the changed-file diff, and relevant prior scanner findings — never the full repo, and never sent to a cloud endpoint unless you set `ANTARES_BASE_URL` to one yourself.
+- Malformed or missing output is a non-blocking scan error in advisory mode.
+- In blocking mode, configured severities (default `CRITICAL,HIGH`) fail `security_passed`, and timeout/unreachable/malformed output also fails closed.
+- Quality gate results expose `antares_findings`, `antares_error`, and `antares_passed` alongside the existing scanner output.
+
+Env vars (agent-runner): `ANTARES_ENABLED`, `ANTARES_BASE_URL`, `ANTARES_MODEL`, `ANTARES_API_KEY`, `ANTARES_TIMEOUT_SECONDS`, `ANTARES_MODE`, `ANTARES_BLOCKING_SEVERITIES`.
