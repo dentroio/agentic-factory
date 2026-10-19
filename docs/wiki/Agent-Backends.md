@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-19
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,23 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Optional [Cisco Foundation AI](https://developer.cisco.com/) Antares reviewer for the **Security** role only — it is not selectable for architecture, correctness, performance, or documentation reviewers. Disabled by default; when enabled it defaults to **advisory** mode.
+
+Configure in **Settings → Agents**:
+
+- Enable Antares security reviewer
+- Run location: **This machine** or **Another device on network**
+- Endpoint URL (`ANTARES_BASE_URL`, default `http://localhost:8000`, an OpenAI-compatible `/v1/chat/completions` server)
+- Model profile: **Auto recommended**, **Antares 350M** (`fdtn-ai/antares-350m`), **Antares 1B** (`fdtn-ai/antares-1b`), or **Custom** (any model name/path, e.g. a llama.cpp GGUF path)
+- Mode: **Advisory** (default) or **Blocking** on configured severities (CRITICAL / HIGH / MEDIUM / LOW)
+- **Test Antares Connection** — checks reachability and, if the endpoint exposes `/health` or `/v1/models`, lists available models and the current recommendation
+
+For local Apple Silicon, Auto recommends Antares 350M on ≤8GB RAM and Antares 1B on ≥16GB RAM (350M on unknown hardware). For a network endpoint the factory can't infer remote hardware — it shows the configured model plus a warning if the remote server doesn't expose model metadata.
+
+Antares runs alongside Bandit, Semgrep, and the JS/TS security scanner in `quality_gate.py` (diff-only, not a full-repo scan) and, when assigned as the Security reviewer, posts structured findings (severity, file, line, issue, fix) to the WO thread via `review_chain.py`, including prior scanner findings for context. In **advisory** mode, a timeout, unreachable endpoint, or malformed response never blocks validation — findings or errors are still visible in the thread. In **blocking** mode, configured severities fail `security_passed`, and an unreachable/required Antares fails closed. Existing Bandit/Semgrep/JS scans and the Claude/Codex/Cursor/Gemini reviewer chain are unaffected when Antares is disabled.
+
+| Env var | Default | Notes |
+|---|---|---|
+| `ANTARES_ENABLED` | `false` | Master switch |
+| `ANTARES_BASE_URL` | `http://localhost:8000` | OpenAI-compatible endpoint; local or LAN |
+| `ANTARES_MODEL` | — | `fdtn-ai/antares-350m`, `fdtn-ai/antares-1b`,
