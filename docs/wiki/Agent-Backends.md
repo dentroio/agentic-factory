@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-21
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,15 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Antares (Cisco Foundation AI) is an optional security-only reviewer backend, **disabled by default**.
+
+- Enable and configure it in **Settings → Agents → Reviewer Assignments**.
+- **Run location:** this machine (localhost) or another device on the LAN — set the endpoint via `ANTARES_BASE_URL`.
+- **Model profile:** Auto recommended, Antares 350M, Antares 1B, or Custom (e.g. a GGUF path via llama.cpp). Auto recommends 350M for Apple M1 with ≤8GB RAM, 1B for 16GB+ RAM, and 350M when hardware can't be determined. For a network endpoint the factory probes `GET /health` and `GET /v1/models` for available models; if the remote service exposes no metadata it shows the configured model with a warning that remote hardware can't be verified.
+- **Mode:** Advisory (default) or Blocking on configured severities. Blocking severities default to `CRITICAL,HIGH` and are configurable.
+- **Test Antares Connection** checks reachability and model availability without running a full review.
+- Selectable **only** for the Security reviewer slot — architecture, correctness, performance, and documentation reviewers cannot be set to Antares.
+- Runs alongside the existing Bandit, Semgrep, and JS/TS security scans in `quality_gate.py` (parallel, diff-scoped) — it supplements these scanners, it never replaces them.
+- In **advisory** mode, Antares findings and errors are posted to the WO review thread but never fail the quality gate. In **blocking** mode, `security_passed` fails when configured severities are found, and fails closed if Antares is required but unreachable.
+
+Relevant env vars: `ANTARES_ENABLED`, `ANTARES_BASE_URL`, `ANTARES_MODEL`, `ANTARES_API_KEY`, `ANTARES_TIMEOUT_SECONDS`, `ANTARES_MODE`, `ANTARES_BLOCKING_SEVERITIES`.
