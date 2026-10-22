@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-22
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,32 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Optional [Cisco Foundation AI](https://developer.cisco.com) Antares reviewer — purpose-built for vulnerability localization, run locally or on another LAN device. It's a complement to Bandit/Semgrep, not a replacement, and is **disabled by default**.
+
+Configure in **Settings → Agents**:
+
+| Field | Options |
+|-------|---------|
+| Enable Antares | Off by default |
+| Run location | This machine / Another device on network |
+| Endpoint URL | `ANTARES_BASE_URL`, default `http://localhost:8000` (OpenAI-compatible) |
+| Model profile | Auto recommended, Antares 350M, Antares 1B, Custom (model name/path) |
+| Mode | Advisory (default) or Blocking on configured severities |
+| Blocking severities | CRITICAL / HIGH / MEDIUM / LOW |
+
+**Test Antares Connection** probes `/health` and `/v1/models` on the endpoint and reports reachability plus available models, without running a full review.
+
+Local hardware profile recommendation (Auto):
+
+| Hardware | Recommended model |
+|----------|--------------------|
+| Apple M1, ≤8GB RAM | Antares 350M |
+| Apple M1/M2/M3, ≥16GB RAM | Antares 1B |
+| Remote / unknown hardware | Antares 350M, with a warning that the factory can't verify remote hardware suitability |
+
+Antares is only selectable as the **Security** reviewer — architecture, correctness, performance, and documentation reviewers do not offer it. In `review_chain.py`, Antares findings replace the Claude/Codex/Cursor/Gemini security reviewer output and post to the WO thread in the existing review format (prior Bandit/Semgrep/JS findings are included in its prompt so it can reason about or deduplicate them). In `quality_gate.py`, Antares runs alongside Bandit, Semgrep, and the JS security scan — scanning only the changed diff — and contributes `antares_findings` / `antares_error` / `antares_passed` to the gate result.
+
+- **Advisory mode** (default): Antares findings are visible in the WO thread but never block `security_passed`, even on timeout or malformed output.
+- **Blocking mode**: configured severities (default CRITICAL, HIGH) fail `security_passed`; an unreachable or required-but-unavailable Antares endpoint also fails closed.
+
+Existing Bandit/Semgrep/JS scan results and the Claude/Cursor/Codex/Gemini peer review chain are unaffected when Antares is disabled.
