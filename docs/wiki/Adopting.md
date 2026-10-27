@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-09-25
+last_verified: 2026-10-27
 covers_wos:
   - WO-1008
   - WO-1052
@@ -87,4 +87,4 @@ curl -X POST http://localhost:8100/api/dispatch-codex \
   -d '{"wo":"WO-362","slug":"sync-in-app-help"}'
 ```
 
-This pre-claims the WO as `codex-gh-actions`, triggers a `workflow_dispatch` event against a `codex-dispatch.yml` workflow in your product repo, and lets the orchestrator's normal poll loop pick up the resulting branch/PR — no callback required. Your product repo needs its own `codex-dispatch.yml` (checkout → branch → run Codex → open PR) and an `OPENAI_API_KEY` secret; `GITHUB_TOKEN` is provided automatically by Actions.
+This pre-claims the WO as `codex-gh-actions`, triggers a `workflow_dispatch` event against a `codex-dispatch.yml` workflow in your product repo, and lets the orchestrator's normal poll loop pick up the resulting branch/PR — no callback required. Your product repo needs its own `codex-dispatch.yml` (checkout → branch → run Codex → open PR) and an `OPENAI_
