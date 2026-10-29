@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-10-29
 covers_wos:
   - WO-1008
   - WO-1053
@@ -65,4 +65,49 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Antares is an optional, security-only reviewer backend built on Cisco Foundation AI's Antares models, purpose-built for vulnerability localization. It sits alongside — not instead of — the existing deterministic scanners (Bandit for Python, Semgrep, and a JS/TS security scan) and the Claude/Cursor/Codex/Gemini peer review chain.
+
+Antares is **disabled by default**. When enabled, it defaults to **advisory** mode — findings are posted to the WO thread but never block validation on their own. You must explicitly switch it to blocking mode to let it fail the security gate.
+
+### Where it runs
+
+Antares talks to an OpenAI-compatible chat-completions endpoint, which you can run:
+
+- **This machine** — a local server (e.g. llama.cpp or another OpenAI-compatible runtime) on `localhost`
+- **Another device on network** — any LAN host serving the same API shape
+
+The factory does not ship or install an Antares model server — you point it at one you run yourself. Source is only sent to the endpoint you configure; nothing is sent to a cloud URL unless you set `ANTARES_BASE_URL` to one.
+
+### Configuration
+
+Settings → Agents → Reviewer Assignments has an Antares section with:
+
+- Enable toggle
+- Run location (`This machine` / `Another device on network`) and endpoint URL
+- Model profile: `Auto recommended`, `Antares 350M`, `Antares 1B`, or `Custom` (model name/path)
+- Mode: `Advisory` or `Blocking on configured severities`
+- Blocking severities (CRITICAL / HIGH / MEDIUM / LOW)
+- **Test Antares Connection** — checks reachability and, if the endpoint exposes `/health` or `/v1/models`, lists available models
+
+For local runs, the UI recommends a profile from available memory (Apple M1 ≤ 8GB → 350M, ≥ 16GB → 1B, unknown hardware → 350M). For a remote endpoint it probes `/health` and `/v1/models` if available; otherwise it shows the configured model with a note that remote hardware can't be verified.
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `ANTARES_ENABLED` | `false` | Turn the backend on |
+| `ANTARES_BASE_URL` | `http://localhost:8000` | OpenAI-compatible endpoint |
+| `ANTARES_MODEL` | — | `fdtn-ai/antares-350m`, `fdtn-ai/antares-1b`, or a custom value |
+| `ANTARES_API_KEY` | — | Optional, for secured endpoints |
+| `ANTARES_TIMEOUT_SECONDS` | `120` | Request timeout |
+| `ANTARES_MODE` | `advisory` | `advisory` or `blocking` |
+| `ANTARES_BLOCKING_SEVERITIES` | `CRITICAL,HIGH` | Severities that fail the gate in blocking mode |
+
+### Reviewer assignment and gate behavior
+
+Antares can only be assigned to the **Security** reviewer slot — it is not offered for architecture, correctness, performance, or documentation review. When assigned, `review_chain.py` routes the security review to Antares instead of Claude/Cursor/Codex/Gemini, sends it the WO context, changed-file diff, and prior Bandit/Semgrep/JS findings, and requires structured JSON findings (severity, file, line, issue, fix) before posting to the WO thread.
+
+`quality_gate.py` can also run an optional Antares scan over changed files in parallel with CI, Bandit, Semgrep, and the JS scan, contributing `antares_findings` / `antares_error` / `antares_passed` to the gate result:
+
+- **Advisory mode** — findings are visible but never fail `security_passed`; malformed output or a timeout is logged as a non-blocking scan error.
+- **Blocking mode** — configured severities fail `security_passed`, and an unreachable/unavailable endpoint fails closed since Antares was explicitly required.
+
+Existing Bandit, Semgrep, JS-scan, and non-security peer review behavior is unchanged whether or not Antares is en
