@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-09-25
+last_verified: 2026-11-03
 covers_wos:
   - WO-1008
   - WO-1053
@@ -49,7 +49,7 @@ Both routes are gated by the factory's pause state: while the factory is paused,
 
 ## Cloud Codex (GitHub Actions)
 
-For WOs with `services: none` (often docs-only), the orchestrator can `workflow_dispatch` the product’s `codex-dispatch.yml` instead of a local runner.
+For WOs with `services: none` (often docs-only), the orchestrator can `workflow_dispatch` the product's `codex-dispatch.yml` instead of a local runner.
 
 | Requirement | Notes |
 |-------------|-------|
@@ -65,4 +65,44 @@ For WOs with `services: none` (often docs-only), the orchestrator can `workflow_
 
 ## Antares (security-only)
 
-Optional Cisco Foundation AI reviewer
+Optional **Cisco Foundation AI Antares** reviewer, purpose-built for vulnerability localization. It complements — not replaces — the existing deterministic scanners (Bandit, Semgrep, JS/TS security scan) and the standard peer review chain.
+
+**Disabled by default.** When enabled, it runs in **advisory mode** by default; blocking mode must be turned on explicitly.
+
+### Configuration
+
+Settings → Agents → Reviewer Assignments exposes an Antares section:
+
+- **Enable Antares security reviewer** toggle
+- **Run location** — `This machine` or `Another device on network`
+- **Endpoint URL**
+- **Model profile** — Auto recommended, Antares 350M (`fdtn-ai/antares-350m`), Antares 1B (`fdtn-ai/antares-1b`), or Custom (model name/path, e.g. a GGUF served via llama.cpp)
+- **Mode** — Advisory or Blocking on configured severities
+- **Blocking severities** — CRITICAL / HIGH / MEDIUM / LOW checkboxes
+- **Test Antares Connection** button — checks reachability and, if the endpoint exposes `GET /health` or `GET /v1/models`, available models
+
+For local runs, the factory recommends a profile from Apple Silicon memory (≤8GB → 350M, ≥16GB → 1B, unknown → 350M). For remote endpoints it only recommends a model if the server reports its own capabilities; otherwise it shows the configured model with a warning that hardware suitability can't be verified.
+
+Underlying env vars (set via the UI, not usually edited by hand):
+
+```text
+ANTARES_ENABLED=false
+ANTARES_BASE_URL=http://localhost:8000
+ANTARES_MODEL=fdtn-ai/antares-350m | fdtn-ai/antares-1b | custom
+ANTARES_API_KEY=
+ANTARES_TIMEOUT_SECONDS=120
+ANTARES_MODE=advisory | blocking
+ANTARES_BLOCKING_SEVERITIES=CRITICAL,HIGH
+```
+
+### Reviewer and gate behavior
+
+- Selectable only for the **Security** reviewer slot — architecture, correctness, performance, and documentation reviewers cannot be set to Antares.
+- When assigned, `review_chain.py` routes the security review to Antares instead of Claude/Codex/Cursor/Gemini, posting structured findings (severity, file, line, issue, fix) to the WO thread. Prior Bandit/Semgrep/JS findings are included in the prompt so Antares can localize or deduplicate related issues.
+- `quality_gate.py` can also run an optional Antares scan over the changed-file diff in parallel with CI, Bandit, Semgrep, and the JS security scan, contributing `antares_findings` / `antares_error` / `antares_passed` to the gate result.
+- **Advisory mode:** findings are posted but never block validation; malformed output or an unreachable endpoint is treated as a non-blocking scan error.
+- **Blocking mode:** `security_passed` fails if findings meet a configured blocking severity, and fails closed if Antares is required but unreachable.
+- Antares never sends code to a remote endpoint unless you explicitly point `ANTARES_BASE_URL` at one — local (`localhost`) is the default assumption.
+- Existing Bandit, Semgrep, JS scan, and the standard Claude/Codex/Cursor/Gemini reviewer behavior are unchanged when Antares is disabled.
+
+The factory does not ship or install an Antares model server — you point the client at an OpenAI-compatible endpoint (local llama.cpp/GGUF runtime or a LAN host) that serves `fdtn-ai/antares-*` or a compatible custom model.
