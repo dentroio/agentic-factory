@@ -66,3 +66,40 @@ def test_compose_ports_come_from_the_instance_variables():
 def test_scripts_do_not_hardcode_the_keychain_service():
     for name in ("factory-env.sh", "agent-setup.sh"):
         assert '-s "dentroio-factory"' not in (ROOT / "scripts" / name).read_text()
+
+
+def _make_var(name, **env):
+    base = {k: v for k, v in os.environ.items() if not k.startswith("FACTORY_")}
+    base.update(env)
+    out = subprocess.run(
+        ["make", "-pn", "-C", str(ROOT)], env=base, capture_output=True, text=True
+    ).stdout
+    for line in out.splitlines():
+        if line.startswith(f"{name} ") and (":=" in line or " = " in line):
+            return line.split("=", 1)[1].strip()
+    raise AssertionError(f"{name} not found in make output")
+
+
+def test_makefile_agrees_with_the_shell_helper():
+    for env in ({}, {"FACTORY_INSTANCE": "aegisflux", "FACTORY_PORT_OFFSET": "100"}):
+        v = _values(**env)
+        assert _make_var("PORT_STATUS", **env) == v["FACTORY_PORT_STATUS"]
+        assert _make_var("PORT_ORCH", **env) == v["FACTORY_PORT_ORCHESTRATOR"]
+        sfx = f"-{env['FACTORY_INSTANCE']}" if env else ""
+        assert _make_var("LABEL", **env) == f"com.dentroio.factory-agent{sfx}"
+        assert v["FACTORY_KEYCHAIN_SERVICE"] == f"dentroio-factory{sfx}"
+
+
+def test_dashboard_origins_follow_the_status_port(monkeypatch):
+    import importlib
+    import sys
+
+    sys.path.insert(0, str(ROOT / "services" / "status-site"))
+    import dashboard_auth
+
+    monkeypatch.setenv("FACTORY_PORT_STATUS", "8199")
+    reloaded = importlib.reload(dashboard_auth)
+    assert "http://127.0.0.1:8199" in reloaded.ALLOWED_ORIGINS
+    assert "http://127.0.0.1:8099" not in reloaded.ALLOWED_ORIGINS
+    monkeypatch.delenv("FACTORY_PORT_STATUS")
+    importlib.reload(dashboard_auth)

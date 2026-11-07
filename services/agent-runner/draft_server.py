@@ -351,7 +351,10 @@ class _DraftHandler(BaseHTTPRequestHandler):
         # with PREFERRED_AGENT from prefs — attribute that daemon to the preferred backend.
         preferred = ""
         try:
-            prefs_path = os.environ.get("FACTORY_PREFS") or os.path.expanduser("~/.config/factory-agent/prefs")
+            _inst = os.environ.get("FACTORY_INSTANCE", "")
+            prefs_path = os.environ.get("FACTORY_PREFS") or os.path.expanduser(
+                f"~/.config/factory-agent{'-' + _inst if _inst else ''}/prefs"
+            )
             if os.path.isfile(prefs_path):
                 with open(prefs_path, encoding="utf-8") as pf:
                     for line in pf:
