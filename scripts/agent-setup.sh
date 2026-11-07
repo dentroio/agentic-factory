@@ -6,14 +6,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PREFS_FILE="$HOME/.config/factory-agent/prefs"
+source "$(dirname "${BASH_SOURCE[0]}")/factory_instance.sh"
+PREFS_FILE="$FACTORY_PREFS"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║         Dentro AI Factory — First-Time Setup         ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
-echo "Secrets are stored in macOS Keychain (service: dentroio-factory)."
+echo "Secrets are stored in macOS Keychain (service: $FACTORY_KEYCHAIN_SERVICE)."
 echo "Non-secrets are stored in $PREFS_FILE"
 echo ""
 
@@ -23,8 +24,8 @@ _store_keychain() {
         return
     fi
     # Delete existing entry silently, then add new one
-    security delete-generic-password -s "dentroio-factory" -a "$key" 2>/dev/null || true
-    security add-generic-password -s "dentroio-factory" -a "$key" -w "$val" 2>/dev/null
+    security delete-generic-password -s "$FACTORY_KEYCHAIN_SERVICE" -a "$key" 2>/dev/null || true
+    security add-generic-password -s "$FACTORY_KEYCHAIN_SERVICE" -a "$key" -w "$val" 2>/dev/null
     echo "  [keychain] $key stored"
 }
 
@@ -105,7 +106,7 @@ _store_keychain "ANTHROPIC_API_KEY" "$ANTHROPIC_KEY_VAL"
 # API Secret — auto-generated bearer token for orchestrator write endpoints
 echo ""
 echo "── API Secret (orchestrator auth) ──────────────────────"
-EXISTING_API_SECRET="$(security find-generic-password -s "dentroio-factory" -a "API_SECRET" -w 2>/dev/null || echo "")"
+EXISTING_API_SECRET="$(security find-generic-password -s "$FACTORY_KEYCHAIN_SERVICE" -a "API_SECRET" -w 2>/dev/null || echo "")"
 if [ -n "$EXISTING_API_SECRET" ]; then
     echo "  Already set — keeping existing secret."
     API_SECRET_VAL="$EXISTING_API_SECRET"
@@ -155,9 +156,9 @@ echo ""
 echo "════════════════════════════════════════════════════════"
 echo "  Factory is running!"
 echo ""
-echo "  Dashboard:    http://localhost:8099"
-echo "  Settings UI:  http://localhost:8099/settings/agents"
-echo "  Orchestrator: http://localhost:8100"
+echo "  Dashboard:    http://localhost:${FACTORY_PORT_STATUS}"
+echo "  Settings UI:  http://localhost:${FACTORY_PORT_STATUS}/settings/agents"
+echo "  Orchestrator: http://localhost:${FACTORY_PORT_ORCHESTRATOR}"
 echo ""
 echo "  To install the agent daemon:"
 echo "    make agent-install"
@@ -166,4 +167,4 @@ echo "  To run the agent once (test a WO):"
 echo "    make agent-once"
 echo "════════════════════════════════════════════════════════"
 
-open "http://localhost:8099/settings/agents" 2>/dev/null || true
+open "http://localhost:${FACTORY_PORT_STATUS}/settings/agents" 2>/dev/null || true

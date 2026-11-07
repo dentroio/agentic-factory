@@ -3,7 +3,7 @@ services:
     build:
       context: ./services/vault
     ports:
-      - "127.0.0.1:8201:8200"
+      - "127.0.0.1:${FACTORY_PORT_VAULT:-8201}:8200"
     volumes:
       - vault-data:/vault/data
       - vault-keys:/vault/keys
@@ -25,7 +25,7 @@ services:
       # the bearer token attached, fully defeating the orchestrator's own
       # loopback binding. vault and orchestrator already restrict to
       # 127.0.0.1 below; this matches them.
-      - "127.0.0.1:8099:8099"
+      - "127.0.0.1:${FACTORY_PORT_STATUS:-8099}:8099"
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_REPO=${GITHUB_REPO}
@@ -35,6 +35,7 @@ services:
       - RUNS_PATH=${RUNS_PATH:-docs/factory/runs}
       - PLAN_PATH=${PLAN_PATH:-docs/factory/PLAN.json}
       - ORCHESTRATOR_URL=http://orchestrator:8100
+      - FACTORY_PORT_STATUS=${FACTORY_PORT_STATUS:-8099}
       - LOG_PATH=/var/log/factory-agent/out.log
       - LOCAL_REPO_MOUNT=/repos/primary
       - API_SECRET=${API_SECRET:-}
@@ -42,7 +43,7 @@ services:
       - watchdog-data:/watchdog:ro
       - orchestrator-data:/orchestrator:ro
       - factory-config:/config
-      - ${HOME}/Library/Logs/factory-agent:/var/log/factory-agent:ro
+      - ${FACTORY_LOG_DIR:-${HOME}/Library/Logs/factory-agent}:/var/log/factory-agent:ro
       - ${LOCAL_REPO_PATH}:/repos/primary
     restart: unless-stopped
     depends_on:
@@ -75,7 +76,7 @@ services:
     build:
       context: ./services/orchestrator
     ports:
-      - "127.0.0.1:8100:8100"
+      - "127.0.0.1:${FACTORY_PORT_ORCHESTRATOR:-8100}:8100"
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_REPO=${GITHUB_REPO}
@@ -94,6 +95,7 @@ services:
       - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-}
       - CODEX_WORKFLOW_FILE=${CODEX_WORKFLOW_FILE:-codex-dispatch.yml}
       - API_PORT=8100
+      - FACTORY_PORT_STATUS=${FACTORY_PORT_STATUS:-8099}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - AGENT_RUNNER_URL=${AGENT_RUNNER_URL:-}
       - LOCAL_REPO_MOUNT=/repos/primary

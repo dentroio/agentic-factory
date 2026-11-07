@@ -15,8 +15,8 @@ import urllib.error
 import urllib.request
 
 DEFAULTS = {
-    "status": os.getenv("FACTORY_STATUS_URL", "http://127.0.0.1:8099/health"),
-    "orchestrator": os.getenv("ORCHESTRATOR_HEALTH_URL", "http://127.0.0.1:8100/health"),
+    "status": os.getenv("FACTORY_STATUS_URL", f"http://127.0.0.1:{os.getenv('FACTORY_PORT_STATUS', '8099')}/health"),
+    "orchestrator": os.getenv("ORCHESTRATOR_HEALTH_URL", f"http://127.0.0.1:{os.getenv('FACTORY_PORT_ORCHESTRATOR', '8100')}/health"),
 }
 
 

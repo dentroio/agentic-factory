@@ -71,6 +71,6 @@ def test_no_login_page():
 
 def test_compose_dashboard_is_loopback():
     text = (REPO_ROOT / "docker-compose.status.yml").read_text(encoding="utf-8")
-    assert '"127.0.0.1:8099:8099"' in text
+    assert '"127.0.0.1:${FACTORY_PORT_STATUS:-8099}:8099"' in text
     assert "- \"8099:8099\"" not in text
     assert "- '8099:8099'" not in text

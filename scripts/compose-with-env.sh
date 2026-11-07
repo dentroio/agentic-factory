@@ -9,6 +9,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+source "$ROOT/scripts/factory_instance.sh"
+
 ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/factory-env.XXXXXX")"
 chmod 600 "$ENV_FILE"
 cleanup() { rm -f "$ENV_FILE"; }
