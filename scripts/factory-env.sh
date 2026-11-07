@@ -3,7 +3,9 @@
 # Usage: bash scripts/compose-with-env.sh up -d
 # Do not redirect this script into the repo (.env.runtime) — AF-12.
 
-_kc() { security find-generic-password -s "dentroio-factory" -a "$1" -w 2>/dev/null || echo ""; }
+source "$(dirname "${BASH_SOURCE[0]}")/factory_instance.sh"
+
+_kc() { security find-generic-password -s "$FACTORY_KEYCHAIN_SERVICE" -a "$1" -w 2>/dev/null || echo ""; }
 
 GITHUB_TOKEN="$(_kc GITHUB_TOKEN)"
 CURSOR_API_KEY="$(_kc CURSOR_API_KEY)"
@@ -22,7 +24,7 @@ API_SECRET="$(_kc API_SECRET)"
 [ -n "$API_SECRET" ] && echo "API_SECRET=$API_SECRET"
 
 # Non-secrets from prefs file
-PREFS_FILE="$HOME/.config/factory-agent/prefs"
+PREFS_FILE="$FACTORY_PREFS"
 if [ -f "$PREFS_FILE" ]; then
     while IFS='=' read -r key val; do
         [[ -z "$key" || "$key" == \#* ]] && continue

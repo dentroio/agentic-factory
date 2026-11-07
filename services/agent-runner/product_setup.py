@@ -18,7 +18,19 @@ from pathlib import Path
 from typing import Any
 
 PREFS_PATH = Path(
-    os.environ.get("FACTORY_PREFS", str(Path.home() / ".config" / "factory-agent" / "prefs"))
+    os.environ.get(
+        "FACTORY_PREFS",
+        str(
+            Path.home()
+            / ".config"
+            / (
+                "factory-agent-" + os.environ["FACTORY_INSTANCE"]
+                if os.environ.get("FACTORY_INSTANCE")
+                else "factory-agent"
+            )
+            / "prefs"
+        ),
+    )
 )
 _REPO_RE = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$")
 

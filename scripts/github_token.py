@@ -7,6 +7,7 @@ Classic PATs (ghp_) and GitHub CLI OAuth tokens (gho_) are rejected.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -54,13 +55,19 @@ def require_fine_grained(token: str) -> str:
     )
 
 
+def _keychain_service() -> str:
+    inst = os.environ.get("FACTORY_INSTANCE", "")
+    default = f"dentroio-factory-{inst}" if inst else "dentroio-factory"
+    return os.environ.get("FACTORY_KEYCHAIN_SERVICE", default)
+
+
 def _store_keychain(token: str) -> None:
     scripts = Path(__file__).resolve().parent
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
     import keychain_set as ks  # noqa: WPS433
 
-    ks.set_generic_password("dentroio-factory", "GITHUB_TOKEN", token.encode("utf-8"))
+    ks.set_generic_password(_keychain_service(), "GITHUB_TOKEN", token.encode("utf-8"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -85,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.store:
         _store_keychain(token)
-        print("Stored fine-grained GitHub PAT in Keychain (dentroio-factory / GITHUB_TOKEN).")
+        print(f"Stored fine-grained GitHub PAT in Keychain ({_keychain_service()} / GITHUB_TOKEN).")
     return 0
 
 

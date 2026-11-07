@@ -1,7 +1,17 @@
 # Dentro AI Factory — Makefile
 
-LABEL := com.dentroio.factory-agent
-LOG_DIR := $(HOME)/Library/Logs/factory-agent
+# Several factories on one machine: FACTORY_INSTANCE=<name> (see scripts/factory_instance.sh).
+FACTORY_INSTANCE ?=
+export FACTORY_INSTANCE
+INSTANCE_SFX := $(if $(FACTORY_INSTANCE),-$(FACTORY_INSTANCE),)
+KEYCHAIN_SERVICE ?= dentroio-factory$(INSTANCE_SFX)
+FACTORY_PORT_OFFSET ?= 0
+export FACTORY_PORT_OFFSET
+PORT_STATUS := $(shell echo $$((8099 + $(FACTORY_PORT_OFFSET))))
+PORT_ORCH := $(shell echo $$((8100 + $(FACTORY_PORT_OFFSET))))
+VAULT_KEYS_VOLUME ?= $(shell basename "$(CURDIR)" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n_-' '_')_vault-keys
+LABEL := com.dentroio.factory-agent$(INSTANCE_SFX)
+LOG_DIR := $(HOME)/Library/Logs/factory-agent$(INSTANCE_SFX)
 PYTHON ?= python3
 
 .PHONY: help \
@@ -69,14 +79,14 @@ smoke:  ## Post-deploy health checks for status-site + orchestrator
 
 up:  ## Start factory services (reads secrets from macOS Keychain if available)
 	@bash scripts/compose-with-env.sh up -d
-	@echo "Dashboard: http://localhost:8099   Orchestrator: http://localhost:8100 (localhost only)"
+	@echo "Dashboard: http://localhost:$(PORT_STATUS)   Orchestrator: http://localhost:$(PORT_ORCH) (localhost only)"
 
 vault-export-keys:  ## Save Vault unseal key to macOS Keychain (root token stays offline)
 	@echo "Reading Vault unseal key from Docker volume..."
-	@if docker run --rm -v agentic-factory_vault-keys:/vault/keys:ro alpine \
+	@if docker run --rm -v $(VAULT_KEYS_VOLUME):/vault/keys:ro alpine \
 		cat /vault/keys/unseal_key 2>/dev/null \
-		| $(PYTHON) scripts/keychain_set.py dentroio-factory VAULT_UNSEAL_KEY; then \
-		$(PYTHON) scripts/keychain_set.py --delete dentroio-factory VAULT_ROOT_TOKEN; \
+		| $(PYTHON) scripts/keychain_set.py $(KEYCHAIN_SERVICE) VAULT_UNSEAL_KEY; then \
+		$(PYTHON) scripts/keychain_set.py --delete $(KEYCHAIN_SERVICE) VAULT_ROOT_TOKEN; \
 		echo "  Unseal key saved to Keychain. Root token was not copied (AF-10)."; \
 	else \
 		echo "  ERROR: Could not read from vault-keys volume. Is the factory running? (make up)"; \
