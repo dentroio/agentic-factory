@@ -15,12 +15,16 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 STATUS_SITE_DIR = Path(__file__).resolve().parents[2] / "services" / "status-site"
 sys.path.insert(0, str(STATUS_SITE_DIR))
 
 import github_client  # noqa: E402
+
+# Inside any window: a fixed calendar date ages out of the 56-day window.
+RECENT = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _item(number: int, title: str, merged_at: str) -> dict:
@@ -54,11 +58,11 @@ def _run(days: int = 56):
 
 
 def test_a_search_item_becomes_the_pr_shape_the_app_reads():
-    pr = github_client._search_item_to_pr(_item(7, "feat: WO-500 — x", "2026-08-01T00:00:00Z"))
+    pr = github_client._search_item_to_pr(_item(7, "feat: WO-500 — x", RECENT))
 
     assert pr["number"] == 7
     assert pr["title"] == "feat: WO-500 — x"
-    assert pr["merged_at"] == "2026-08-01T00:00:00Z"
+    assert pr["merged_at"] == RECENT
     assert pr["head"] == {"ref": ""}, "search has no branch — present and empty, never absent"
 
 
@@ -72,7 +76,7 @@ def test_a_search_item_missing_its_merge_block_does_not_explode():
 
 
 def test_it_pages_until_it_has_everything_the_api_reports(monkeypatch):
-    pages = [[_item(i, f"feat: WO-{i} — x", "2026-08-01T00:00:00Z") for i in range(n, n + 100)]
+    pages = [[_item(i, f"feat: WO-{i} — x", RECENT) for i in range(n, n + 100)]
              for n in (0, 100, 200)]
     fake, calls = _fake_search(pages, total=300)
     monkeypatch.setattr(github_client, "_get", fake)
@@ -88,7 +92,7 @@ def test_it_pages_until_it_has_everything_the_api_reports(monkeypatch):
 def test_it_stops_as_soon_as_the_window_is_covered(monkeypatch):
     """API budget matters here — the WO loader was deliberately cut to a
     handful of calls and this must not undo that."""
-    fake, calls = _fake_search([[_item(1, "feat: WO-1 — x", "2026-08-01T00:00:00Z")]], total=1)
+    fake, calls = _fake_search([[_item(1, "feat: WO-1 — x", RECENT)]], total=1)
     monkeypatch.setattr(github_client, "_get", fake)
 
     _run()
@@ -100,7 +104,7 @@ def test_it_filters_the_qualifier_s_date_slop_by_timestamp(monkeypatch):
     """`merged:>=` takes a date, so the API returns a little more than the
     window; the precise cutoff is applied here."""
     fake, _ = _fake_search([[
-        _item(1, "feat: WO-1 — inside", "2026-08-01T00:00:00Z"),
+        _item(1, "feat: WO-1 — inside", RECENT),
         _item(2, "feat: WO-2 — long before the window", "2020-01-01T00:00:00Z"),
     ]], total=2)
     monkeypatch.setattr(github_client, "_get", fake)
@@ -127,7 +131,7 @@ def test_the_query_asks_for_merged_prs_in_the_window(monkeypatch):
 def test_a_short_fetch_is_reported_as_incomplete(monkeypatch):
     """The API says 1500 exist; search will not return past 1000. The result
     is a floor and has to be labelled as one."""
-    pages = [[_item(i, f"feat: WO-{i} — x", "2026-08-01T00:00:00Z") for i in range(n, n + 100)]
+    pages = [[_item(i, f"feat: WO-{i} — x", RECENT) for i in range(n, n + 100)]
              for n in range(0, 1000, 100)]
     fake, calls = _fake_search(pages, total=1500)
     monkeypatch.setattr(github_client, "_get", fake)
