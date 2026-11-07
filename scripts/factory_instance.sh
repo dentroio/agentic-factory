@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Per-instance names for running more than one factory on one machine (WO-1107).
+# Per-instance names for running more than one factory on one machine (WO-1108).
 # Source this file. With FACTORY_INSTANCE unset every value is the one the engine
 # has always used, so an existing install is unchanged.
 #

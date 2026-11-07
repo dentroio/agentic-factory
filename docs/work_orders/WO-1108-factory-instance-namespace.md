@@ -1,10 +1,10 @@
-# WO-1107 — Run more than one factory on a machine (instance namespace)
+# WO-1108 — Run more than one factory on a machine (instance namespace)
 
 **Status:** In Progress (part 1: secrets, prefs, ports, compose, Make)
 **Priority:** P1
 **Effort:** M
 **Services:** scripts | docker-compose | agent-runner | status-site | orchestrator
-**Depends on:** none
+**Depends on:** none (separate from WO-1107, product Work Order Protocol support)
 
 ## Problem
 

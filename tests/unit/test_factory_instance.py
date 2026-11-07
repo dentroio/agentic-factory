@@ -1,4 +1,4 @@
-"""WO-1107: FACTORY_INSTANCE namespaces prefs, Keychain service, logs and ports.
+"""WO-1108: FACTORY_INSTANCE namespaces prefs, Keychain service, logs and ports.
 
 With no instance set, every value must be the one the engine always used so an
 existing install is unchanged.
