@@ -16,13 +16,15 @@ module globals, and Request is imported only inside install() so CI can
 import the pure helpers without FastAPI installed.
 """
 import hmac
+import os
 from typing import Any
 from urllib.parse import urlparse
 
+_STATUS_PORT = os.environ.get("FACTORY_PORT_STATUS", "8099")
 ALLOWED_ORIGINS = frozenset(
     {
-        "http://127.0.0.1:8099",
-        "http://localhost:8099",
+        f"http://127.0.0.1:{_STATUS_PORT}",
+        f"http://localhost:{_STATUS_PORT}",
     }
 )
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})

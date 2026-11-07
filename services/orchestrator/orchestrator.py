@@ -1587,7 +1587,10 @@ def _enforce_agent_identity(request: Request, agent_name: str) -> None:
 # defense in depth, not a functional requirement.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8099", "http://127.0.0.1:8099"],
+    allow_origins=[
+        f"http://localhost:{os.getenv('FACTORY_PORT_STATUS', '8099')}",
+        f"http://127.0.0.1:{os.getenv('FACTORY_PORT_STATUS', '8099')}",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )

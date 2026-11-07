@@ -22,7 +22,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_PREFS = Path.home() / ".config" / "factory-agent" / "prefs"
+DEFAULT_PREFS = (
+    Path.home()
+    / ".config"
+    / f"factory-agent{'-' + os.environ['FACTORY_INSTANCE'] if os.environ.get('FACTORY_INSTANCE') else ''}"
+    / "prefs"
+)
 WO_DIR_DEFAULT = "docs/project_management/work_orders"
 PROFILE_CANDIDATES = ("factory.yaml", "docs/factory/profile.yaml")
 
