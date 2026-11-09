@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-11-08
+last_verified: 2026-11-09
 covers_wos:
   - WO-1008
   - WO-1052
@@ -31,47 +31,4 @@ Your **product** is a separate GitHub repository. The engine already supports an
 | Repo | What it is | What you do |
 |------|------------|-------------|
 | `agentic-factory` (engine) | Dashboard, orchestrator, agent runner, launchd/CI plumbing. Kept generic and product-agnostic. | Clone once. Point it at your product via `GITHUB_REPO` / `LOCAL_REPO_PATH`. Rarely edited after setup. |
-| `you/app` (product) | Your actual application: source code, tests, CI, and a `factory.yaml` (or `docs/factory/profile.yaml`) that tells the engine how to build/verify it. | Create or reuse an existing repo, add the small set of adopter files (below), and let Work Orders land there as branches/PRs. |
-
-The engine never needs write access to anything beyond `GITHUB_REPO`. There is no hidden dependency on a specific private repo — the default profile ships with **no product-specific patterns** (no Clarion, no Dentro internals) baked in.
-
-## Fastest path: UI-first onboarding
-
-As of WO-1091, you don't need to hand-edit prefs files to wire up a product.
-
-Go to **Settings → Authentication** in the dashboard:
-
-- Set the **local path** for your product's clone (or trigger a clone from `GITHUB_REPO` directly from the UI).
-- Click **prepare files** to scaffold the adopter kit (`factory.yaml`, `docs/factory/patterns.md`, WO spec directory) into that checkout without leaving the browser.
-- Saving the product repo in Settings updates `GITHUB_REPO` live for the running orchestrator (no restart needed to pick up the new repo for most read paths). When Docker still has the old path mounted, the UI shows a **Remount Docker** button (WO-1092) that recreates the containers with the new mount in place — no need to run `make restart` by hand.
-- Each local agent (Cursor, Claude, Codex, Gemini) binds to its own draft port, so switching products or running multiple agents at once no longer trips `Address already in use` errors.
-- If your product isn't wired up yet, the **Overview** page shows a setup CTA linking straight back to Authentication.
-
-This flow is driven by `product_setup.py` on the agent-runner host, proxied through the orchestrator as `GET/PUT /api/product`, `POST /api/product/clone`, and `POST /api/product/remount` — all bearer-token gated, same as the rest of the admin API.
-
-## BYO path: scripts for the terminal
-
-If you prefer the command line, or you're scripting a fresh box:
-
-```bash
-# Scaffold a brand-new or existing product repo with the adopter kit
-python3 scripts/factory_init.py --path /path/to/app --name myapp \
-  --verify "make test" --ui-url "http://localhost:3000"
-make init   # same thing, defaults to $LOCAL_REPO_PATH / cwd
-
-# Verify the engine is wired correctly before you trust it with Work Orders
-python3 scripts/factory_doctor.py
-make doctor
-```
-
-`factory_init.py` creates `docs/project_management/work_orders/`, `docs/factory/runs/.gitkeep`, `docs/factory/patterns.md`, a root `factory.yaml`, and copies `docs/adopters/PROCESS.md` into your product as `AGENT_PROCESS.md`. Pass `--sample-wo` to also drop a minimal `WO-001-hello.md`. It refuses to overwrite existing files unless you pass `--force`.
-
-`factory_doctor.py` checks that `GITHUB_REPO` is shaped correctly, `LOCAL_REPO_PATH` exists and is a git checkout whose remote actually matches `GITHUB_REPO`, the product's `factory.yaml` loads, the configured `verify` command or Makefile target is runnable, and the WO spec directory is present. It exits non-zero with fix hints on any hard failure — use it as your "am I wired correctly?" gate before dispatching the first Work Order. Pass `--product PATH` to check a product tree independent of saved prefs (useful in CI).
-
-Both paths write to the same prefs file (`~/.config/factory-agent/prefs`); the UI and the scripts are interchangeable, and doctor will pass regardless of which one you used.
-
-## Keeping the two repos from colliding
-
-The two-repo model means the engine's own Work Orders (`agentic-factory`'s `docs/work_orders/`) and your product's Work Orders live in separate numbering spaces and separate queues. Two safeguards keep them from bleeding into each other:
-
-- **Per-
+| `you/app` (product) | Your actual application: source code, tests,

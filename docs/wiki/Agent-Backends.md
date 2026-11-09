@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-11-08
+last_verified: 2026-11-09
 covers_wos:
   - WO-1008
   - WO-1053
@@ -109,7 +109,4 @@ ANTARES_BLOCKING_SEVERITIES=CRITICAL,HIGH
 - Only the WO context, changed-file diff, and relevant prior scanner findings are sent — never the full repo — and never to a remote endpoint unless you explicitly point `ANTARES_BASE_URL` at one.
 - Findings are structured (severity, file, line, issue, fix) and posted to the WO review thread like any other reviewer; malformed model output is treated as a non-blocking scan error in advisory mode.
 - **Advisory mode** (default): Antares findings and errors are always visible but never fail the security gate.
-- **Blocking mode**: `security_passed` fails when configured severities are found, or when Antares is required but unreachable/times out.
-- Bandit, Semgrep, JS security scan, and the Claude/Codex/Cursor/Gemini review chain are unaffected when Antares is disabled.
-
-This WO does not ship a bundled Antares model server — only the client/UI/gate integration. You run your own OpenAI-compatible Antares endpoint locally (e.g. via llama.cpp) or on another LAN device.
+- **Blocking mode**: `security_passed` fails when configured severities are found,
