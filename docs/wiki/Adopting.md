@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-11-10
+last_verified: 2026-11-11
 covers_wos:
   - WO-1008
   - WO-1052
@@ -42,7 +42,7 @@ Settings → **Authentication** has a product section that does the wiring for y
 1. Enter (or browse to) the local checkout path for your product repo.
 2. Use **Clone** if you don't have a local checkout yet — the host clones `GITHUB_REPO` for you.
 3. Use **Prepare files** to scaffold the product-side files (`factory.yaml`, WO specs dir, `docs/factory/patterns.md`, `AGENT_PROCESS.md`) without leaving the dashboard.
-4. Save — `GITHUB_REPO` updates live on the orchestrator; you'll be prompted to restart (`make restart`) to pick up the new path everywhere.
+4. Save — `GITHUB_REPO` updates live on the orchestrator. If the local path changed, a **Remount Docker** action appears alongside the usual `make restart` hint — it re-runs compose (`up -d --force-recreate`, no image rebuild) so the containers pick up the new mount without a full rebuild.
 
 If your product isn't ready yet, the Overview page shows a setup CTA linking straight to this flow instead of a confusing empty queue.
 
@@ -67,6 +67,23 @@ Prefer the terminal? Two Makefile targets cover the same ground:
 - **Template path** — start from the adopter kit (`docs/adopters/`) and let `make init` lay down the expected files in a fresh repo.
 - **BYO (bring your own) path** — point the engine at an existing product repo. Run `make doctor` first to see exactly what's missing, then `make init --path <repo>` (or the Auth UI "Prepare files" button) to fill the gaps without clobbering anything you already have.
 
+## Queue separation: engine WOs never leak into your product queue
+
+The orchestrator only enqueues and claims Work Orders that are **product-eligible** — a matching `WO-{n}-*.md` spec must exist under the product's `LOCAL_REPO_PATH` / WO-specs directory (or the cached spec for that number must belong to the configured `GITHUB_REPO`). This means:
+
+- `POST /api/queue` rejects a WO with no product spec (400).
+- `POST /api/claim` rejects it too (404).
+- `GET /api/next` never hands a runner a WO it can't find a spec for.
+- Any stray queue rows left over from engine-side experiments get auto-purged on the next poll/startup check.
+
+In practice this keeps engine-repo Work Orders (specs that live under `agentic-factory`'s own `docs/work_orders/`) from ever showing up as Open/Running/Stalled on your product's board, even if something accidentally POSTs them into the queue.
+
 ## What to copy vs not copy
 
 - **Copy into your product:**
+  - Root `factory.yaml` (or `docs/factory/profile.yaml`) describing your product's name, verify command, and WO-path conventions.
+  - `docs/project_management/work_orders/` — your WO specs live here, authored per product.
+  - `docs/factory/patterns.md` — house style and patterns agents should follow for *your* codebase.
+  - `docs/factory/runs/.gitkeep` — placeholder directory the engine writes run artifacts into.
+  - `AGENT_PROCESS.md` — the adopter-kit process doc (`docs/adopters/PROCESS.md`), copied and adjusted for your team.
+  - Your own CI, labels (`new-wo`, `agent-pr`, `pm-sync`), and required-check configuration, matched to what
