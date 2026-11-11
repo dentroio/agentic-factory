@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-11-10
+last_verified: 2026-11-11
 covers_wos:
   - WO-1008
   - WO-1053
@@ -97,16 +97,4 @@ Corresponding env vars (agent-runner):
 ```text
 ANTARES_ENABLED=false
 ANTARES_BASE_URL=http://localhost:8000
-ANTARES_MODEL=fdtn-ai/antares-350m | fdtn-ai/antares-1b | custom
-ANTARES_API_KEY=
-ANTARES_TIMEOUT_SECONDS=120
-ANTARES_MODE=advisory | blocking
-ANTARES_BLOCKING_SEVERITIES=CRITICAL,HIGH
-```
-
-### Behavior
-
-- Only the WO context, changed-file diff, and relevant prior scanner findings are sent — never the full repo — and never to a remote endpoint unless you explicitly point `ANTARES_BASE_URL` at one.
-- Findings are structured (severity, file, line, issue, fix) and posted to the WO review thread like any other reviewer; malformed model output is treated as a non-blocking scan error in advisory mode.
-- **Advisory mode** (default): Antares findings and errors are always visible but never fail the security gate.
-- **Blocking mode**: `security_passed` fails when configured severities are found,
+AN
