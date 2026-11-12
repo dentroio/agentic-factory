@@ -1,7 +1,7 @@
 ---
 title: "Agent Backends"
 description: "Claude, Cursor, Codex, Gemini, claude-api, cloud Codex dispatch, and Antares security review"
-last_verified: 2026-11-11
+last_verified: 2026-11-12
 covers_wos:
   - WO-1008
   - WO-1053
@@ -97,4 +97,11 @@ Corresponding env vars (agent-runner):
 ```text
 ANTARES_ENABLED=false
 ANTARES_BASE_URL=http://localhost:8000
-AN
+ANTARES_MODEL=fdtn-ai/antares-350m | fdtn-ai/antares-1b | custom
+ANTARES_API_KEY=
+ANTARES_TIMEOUT_SECONDS=120
+ANTARES_MODE=advisory | blocking
+ANTARES_BLOCKING_SEVERITIES=CRITICAL,HIGH
+```
+
+Advisory mode never blocks validation solely because Antares found issues or failed to respond — findings still post to the WO thread. Blocking mode fails `security_passed` when configured severities are found, or when Antares is required but unreachable. Antares findings are included in the existing security-reviewer thread format alongside prior Bandit/Semgrep/JS scanner findings, and count toward the quality gate's `finding_count`. Existing Bandit, Semgrep, JS security scan, and Claude/Codex/Cursor/Gemini reviewer behavior is unchanged when Antares is disabled.

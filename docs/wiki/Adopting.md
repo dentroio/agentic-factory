@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-11-11
+last_verified: 2026-11-12
 covers_wos:
   - WO-1008
   - WO-1052
@@ -86,4 +86,4 @@ In practice this keeps engine-repo Work Orders (specs that live under `agentic-f
   - `docs/factory/patterns.md` — house style and patterns agents should follow for *your* codebase.
   - `docs/factory/runs/.gitkeep` — placeholder directory the engine writes run artifacts into.
   - `AGENT_PROCESS.md` — the adopter-kit process doc (`docs/adopters/PROCESS.md`), copied and adjusted for your team.
-  - Your own CI, labels (`new-wo`, `agent-pr`, `pm-sync`), and required-check configuration, matched to what
+  - Your own CI, labels (`new-wo`, `agent-pr`, `pm-sync`), and required-check configuration, matched to what the engine's GitHub Actions expect — see GitHub-Integrations for the label and workflow details.
