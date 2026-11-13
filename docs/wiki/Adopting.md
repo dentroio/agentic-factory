@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-11-12
+last_verified: 2026-11-13
 covers_wos:
   - WO-1008
   - WO-1052
@@ -87,3 +87,28 @@ In practice this keeps engine-repo Work Orders (specs that live under `agentic-f
   - `docs/factory/runs/.gitkeep` — placeholder directory the engine writes run artifacts into.
   - `AGENT_PROCESS.md` — the adopter-kit process doc (`docs/adopters/PROCESS.md`), copied and adjusted for your team.
   - Your own CI, labels (`new-wo`, `agent-pr`, `pm-sync`), and required-check configuration, matched to what the engine's GitHub Actions expect — see GitHub-Integrations for the label and workflow details.
+
+## Relevant WO specs (completed features to document)
+
+### WO-1091-adoption-dx-doctor-init.md
+# WO-1091 — Adoption DX: factory doctor, init, stranger-clone checks
+
+**Created:** 2026-09-04
+**Priority:** P2
+**Effort:** M
+**Services:** docs, scripts
+**Depends on:** —
+**Status:** ✅ Done
+
+---
+
+## Problem
+
+The engine is product-agnostic (`factory.yaml`, adopter kit, independence I1–I7), but first-time adoption still fails in silent ways: wrong `LOCAL_REPO_PATH`, missing `factory.yaml`, prefs pointing at the engine instead of the product, and BYO setup that is checklist-only. There is no single command that says “wired correctly,” and no regression gate that a stranger clone stays Clarion-free on the default path.
+
+## What to Build
+
+1. **`scripts/factory_doctor.py`** (+ `make doctor`)
+   - Read prefs from `~/.config/factory-agent/prefs` and env overrides.
+   - Check: `GITHUB_REPO` shape; `LOCAL_REPO_PATH` exists and is a git checkout; remote `owner/name` matches `GITHUB_REPO` (fail on mismatch); product `factory.yaml` (or `docs/factory/profile.yaml`) loads; `verify` first token is runnable or Makefile target exists; WO specs dir present; optional `gh` reachability for product labels / WO path.
+   - Warn (not fail) when `FACTORY_LEGACY_PROD
