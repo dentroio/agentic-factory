@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-11-14
+last_verified: 2026-11-15
 covers_wos:
   - WO-1008
   - WO-1052
@@ -53,4 +53,25 @@ Prefer the terminal? Two Makefile targets cover the same ground:
 - **`make doctor`** (`scripts/factory_doctor.py`) — checks that everything is wired correctly:
   - `GITHUB_REPO` is shaped like `owner/name`
   - `LOCAL_REPO_PATH` exists and is a git checkout whose remote matches `GITHUB_REPO` (hard fail on mismatch)
-  - product `factory.yaml` (or `docs/factory/profile.ya
+  - product `factory.yaml` (or `docs/factory/profile.yaml`) loads
+  - the `verify` command's first token is runnable, or a matching Makefile target exists
+  - the WO specs directory is present
+  - optional `gh` reachability for product labels / WO path
+  - warns (does not fail) when `FACTORY_LEGACY_PRODUCT` is set for a non-matching repo
+  - exits 0 only when hard checks pass, and prints a fix hint for each failure
+  - supports `--product PATH` to doctor a product tree directly (useful in CI/tests without touching your real prefs)
+
+- **`make init`** (`scripts/factory_init.py`) — scaffolds a product repo in place: `docs/project_management/work_orders/`, `docs/factory/runs/.gitkeep`, `docs/factory/patterns.md`, a root `factory.yaml`, and a copy of `docs/adopters/PROCESS.md` as `AGENT_PROCESS.md`. Pass `--sample-wo` to also drop a minimal `WO-001-hello.md`. Non-interactive flags (`--name`, `--verify`, `--ui-url`, `--force`) let you run it from scripts; it refuses to overwrite existing files unless `--force` is given, and prints next steps (labels to create, pointing engine prefs at the repo, running `make doctor`).
+
+Run `make init` to scaffold, then `make doctor` to confirm the wiring — or do both from the Authentication page's **Prepare files** button.
+
+## Queue safety: product-only Work Orders
+
+The orchestrator queue only accepts Work Orders that have a matching spec file in your product's `docs/project_management/work_orders/` directory (under the configured `LOCAL_REPO_PATH`) — or whose spec cache entry belongs to `GITHUB_REPO`. This keeps engine-only WOs (specs that live under `agentic-factory`'s own `docs/work_orders/`) from being accidentally queued and claimed against your product's worktree:
+
+- `POST /api/queue` rejects (400) a WO with no product-side spec
+- `POST /api/claim` rejects (404) the same
+- `GET /api/next` never offers a non-product-eligible WO to a runner
+- Queue rows that lose their product spec are auto-purged on the next poll (logged)
+
+You can still `DELETE /api/queue/{wo}` manually at any time; this gate only blocks WOs that were never product-eligible in the first place.
