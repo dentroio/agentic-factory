@@ -1,7 +1,7 @@
 ---
 title: "Adopting the factory"
 description: "Two-repo model: engine vs product, template vs BYO, what to copy and what not to"
-last_verified: 2026-11-16
+last_verified: 2026-11-17
 covers_wos:
   - WO-1008
   - WO-1052
@@ -75,47 +75,3 @@ The orchestrator queue only accepts Work Orders that have a matching spec file i
 - Queue rows that lose their product spec are auto-purged on the next poll (logged)
 
 You can still `DELETE /api/queue/{wo}` manually at any time; this gate only blocks WOs that were never product-eligible in the first place.
-
-## Relevant WO specs (completed features to document)
-
-### WO-1091-adoption-dx-doctor-init.md
-# WO-1091 — Adoption DX: factory doctor, init, stranger-clone checks
-
-**Created:** 2026-09-04
-**Priority:** P2
-**Effort:** M
-**Services:** docs, scripts
-**Depends on:** —
-**Status:** ✅ Done
-
----
-
-## Problem
-
-The engine is product-agnostic (`factory.yaml`, adopter kit, independence I1–I7), but first-time adoption still fails in silent ways: wrong `LOCAL_REPO_PATH`, missing `factory.yaml`, prefs pointing at the engine instead of the product, and BYO setup that is checklist-only. There is no single command that says “wired correctly,” and no regression gate that a stranger clone stays Clarion-free on the default path.
-
-## What to Build
-
-1. **`scripts/factory_doctor.py`** (+ `make doctor`)
-   - Read prefs from `~/.config/factory-agent/prefs` and env overrides.
-   - Check: `GITHUB_REPO` shape; `LOCAL_REPO_PATH` exists and is a git checkout; remote `owner/name` matches `GITHUB_REPO` (fail on mismatch); product `factory.yaml` (or `docs/factory/profile.yaml`) loads; `verify` first token is runnable or Makefile target exists; WO specs dir present; optional `gh` reachability for product labels / WO path.
-   - Warn (not fail) when `FACTORY_LEGACY_PRODUCT` is set for a non-matching repo.
-   - Exit 0 only when hard checks pass; print fix hints for each failure.
-   - Support `--product PATH` to doctor a product tree without relying on prefs (for CI/tests).
-
-2. **`scripts/factory_init.py`** (+ `make init`)
-   - Scaffold a product repo (path arg, default cwd): `docs/project_management/work_orders/`, `docs/factory/runs/.gitkeep`, `docs/factory/patterns.md`, root `factory.yaml`, copy `docs/adopters/PROCESS.md` → `AGENT_PROCESS.md`.
-   - Optional `--sample-wo` writes a minimal `WO-001-hello.md`.
-   - Non-interactive flags: `--name`, `--verify`, `--ui-url`, `--force` (overwrite). Refuse to clobber without `--force`.
-   - Print next steps (labels, point engine prefs, `make doctor`).
-
-3. **Stranger-clone / no-leak regression**
-   - `tests/unit/test_stranger_clone.py`: default `load_profile` + patterns contain no Clarion; public agent-facing files (`scripts/agent-setup.sh`, `services/agent-runner/prompt_builder.py`, root `README.md`) must not name Clarion as the default product; `clarion_patterns.md` is only loaded when legacy env matches.
-   - Keep `FACTORY_LEGACY_PRODUCT` path working for the live Clarion instance (do not delete legacy loader).
-
-4. **UI-first product onboarding**
-   - Host `product_setup.py` + draft-server `GET/PUT /api/product`, `POST /api/product/clone`
-   - Orchestrator proxies; live-update `GITHUB_REPO` on secrets PUT
-   - Settings → Authentication: local path, clone, prepare files, restart hint
-   - Overview CTA when product not ready
-5. **Docs** — Getting Started / Adopting / BY
